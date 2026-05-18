@@ -1,0 +1,18 @@
+[workspace]
+members = ["src-tauri"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+authors = ["Johnny Phung"]
+license = "Apache-2.0"
+repository = "https://github.com/johnnyrobot/johnny-reader"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

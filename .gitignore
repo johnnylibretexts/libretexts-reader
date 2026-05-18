@@ -1,0 +1,16 @@
+node_modules
+dist
+target
+src-tauri/target
+src-tauri/binaries/
+src-tauri/gen/
+src-tauri/resources/pdfium/*/
+src-tauri/resources/voices/
+output/
+.playwright-cli/
+.playwright-mcp/
+*.log
+.DS_Store
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

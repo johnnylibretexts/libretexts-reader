@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-brand-50: #f0f4ff;
+  --color-brand-500: #2e75b6;
+  --color-brand-700: #1f4e79;
+  --font-display: "Inter", system-ui, sans-serif;
+  --font-reader: "Source Serif 4", Georgia, serif;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-neutral-900 font-display;
+  }
+
+  .dark body {
+    @apply bg-neutral-950 text-neutral-100;
+  }
+}
