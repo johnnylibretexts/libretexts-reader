@@ -96,6 +96,8 @@ export const api = {
     invokeDesktop<Domain.Section[]>("list_sections", { documentId }),
   listParagraphs: (sectionId: string) =>
     invokeDesktop<Domain.Paragraph[]>("list_paragraphs", { sectionId }),
+  listSectionImages: (sectionId: string) =>
+    invokeDesktop<Domain.SectionImage[]>("list_section_images", { sectionId }),
   deleteDocument: (id: string) =>
     invokeDesktop<void>("delete_document", { id }),
   searchDocuments: (query: string) =>

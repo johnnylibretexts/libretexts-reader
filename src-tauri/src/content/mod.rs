@@ -1,6 +1,7 @@
 pub mod article;
 pub mod document;
 pub mod epub;
+pub mod images;
 pub mod libretexts;
 pub mod normalize;
 pub mod openstax;
@@ -38,10 +39,7 @@ pub fn import_pasted(title: &str, text: &str) -> AppResult<DocumentBuilder> {
         cover_image_path: None,
         license: None,
         attribution: None,
-        sections: vec![SectionBuilder {
-            title: "Content".to_string(),
-            paragraphs,
-        }],
+        sections: vec![SectionBuilder::text("Content", paragraphs)],
     })
 }
 

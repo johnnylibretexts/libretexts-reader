@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-use crate::db::models::{Document, Paragraph, Section, SourceType};
+use crate::db::models::{Document, Paragraph, Section, SectionImage, SourceType};
 use crate::error::{AppError, AppResult};
 
 pub fn list_documents(conn: &Connection) -> AppResult<Vec<Document>> {
@@ -89,6 +89,31 @@ pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Par
     collect_rows(rows)
 }
 
+pub fn list_section_images(conn: &Connection, section_id: &str) -> AppResult<Vec<SectionImage>> {
+    let mut statement = conn.prepare(
+        "SELECT id, section_id, ordinal, source_url, local_path,
+                alt_text, caption, content_type, anchor_paragraph_ordinal
+         FROM section_images
+         WHERE section_id = ?1
+         ORDER BY ordinal",
+    )?;
+    let rows = statement.query_map(params![section_id], |row| {
+        Ok(SectionImage {
+            id: row.get(0)?,
+            section_id: row.get(1)?,
+            ordinal: row.get(2)?,
+            source_url: row.get(3)?,
+            local_path: row.get(4)?,
+            alt_text: row.get(5)?,
+            caption: row.get(6)?,
+            content_type: row.get(7)?,
+            anchor_paragraph_ordinal: row.get(8)?,
+        })
+    })?;
+
+    collect_rows(rows)
+}
+
 pub fn delete_document(conn: &Connection, id: &str) -> AppResult<()> {
     let cover_image_path = conn
         .query_row(
@@ -98,18 +123,37 @@ pub fn delete_document(conn: &Connection, id: &str) -> AppResult<()> {
         )
         .optional()?
         .flatten();
+    let image_paths = document_image_paths(conn, id)?;
 
     conn.execute("DELETE FROM documents WHERE id = ?1", params![id])?;
 
     if let Some(path) = cover_image_path {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
+        remove_file_if_present(&path)?;
+    }
+    for path in image_paths {
+        remove_file_if_present(&path)?;
     }
 
     Ok(())
+}
+
+fn document_image_paths(conn: &Connection, document_id: &str) -> AppResult<Vec<String>> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT section_images.local_path
+         FROM section_images
+         INNER JOIN sections ON sections.id = section_images.section_id
+         WHERE sections.document_id = ?1",
+    )?;
+    let rows = statement.query_map(params![document_id], |row| row.get(0))?;
+    collect_rows(rows)
+}
+
+fn remove_file_if_present(path: &str) -> AppResult<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn collect_rows<T>(rows: impl Iterator<Item = Result<T, rusqlite::Error>>) -> AppResult<Vec<T>> {

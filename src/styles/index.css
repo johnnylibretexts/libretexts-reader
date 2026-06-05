@@ -18,4 +18,28 @@
   .dark body {
     @apply bg-neutral-950 text-neutral-100;
   }
+
+  .reader-math {
+    @apply text-neutral-900 dark:text-neutral-100;
+  }
+
+  .reader-math-inline {
+    @apply inline-block max-w-full align-baseline;
+  }
+
+  .reader-math-block {
+    @apply my-3 block max-w-full overflow-x-auto text-center;
+  }
+
+  .reader-math .katex-display {
+    @apply my-2 overflow-x-auto overflow-y-hidden;
+  }
+
+  .reader-math math {
+    font-size: 1.05em;
+  }
+
+  .reader-figure {
+    @apply my-7 max-w-full;
+  }
 }

@@ -43,10 +43,7 @@ pub async fn import_from_url(url: &str) -> AppResult<DocumentBuilder> {
         cover_image_path: None,
         license: Some("Unknown - see source URL".to_string()),
         attribution: Some(parsed_url.as_str().to_string()),
-        sections: vec![SectionBuilder {
-            title: "Content".to_string(),
-            paragraphs,
-        }],
+        sections: vec![SectionBuilder::text("Content", paragraphs)],
     })
 }
 

@@ -51,6 +51,20 @@ pub struct Paragraph {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SectionImage {
+    pub id: String,
+    pub section_id: String,
+    pub ordinal: u32,
+    pub source_url: String,
+    pub local_path: String,
+    pub alt_text: Option<String>,
+    pub caption: Option<String>,
+    pub content_type: Option<String>,
+    pub anchor_paragraph_ordinal: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlaybackState {
     pub document_id: String,
     pub section_id: String,

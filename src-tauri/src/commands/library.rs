@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::db::connection::DbPool;
 use crate::db::library;
-use crate::db::models::{Document, Paragraph, Section};
+use crate::db::models::{Document, Paragraph, Section, SectionImage};
 use crate::error::AppResult;
 
 #[tauri::command]
@@ -33,6 +33,15 @@ pub async fn list_paragraphs(
 ) -> AppResult<Vec<Paragraph>> {
     let conn = state.get()?;
     library::list_paragraphs(&conn, &section_id)
+}
+
+#[tauri::command]
+pub async fn list_section_images(
+    state: State<'_, DbPool>,
+    section_id: String,
+) -> AppResult<Vec<SectionImage>> {
+    let conn = state.get()?;
+    library::list_section_images(&conn, &section_id)
 }
 
 #[tauri::command]

@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::Utc;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
+use crate::content::images::{download_images, source_image_from_element, SourceImage};
 use crate::db::connection::DbPool;
 use crate::db::models::{OpenStaxBook, SourceType};
 use crate::error::{AppError, AppResult};
@@ -197,6 +199,16 @@ impl OpenStaxClient {
         Ok(pages)
     }
 
+    pub async fn download_page_images(
+        &self,
+        book_uuid: &str,
+        page: &PageContent,
+    ) -> AppResult<Vec<crate::content::document::ImageBuilder>> {
+        let base_url = self.page_url(book_uuid, &page.page_uuid).await?;
+        let (_, images) = section_content_from_html(&page.html, &base_url);
+        download_images(&self.http, images).await
+    }
+
     async fn release(&self) -> AppResult<&ReleaseManifest> {
         self.release
             .get_or_try_init(|| async {
@@ -224,6 +236,15 @@ impl OpenStaxClient {
 
     fn archive_url(&self, path: &str, release: &ReleaseManifest) -> String {
         format!("{}{}{}", self.base_url, release.archive_url, path)
+    }
+
+    async fn page_url(&self, book_uuid: &str, page_uuid: &str) -> AppResult<String> {
+        let release = self.release().await?;
+        let version = self.default_version(book_uuid, release)?;
+        Ok(self.archive_url(
+            &format!("/contents/{book_uuid}@{version}:{page_uuid}.json"),
+            release,
+        ))
     }
 
     async fn fetch_json<T: DeserializeOwned>(&self, url: &str) -> AppResult<T> {
@@ -338,7 +359,7 @@ where
         .ok_or_else(|| AppError::OpenStax(format!("unknown OpenStax book: {book_uuid}")))?;
     let toc = client.fetch_toc(book_uuid).await?;
     let pages = client.fetch_book(book_uuid, on_progress).await?;
-    let sections = sections_from_pages(&toc, &pages);
+    let sections = sections_from_pages(&client, book_uuid, &toc, &pages).await?;
 
     if sections.is_empty() {
         return Err(AppError::OpenStax(
@@ -370,38 +391,85 @@ pub fn paragraphs_from_html(html: &str) -> Vec<String> {
     let mut paragraphs = Vec::new();
 
     for element in document.select(&block_selector) {
-        if should_skip_element(&element) {
-            continue;
-        }
-
-        let normalized = text_with_math_replacements(&element);
-        if !normalized.is_empty() {
-            paragraphs.push(normalized);
+        if let Some(paragraph) = paragraph_from_element(&element) {
+            paragraphs.push(paragraph);
         }
     }
 
     paragraphs
 }
 
-fn sections_from_pages(toc: &BookToc, pages: &[PageContent]) -> Vec<SectionBuilder> {
-    pages
-        .iter()
-        .map(|page| {
-            let title = toc
-                .pages
-                .iter()
-                .find(|entry| entry.page_uuid == page.page_uuid)
-                .map(|entry| entry.title.clone())
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or_else(|| page.title.clone());
+async fn sections_from_pages(
+    client: &OpenStaxClient,
+    book_uuid: &str,
+    toc: &BookToc,
+    pages: &[PageContent],
+) -> AppResult<Vec<SectionBuilder>> {
+    let mut sections = Vec::new();
 
-            SectionBuilder {
-                title,
-                paragraphs: paragraphs_from_html(&page.html),
+    for page in pages {
+        let base_url = client.page_url(book_uuid, &page.page_uuid).await?;
+        let (paragraphs, image_candidates) = section_content_from_html(&page.html, &base_url);
+        let images = download_images(&client.http, image_candidates).await?;
+        if paragraphs.is_empty() && images.is_empty() {
+            continue;
+        }
+
+        sections.push(SectionBuilder {
+            title: section_title_for_page(toc, page),
+            paragraphs,
+            images,
+        });
+    }
+
+    Ok(sections)
+}
+
+fn section_content_from_html(html: &str, base_url: &str) -> (Vec<String>, Vec<SourceImage>) {
+    let document = Html::parse_document(html);
+    let block_selector = Selector::parse("h1, h2, h3, h4, h5, h6, p, li, img[src], img[data-src]")
+        .expect("valid OpenStax content selector");
+    let mut paragraphs = Vec::new();
+    let mut images = Vec::new();
+
+    for element in document.select(&block_selector) {
+        if element.value().name() == "img" {
+            if let Some(mut image) = source_image_from_element(&element, base_url) {
+                image.anchor_paragraph_ordinal = anchor_paragraph_ordinal(paragraphs.len());
+                images.push(image);
             }
-        })
-        .filter(|section| !section.paragraphs.is_empty())
-        .collect()
+        } else if let Some(paragraph) = paragraph_from_element(&element) {
+            paragraphs.push(paragraph);
+        }
+    }
+
+    (paragraphs, images)
+}
+
+fn paragraph_from_element(element: &ElementRef<'_>) -> Option<String> {
+    if should_skip_element(element) {
+        return None;
+    }
+
+    let normalized = text_with_math_replacements(element);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn anchor_paragraph_ordinal(paragraph_count: usize) -> Option<u32> {
+    paragraph_count.checked_sub(1).map(|index| index as u32)
+}
+
+fn section_title_for_page(toc: &BookToc, page: &PageContent) -> String {
+    toc.pages
+        .iter()
+        .find(|entry| entry.page_uuid == page.page_uuid)
+        .map(|entry| entry.title.clone())
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| page.title.clone())
 }
 
 fn collect_toc_entries(node: &TocNode, depth: u8, pages: &mut Vec<TocEntry>) {
@@ -450,9 +518,15 @@ fn html_fragment_to_text(html: &str) -> String {
 
 fn text_with_math_replacements(element: &ElementRef<'_>) -> String {
     let html = element.html();
-    let replaced = math_re().replace_all(&html, " equation ");
+    let replaced = math_re().replace_all(&html, |captures: &regex::Captures<'_>| {
+        format!(" {} ", mathml_token(&captures[0]))
+    });
     let fragment = Html::parse_fragment(&replaced);
     normalize_text(&fragment.root_element().text().collect::<Vec<_>>().join(" "))
+}
+
+fn mathml_token(markup: &str) -> String {
+    format!("[[mathml:{}]]", BASE64_STANDARD.encode(markup.as_bytes()))
 }
 
 fn math_re() -> &'static Regex {
@@ -463,4 +537,68 @@ fn math_re() -> &'static Regex {
 
 fn normalize_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{paragraphs_from_html, section_content_from_html};
+
+    #[test]
+    fn paragraphs_preserve_mathml_tokens_for_reader_rendering() {
+        let html = r#"
+            <p>
+                Given
+                <math display="inline"><mrow><mi>x</mi><mo>=</mo><mn>2</mn></mrow></math>
+                as a value.
+            </p>
+        "#;
+
+        let paragraphs = paragraphs_from_html(html);
+
+        assert_eq!(paragraphs.len(), 1);
+        assert!(paragraphs[0].starts_with("Given [[mathml:"));
+        assert!(paragraphs[0].ends_with("]] as a value."));
+        assert!(!paragraphs[0].contains("equation"));
+    }
+
+    #[test]
+    fn section_images_keep_text_position() {
+        let html = r#"
+            <p>Cells store information in DNA.</p>
+            <div class="os-figure">
+                <figure>
+                    <span data-type="media" data-alt="Detailed cell diagram">
+                        <img src="../resources/cell-image"
+                             data-media-type="image/png"
+                             alt="Cell diagram" />
+                    </span>
+                </figure>
+                <div class="os-caption-container">
+                    <span class="os-title-label">Figure </span>
+                    <span class="os-number">1.2</span>
+                    <span class="os-caption">A labeled cell diagram.</span>
+                </div>
+            </div>
+            <p>Proteins perform many cellular functions.</p>
+        "#;
+
+        let (paragraphs, images) = section_content_from_html(
+            html,
+            "https://openstax.org/apps/archive/20260407.195030/contents/book@version:page.json",
+        );
+
+        assert_eq!(
+            paragraphs,
+            vec![
+                "Cells store information in DNA.",
+                "Proteins perform many cellular functions."
+            ]
+        );
+        assert_eq!(images.len(), 1);
+        assert_eq!(
+            images[0].url,
+            "https://openstax.org/apps/archive/20260407.195030/resources/cell-image"
+        );
+        assert_eq!(images[0].anchor_paragraph_ordinal, Some(0));
+    }
 }

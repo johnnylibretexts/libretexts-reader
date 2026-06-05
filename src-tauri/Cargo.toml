@@ -23,7 +23,7 @@ xz2 = "0.1"
 zip = "3.0"
 
 [dependencies]
-tauri = { version = "2.1", features = [] }
+tauri = { version = "2.1", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.0"
 tauri-plugin-fs = "2.0"
 tauri-plugin-updater = "2.0"

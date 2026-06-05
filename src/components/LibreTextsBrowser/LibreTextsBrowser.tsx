@@ -180,21 +180,7 @@ export function LibreTextsBrowser({ onImported }: LibreTextsBrowserProps) {
             key={book.bookId}
           >
             <div className="flex min-w-0 gap-3">
-              <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-md bg-brand-50 text-brand-700 dark:bg-neutral-800 dark:text-brand-500">
-                {book.thumbnail ? (
-                  <img
-                    alt=""
-                    className="size-full object-cover"
-                    loading="lazy"
-                    onError={(event) => {
-                      event.currentTarget.style.display = "none";
-                    }}
-                    src={book.thumbnail}
-                  />
-                ) : (
-                  <BookOpen className="size-5" aria-hidden="true" />
-                )}
-              </div>
+              <LibreTextsThumbnail thumbnail={book.thumbnail} />
               <div className="min-w-0">
                 <h2 className="line-clamp-2 text-base font-semibold">
                   {book.title}
@@ -252,6 +238,31 @@ export function LibreTextsBrowser({ onImported }: LibreTextsBrowserProps) {
         ))}
       </div>
     </section>
+  );
+}
+
+function LibreTextsThumbnail({ thumbnail }: { thumbnail: string | null }) {
+  const [failed, setFailed] = useState(false);
+  const showThumbnail = thumbnail && !failed;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [thumbnail]);
+
+  return (
+    <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-md bg-brand-50 text-brand-700 dark:bg-neutral-800 dark:text-brand-500">
+      {showThumbnail ? (
+        <img
+          alt=""
+          className="size-full object-cover"
+          loading="lazy"
+          onError={() => setFailed(true)}
+          src={thumbnail}
+        />
+      ) : (
+        <BookOpen className="size-5" aria-hidden="true" />
+      )}
+    </div>
   );
 }
 

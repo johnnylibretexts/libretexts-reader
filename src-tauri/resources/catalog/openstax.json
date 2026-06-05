@@ -6,7 +6,7 @@
       "title": "Algebra and Trigonometry",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/algebra_trigonometry.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -16,7 +16,7 @@
       "title": "Algebra and Trigonometry 2e",
       "subject": "Mathematics",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/algebra_trigonometry_2e.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -26,7 +26,7 @@
       "title": "American Government",
       "subject": "Social Sciences",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/american_government.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -36,7 +36,7 @@
       "title": "American Government 2e",
       "subject": "Social Sciences",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/american_government_2e_book_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -46,7 +46,7 @@
       "title": "American Government 3e",
       "subject": "Social Sciences",
       "edition": "3",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/american_government_3e_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -56,7 +56,7 @@
       "title": "Anatomy and Physiology",
       "subject": "Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/anatomy_physiology.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -66,7 +66,7 @@
       "title": "Anatomy and Physiology 2e",
       "subject": "Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/anatomy_and_physiology_2e_webcard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -76,7 +76,7 @@
       "title": "Astronomy",
       "subject": "Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/astronomy.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -86,7 +86,7 @@
       "title": "Astronomy 2e",
       "subject": "Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/astronomy_2e_webcard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -96,7 +96,7 @@
       "title": "Biology",
       "subject": "Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/biology.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -106,7 +106,7 @@
       "title": "Biology 2e",
       "subject": "Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/biology_book_card_2e.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -116,7 +116,7 @@
       "title": "Biology for AP® Courses",
       "subject": "Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/biology_AP.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -126,7 +126,7 @@
       "title": "Business Ethics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/business_ethics_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -136,7 +136,7 @@
       "title": "Business Law I Essentials",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/business_law_l_essentials_web_card.svg",
       "license": "Creative Commons Attribution-NonCommercial-ShareAlike License",
       "language": "en"
     },
@@ -176,7 +176,7 @@
       "title": "Calculus Volume 1",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/calculus-v1.svg",
       "license": "Creative Commons Attribution-NonCommercial-ShareAlike License",
       "language": "en"
     },
@@ -186,7 +186,7 @@
       "title": "Calculus Volume 2",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/calculus-v2.svg",
       "license": "Creative Commons Attribution-NonCommercial-ShareAlike License",
       "language": "en"
     },
@@ -196,7 +196,7 @@
       "title": "Calculus Volume 3",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/calculus-v3.svg",
       "license": "Creative Commons Attribution-NonCommercial-ShareAlike License",
       "language": "en"
     },
@@ -206,7 +206,7 @@
       "title": "Chemistry",
       "subject": "Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/chemistry.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -216,7 +216,7 @@
       "title": "Chemistry 2e",
       "subject": "Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/chemistry_2e_book_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -226,7 +226,7 @@
       "title": "Chemistry: Atoms First",
       "subject": "Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/Chmistry-Atoms-First.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -236,7 +236,7 @@
       "title": "Chemistry: Atoms First 2e",
       "subject": "Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/chemistry_atoms_first_2e_book_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -246,7 +246,7 @@
       "title": "Clinical Nursing Skills",
       "subject": "Health",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/clinical_nursing_skills_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -256,7 +256,7 @@
       "title": "College Algebra",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_algebra.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -266,7 +266,7 @@
       "title": "College Algebra 2e",
       "subject": "Mathematics",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_algebra_2e_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -276,7 +276,7 @@
       "title": "College Algebra with Corequisite Support",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_algebra__with_corequisite_support_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -286,7 +286,7 @@
       "title": "College Algebra with Corequisite Support 2e",
       "subject": "Mathematics",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_algebra_with_corequisite_support_2e.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -296,7 +296,7 @@
       "title": "College Physics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/physics.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -306,7 +306,7 @@
       "title": "College Physics 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_physics_2e.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -316,7 +316,7 @@
       "title": "College Physics for AP® Courses",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_physics_for_ap_course_book_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -326,7 +326,7 @@
       "title": "College Physics for AP® Courses 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_physics_for_ap_course_2e.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -336,7 +336,7 @@
       "title": "College Success",
       "subject": "College Success",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_success_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -346,7 +346,7 @@
       "title": "College Success Concise",
       "subject": "College Success",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/college_success_concise_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -356,7 +356,7 @@
       "title": "Concepts of Biology",
       "subject": "Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/concpets_biology_eZrc8yQ.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -366,7 +366,7 @@
       "title": "Contemporary Mathematics",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/contemporary_mathematics_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -376,7 +376,7 @@
       "title": "Elementary Algebra",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/elementary-algebra.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -386,7 +386,7 @@
       "title": "Elementary Algebra 2e",
       "subject": "Mathematics",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/elementary_algebra_2e_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -396,7 +396,7 @@
       "title": "Entrepreneurship",
       "subject": "Other",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/entrepreneurship_book_card_2k8vDF2.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -466,7 +466,7 @@
       "title": "Intermediate Algebra",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/intermediate-algebra.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -476,7 +476,7 @@
       "title": "Intermediate Algebra 2e",
       "subject": "Mathematics",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/intermediate_algebra_2e_web_card_GzBTGtH.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -506,7 +506,7 @@
       "title": "Introduction to Anthropology",
       "subject": "Social Sciences",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introduction_to_anthropology.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -516,7 +516,7 @@
       "title": "Introduction to Business",
       "subject": "Business",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introduction_to_business.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -526,7 +526,7 @@
       "title": "Introduction to Intellectual Property",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introduction_to_intellectual_property_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -536,7 +536,7 @@
       "title": "Introduction to Philosophy",
       "subject": "Humanities",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introduction_to_philosophy_webcard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -546,7 +546,7 @@
       "title": "Introduction to Political Science",
       "subject": "Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introduction_to_political_science_webcard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -556,7 +556,7 @@
       "title": "Introduction to Python Programming",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introduction_to_python_programming_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -566,7 +566,7 @@
       "title": "Introduction to Sociology 2e",
       "subject": "Social Sciences",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/sociology_2e.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -576,7 +576,7 @@
       "title": "Introduction to Sociology 3e",
       "subject": "Social Sciences",
       "edition": "3",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introduction_to_sociology_3e_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -586,7 +586,7 @@
       "title": "Introductory Business Statistics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/IntroductoryBusinessStatistics-bookcard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -596,7 +596,7 @@
       "title": "Introductory Business Statistics 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introductory_business_statistics_2e_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -606,7 +606,7 @@
       "title": "Introductory Statistics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/statistics.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -616,7 +616,7 @@
       "title": "Introductory Statistics 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/introductory_statistics_2e_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -626,7 +626,7 @@
       "title": "Life Liberty And Pursuit Happiness",
       "subject": "Social Sciences",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/life_libery_and_the_pursuit_of_happiness_QFfFHz3.svg",
       "license": "Unknown",
       "language": "en"
     },
@@ -646,7 +646,7 @@
       "title": "Maternal Newborn Nursing",
       "subject": "Health",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/maternal-newborn_nursing_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -656,7 +656,7 @@
       "title": "Microbiology",
       "subject": "Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/microbiology.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -676,7 +676,7 @@
       "title": "Nutrition for Nurses",
       "subject": "Health",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/nutrition_for_nurses_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -686,7 +686,7 @@
       "title": "Organic Chemistry",
       "subject": "Science",
       "edition": "10",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/organic_chemistry_web_card.svg",
       "license": "Creative Commons Attribution-NonCommercial-ShareAlike License",
       "language": "en"
     },
@@ -696,7 +696,7 @@
       "title": "Organizational Behavior",
       "subject": "Business",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/organizational_behavior_book_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -706,7 +706,7 @@
       "title": "Pharmacology for Nurses",
       "subject": "Health",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/pharmacology_for_nurses_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -716,7 +716,7 @@
       "title": "Physics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/high_school_physics_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -726,7 +726,7 @@
       "title": "Population Health for Nurses",
       "subject": "Health",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/population_health_for_nurses_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -736,7 +736,7 @@
       "title": "Prealgebra",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/prealgebra_1.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -746,7 +746,7 @@
       "title": "Prealgebra 2e",
       "subject": "Mathematics",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/prealgebra_2e_web_card_FoepHLS.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -766,7 +766,7 @@
       "title": "Precalculus",
       "subject": "Mathematics",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/precalculus.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -776,7 +776,7 @@
       "title": "Precalculus 2e",
       "subject": "Mathematics",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/precalculus_2e.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -786,7 +786,7 @@
       "title": "Preparing for College Success",
       "subject": "College Success",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/preparing_for_college_success_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -796,7 +796,7 @@
       "title": "Principles of Accounting, Volume 1: Financial Accounting",
       "subject": "Business",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles_of_acounting_volume_1_book_card.svg",
       "license": "Creative Commons Attribution-NonCommercial-ShareAlike License",
       "language": "en"
     },
@@ -806,7 +806,7 @@
       "title": "Principles of Accounting, Volume 2: Managerial Accounting",
       "subject": "Business",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles_of_acounting_volume_2_book_card_Vu9ykSz.svg",
       "license": "Creative Commons Attribution-NonCommercial-ShareAlike License",
       "language": "en"
     },
@@ -816,7 +816,7 @@
       "title": "Principles of Economics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/economics_8mNeBU3.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -826,7 +826,7 @@
       "title": "Principles of Economics 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles_of_economics_2e_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -836,7 +836,7 @@
       "title": "Principles of Economics 3e",
       "subject": "Computer Science",
       "edition": "3",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/Economics3e_webcard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -846,7 +846,7 @@
       "title": "Principles of Finance",
       "subject": "Business",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles_of_finance.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -856,7 +856,7 @@
       "title": "Principles of Macroeconomics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/macro_economics.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -866,7 +866,7 @@
       "title": "Principles of Macroeconomics 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles_of_macrcoeconomics_2e_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -876,7 +876,7 @@
       "title": "Principles of Macroeconomics 3e",
       "subject": "Computer Science",
       "edition": "3",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles-macroeconomics-3e-web-card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -886,7 +886,7 @@
       "title": "Principles of Macroeconomics for AP® Courses",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles_of_macroeconomics_for_ap_courses_book_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -896,7 +896,7 @@
       "title": "Principles of Macroeconomics for AP® Courses 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/APMacroeconomics2e-bookcard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -906,7 +906,7 @@
       "title": "Principles of Management",
       "subject": "Business",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles_of_management_book_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -916,7 +916,7 @@
       "title": "Principles of Marketing",
       "subject": "Other",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles.marketing.web.card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -926,7 +926,7 @@
       "title": "Principles of Microeconomics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/micro_economics.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -936,7 +936,7 @@
       "title": "Principles of Microeconomics 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/micro_economics_2e.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -946,7 +946,7 @@
       "title": "Principles of Microeconomics 3e",
       "subject": "Computer Science",
       "edition": "3",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/principles-microeconomics-3e-web-card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -956,7 +956,7 @@
       "title": "Principles of Microeconomics for AP® Courses",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/micro_economics_AP_2vxFCOM.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -966,7 +966,7 @@
       "title": "Principles of Microeconomics for AP® Courses 2e",
       "subject": "Computer Science",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/APMicroeconomics2e-bookcard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -976,7 +976,7 @@
       "title": "Psychiatric-Mental Health Nursing",
       "subject": "Health",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/psychiatric-mental_health_nursing_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -996,7 +996,7 @@
       "title": "Psychology",
       "subject": "Social Sciences",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/psychology.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1006,7 +1006,7 @@
       "title": "Psychology 2e",
       "subject": "Social Sciences",
       "edition": "2",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/psychology_2e_web_card_Nic1ENA.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1036,7 +1036,7 @@
       "title": "Statistics",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/high_school_statistics_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1046,7 +1046,7 @@
       "title": "U.S. History",
       "subject": "Social Sciences",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/US_history.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1056,7 +1056,7 @@
       "title": "University Physics Volume 1",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/university_physics_volume_1_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1066,7 +1066,7 @@
       "title": "University Physics Volume 2",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/university_physics_volume_2_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1076,7 +1076,7 @@
       "title": "University Physics Volume 3",
       "subject": "Computer Science",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/university_physics_volume_3_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1086,7 +1086,7 @@
       "title": "Workplace Software and Skills",
       "subject": "Other",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/workplace_software_and_skills_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1096,7 +1096,7 @@
       "title": "World History Volume 1, to 1500",
       "subject": "Social Sciences",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/World_History_volume_1_WebCard.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1106,7 +1106,7 @@
       "title": "World History Volume 2, from 1400",
       "subject": "Social Sciences",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/World_History_volume_2_WebCard_uh6dUHf.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     },
@@ -1116,7 +1116,7 @@
       "title": "Writing Guide with Handbook",
       "subject": "Humanities",
       "edition": "1",
-      "coverUrl": null,
+      "coverUrl": "https://assets.openstax.org/oscms-prodcms/media/documents/writing_guide_with_handbook_web_card.svg",
       "license": "Creative Commons Attribution License",
       "language": "en"
     }

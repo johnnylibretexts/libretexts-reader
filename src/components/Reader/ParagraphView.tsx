@@ -1,5 +1,6 @@
 import { sentenceText, usePlayerStore } from "../../stores/player";
 import type * as Domain from "../../types/domain";
+import { MathText } from "./MathText";
 
 interface ParagraphViewProps {
   paragraph: Domain.Paragraph;
@@ -23,7 +24,7 @@ export function ParagraphView({
       : [0];
 
   return (
-    <p className="text-lg leading-8 text-neutral-800 dark:text-neutral-200">
+    <div className="text-lg leading-8 text-neutral-800 dark:text-neutral-200">
       {sentenceIndexes.map((sentenceIndex) => {
         const active =
           currentParagraphIndex === paragraphIndex &&
@@ -48,10 +49,10 @@ export function ParagraphView({
             role="button"
             tabIndex={0}
           >
-            {sentenceText(paragraph, sentenceIndex)}{" "}
+            <MathText text={sentenceText(paragraph, sentenceIndex)} />{" "}
           </span>
         );
       })}
-    </p>
+    </div>
   );
 }

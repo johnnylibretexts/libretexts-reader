@@ -20,6 +20,7 @@ use tokio::io::AsyncWriteExt;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::commands::tts::SpeechAudio;
+use crate::content::normalize::normalize_for_tts;
 use crate::db::connection::DbPool;
 use crate::db::library;
 use crate::db::models::{Document, Section};
@@ -237,7 +238,7 @@ pub async fn preview_supertonic_tts(
     state: State<'_, DbPool>,
     request: SupertonicPreviewRequest,
 ) -> AppResult<SpeechAudio> {
-    let text = request.text.trim().to_string();
+    let text = normalize_for_tts(request.text.trim());
     if text.is_empty() {
         return Err(AppError::InvalidInput("preview text is required".into()));
     }
@@ -337,7 +338,13 @@ pub async fn synthesize_supertonic_text(
     let voice_style = playback_voice_style(voice_id, &config.voice_style);
     let language = config.language;
 
-    synthesize_supertonic_audio(text.to_string(), voice_style, language, clamp_speed(speed)).await
+    synthesize_supertonic_audio(
+        normalize_for_tts(text),
+        voice_style,
+        language,
+        clamp_speed(speed),
+    )
+    .await
 }
 
 impl SupertonicConfig {
@@ -384,7 +391,7 @@ fn chapter_material(
     let paragraphs = library::list_paragraphs(&conn, section_id)?;
     let text = paragraphs
         .into_iter()
-        .map(|paragraph| paragraph.text.trim().to_string())
+        .map(|paragraph| normalize_for_tts(paragraph.text.trim()))
         .filter(|paragraph| !paragraph.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");

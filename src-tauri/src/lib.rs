@@ -20,6 +20,7 @@ pub fn run() {
             commands::library::get_document,
             commands::library::list_sections,
             commands::library::list_paragraphs,
+            commands::library::list_section_images,
             commands::library::delete_document,
             commands::library::search_documents,
             commands::content::import_openstax,
@@ -52,6 +53,7 @@ pub fn run() {
             paths::models_dir()?;
             paths::voices_dir()?;
             paths::covers_dir()?;
+            paths::images_dir()?;
             paths::cache_dir()?;
             paths::temp_dir()?;
             let pool = init_pool(&db_path)?;

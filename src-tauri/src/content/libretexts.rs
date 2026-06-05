@@ -17,6 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
+use crate::content::images::{
+    download_images, source_image_from_element, source_images_from_html, SourceImage,
+};
 use crate::db::connection::DbPool;
 use crate::db::models::{LibreTextsBook, LibreTextsLibrary, SourceType};
 use crate::error::{AppError, AppResult};
@@ -358,6 +361,42 @@ impl LibreTextsClient {
 
             let html = self.fetch_html(&seed.url).await?;
             let page = parse_public_page(&html, &seed.url, &root_scope)?;
+            let page_id = page
+                .page_id
+                .clone()
+                .or_else(|| seed.page_id.clone())
+                .unwrap_or_else(|| normalized_public_url(&seed.url));
+            let chapter_number = seed.chapter_number.max(1);
+            let title = page
+                .title
+                .clone()
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or_else(|| seed.title.clone());
+            let should_store_page = page.children.is_empty()
+                || (!is_root && public_page_has_importable_content(&page, &seed.url));
+
+            if should_store_page {
+                if chapter_number != reported_chapter {
+                    reported_chapter = chapter_number;
+                    on_progress(reported_chapter, chapter_count);
+                }
+
+                let page_content = LibreTextsPageContent {
+                    page_id: page_id.clone(),
+                    title: title.clone(),
+                    html: page.content_html.clone(),
+                    revision: page.revision.clone(),
+                };
+                let cache_key = format!("{}:{page_id}", book.book_id);
+                self.store_page(&book.book_id, &page_content, &cache_key)?;
+
+                pages.push(LibreTextsTocEntry {
+                    page_id,
+                    title,
+                    url: Some(seed.url.clone()),
+                    chapter_number,
+                });
+            }
 
             if !page.children.is_empty() {
                 if is_root {
@@ -381,37 +420,7 @@ impl LibreTextsClient {
                 for child in children.into_iter().rev() {
                     stack.push(child);
                 }
-                continue;
             }
-
-            let page_id = page
-                .page_id
-                .or(seed.page_id)
-                .unwrap_or_else(|| normalized_public_url(&seed.url));
-            let chapter_number = seed.chapter_number.max(1);
-            if chapter_number != reported_chapter {
-                reported_chapter = chapter_number;
-                on_progress(reported_chapter, chapter_count);
-            }
-            let title = page
-                .title
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or(seed.title);
-            let page_content = LibreTextsPageContent {
-                page_id: page_id.clone(),
-                title: title.clone(),
-                html: page.content_html,
-                revision: page.revision,
-            };
-            let cache_key = format!("{}:{page_id}", book.book_id);
-            self.store_page(&book.book_id, &page_content, &cache_key)?;
-
-            pages.push(LibreTextsTocEntry {
-                page_id,
-                title,
-                url: Some(seed.url),
-                chapter_number,
-            });
         }
 
         if pages.is_empty() {
@@ -500,6 +509,17 @@ impl LibreTextsClient {
         }
 
         Ok(pages)
+    }
+
+    pub async fn download_page_images(
+        &self,
+        library: &str,
+        entry: &LibreTextsTocEntry,
+        page: &LibreTextsPageContent,
+    ) -> AppResult<Vec<crate::content::document::ImageBuilder>> {
+        let base_url = page_base_url(library, entry);
+        let (_, images) = section_content_from_html(&page.html, &base_url);
+        download_images(&self.http, images).await
     }
 
     async fn fetch_json<T: DeserializeOwned>(
@@ -664,7 +684,7 @@ where
     let book = client.fetch_book_detail(book_id).await?;
     let toc = client.fetch_toc(&book, &mut on_progress).await?;
     let pages = client.fetch_book_pages(&toc, on_progress).await?;
-    let sections = sections_from_pages(&toc, &pages);
+    let sections = sections_from_pages(&client, &toc, &pages).await?;
 
     if sections.is_empty() {
         return Err(AppError::LibreTexts(
@@ -690,23 +710,62 @@ where
 }
 
 pub fn paragraphs_from_html(html: &str) -> Vec<String> {
-    let document = Html::parse_document(html);
+    paragraphs_from_document(&Html::parse_document(html))
+}
+
+fn paragraphs_from_document(document: &Html) -> Vec<String> {
     let block_selector =
         Selector::parse("h1, h2, h3, h4, h5, h6, p, li").expect("valid LibreTexts block selector");
     let mut paragraphs = Vec::new();
 
     for element in document.select(&block_selector) {
-        if should_skip_element(&element) {
-            continue;
-        }
-
-        let normalized = normalize_text(&element.text().collect::<Vec<_>>().join(" "));
-        if is_readable_paragraph(&normalized) {
-            paragraphs.push(normalized);
+        if let Some(paragraph) = paragraph_from_element(&element) {
+            paragraphs.push(paragraph);
         }
     }
 
     paragraphs
+}
+
+fn section_content_from_html(html: &str, base_url: &str) -> (Vec<String>, Vec<SourceImage>) {
+    let document = Html::parse_document(html);
+    let block_selector = Selector::parse("h1, h2, h3, h4, h5, h6, p, li, img[src], img[data-src]")
+        .expect("valid LibreTexts content selector");
+    let mut paragraphs = Vec::new();
+    let mut images = Vec::new();
+
+    for element in document.select(&block_selector) {
+        if element.value().name() == "img" {
+            if should_skip_element(&element) {
+                continue;
+            }
+            if let Some(mut image) = source_image_from_element(&element, base_url) {
+                image.anchor_paragraph_ordinal = anchor_paragraph_ordinal(paragraphs.len());
+                images.push(image);
+            }
+        } else if let Some(paragraph) = paragraph_from_element(&element) {
+            paragraphs.push(paragraph);
+        }
+    }
+
+    (paragraphs, images)
+}
+
+fn paragraph_from_element(element: &ElementRef<'_>) -> Option<String> {
+    if should_skip_element(element) {
+        return None;
+    }
+
+    let normalized = normalize_text(&element.text().collect::<Vec<_>>().join(" "));
+    if is_readable_paragraph(&normalized) {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+fn anchor_paragraph_ordinal(paragraph_count: usize) -> Option<u32> {
+    paragraph_count.checked_sub(1).map(|index| index as u32)
 }
 
 impl From<ApiBook> for LibreTextsBook {
@@ -752,32 +811,27 @@ fn collect_book_pages(page: &TreePage, pages: &mut Vec<LibreTextsTocEntry>) -> u
     let children = tree_children(page);
 
     if children.is_empty() {
-        collect_leaf_pages(page, 1, pages);
+        collect_page_tree(page, 1, pages);
         return 1;
     }
 
     for (index, child) in children.iter().enumerate() {
-        collect_leaf_pages(child, index as u32 + 1, pages);
+        collect_page_tree(child, index as u32 + 1, pages);
     }
 
     children.len() as u32
 }
 
-fn collect_leaf_pages(page: &TreePage, chapter_number: u32, pages: &mut Vec<LibreTextsTocEntry>) {
-    let children = tree_children(page);
+fn collect_page_tree(page: &TreePage, chapter_number: u32, pages: &mut Vec<LibreTextsTocEntry>) {
+    pages.push(LibreTextsTocEntry {
+        page_id: page.id.clone(),
+        title: page.title.clone(),
+        url: None,
+        chapter_number,
+    });
 
-    if children.is_empty() {
-        pages.push(LibreTextsTocEntry {
-            page_id: page.id.clone(),
-            title: page.title.clone(),
-            url: None,
-            chapter_number,
-        });
-        return;
-    }
-
-    for child in children {
-        collect_leaf_pages(child, chapter_number, pages);
+    for child in tree_children(page) {
+        collect_page_tree(child, chapter_number, pages);
     }
 }
 
@@ -826,6 +880,16 @@ fn library_base_url(library: &str) -> String {
         .unwrap_or_else(|_| format!("https://{library}.libretexts.org"))
         .trim_end_matches('/')
         .to_string()
+}
+
+fn page_base_url(library: &str, entry: &LibreTextsTocEntry) -> String {
+    entry.url.clone().unwrap_or_else(|| {
+        format!(
+            "{}/@api/deki/pages/{}/contents",
+            library_base_url(library),
+            entry.page_id
+        )
+    })
 }
 
 fn should_retry_status(status: StatusCode) -> bool {
@@ -956,31 +1020,50 @@ fn url_is_within_scope(url: &str, root_scope: &str) -> bool {
     url == root_scope || url.starts_with(&format!("{root_scope}/"))
 }
 
-fn sections_from_pages(
+fn public_page_has_importable_content(page: &PublicPage, page_url: &str) -> bool {
+    !paragraphs_from_html(&page.content_html).is_empty()
+        || !source_images_from_html(&page.content_html, page_url).is_empty()
+}
+
+async fn sections_from_pages(
+    client: &LibreTextsClient,
     toc: &LibreTextsToc,
     pages: &[LibreTextsPageContent],
-) -> Vec<SectionBuilder> {
-    pages
-        .iter()
-        .map(|page| {
-            let title = toc
-                .pages
-                .iter()
-                .find(|entry| entry.page_id == page.page_id)
-                .map(|entry| entry.title.clone())
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or_else(|| page.title.clone());
+) -> AppResult<Vec<SectionBuilder>> {
+    let mut sections = Vec::new();
 
-            SectionBuilder {
-                title,
-                paragraphs: paragraphs_from_html(&page.html),
+    for page in pages {
+        let entry = toc.pages.iter().find(|entry| entry.page_id == page.page_id);
+        let title = entry
+            .map(|entry| entry.title.clone())
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| page.title.clone());
+        let (paragraphs, image_candidates) = match entry {
+            Some(entry) => {
+                section_content_from_html(&page.html, &page_base_url(&toc.library, entry))
             }
-        })
-        .filter(|section| !section.paragraphs.is_empty())
-        .collect()
+            None => (paragraphs_from_html(&page.html), Vec::new()),
+        };
+        let images = download_images(&client.http, image_candidates).await?;
+        if paragraphs.is_empty() && images.is_empty() {
+            continue;
+        }
+
+        sections.push(SectionBuilder {
+            title,
+            paragraphs,
+            images,
+        });
+    }
+
+    Ok(sections)
 }
 
 fn should_skip_element(element: &ElementRef) -> bool {
+    if element_html_contains_navigation_listing(element) {
+        return true;
+    }
+
     element
         .ancestors()
         .filter_map(ElementRef::wrap)
@@ -995,7 +1078,9 @@ fn should_skip_element(element: &ElementRef) -> bool {
                     "mt-script-comment"
                         | "Headertext"
                         | "autoattribution"
+                        | "mt-category-container"
                         | "noinclude"
+                        | "noindex"
                         | "noprint"
                         | "printfooter"
                         | "mt-content-footer"
@@ -1004,12 +1089,23 @@ fn should_skip_element(element: &ElementRef) -> bool {
                         | "mt-social"
                         | "lt-social"
                         | "mt-guide-content"
+                        | "mt-guide-listings"
+                        | "mt-list-topics"
+                        | "mt-listing-detailed"
+                        | "mt-subpage-listings-container"
                         | "mt-topic-hierarchy-listings"
                         | "mt-sortable-listings-container"
                         | "toc"
                 )
             })
         })
+}
+
+fn element_html_contains_navigation_listing(element: &ElementRef<'_>) -> bool {
+    let html = element.html();
+    html.contains("mt-topic-hierarchy-listings")
+        || html.contains("mt-sortable-listings-container")
+        || html.contains("mt-subpage-listings-container")
 }
 
 fn normalize_text(text: &str) -> String {
@@ -1046,5 +1142,150 @@ fn license_label(value: &str) -> &str {
         "arr" => "All Rights Reserved",
         "" => "Unknown",
         _ => value,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use crate::db::{connection, library};
+
+    #[test]
+    fn paragraphs_ignore_libretexts_navigation_listings() {
+        let html = r#"
+            <section class="mt-content-container">
+                <p>This chapter has its own introduction.</p>
+                <p>
+                    <div class="mt-category-container mt-subpage-listings-container noindex">
+                        <ul class="mt-sortable-listings-container">
+                            <li data-page-id="1"><a href="/chapter/1">1.1: Child Page</a></li>
+                            <li data-page-id="2"><a href="/chapter/2">1.2: Child Page</a></li>
+                        </ul>
+                    </div>
+                </p>
+            </section>
+        "#;
+
+        assert_eq!(
+            super::paragraphs_from_html(html),
+            vec!["This chapter has its own introduction."]
+        );
+    }
+
+    #[test]
+    fn section_images_keep_text_position() {
+        let html = r#"
+            <section class="mt-content-container">
+                <div class="mt-category-container mt-subpage-listings-container noindex">
+                    <img src="/book/navigation-thumb.jpg" alt="Navigation thumbnail" />
+                </div>
+                <p>Cells store information in DNA.</p>
+                <figure>
+                    <img src="/book/cell.jpg" alt="Cell diagram" />
+                    <figcaption>Figure 1.1 Cell structure.</figcaption>
+                </figure>
+                <p>Proteins perform many cellular functions.</p>
+            </section>
+        "#;
+
+        let (paragraphs, images) =
+            super::section_content_from_html(html, "https://bio.libretexts.org/chapter/page");
+
+        assert_eq!(
+            paragraphs,
+            vec![
+                "Cells store information in DNA.",
+                "Proteins perform many cellular functions."
+            ]
+        );
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].url, "https://bio.libretexts.org/book/cell.jpg");
+        assert_eq!(images[0].anchor_paragraph_ordinal, Some(0));
+        assert_eq!(
+            images[0].caption.as_deref(),
+            Some("Figure 1.1 Cell structure.")
+        );
+    }
+
+    #[test]
+    fn public_non_leaf_page_with_own_content_is_importable() {
+        let page = super::PublicPage {
+            page_id: Some("chapter".to_string()),
+            title: Some("Chapter".to_string()),
+            content_html: r#"
+                <section class="mt-content-container">
+                    <p>This chapter has its own figure.</p>
+                    <figure><img src="/chapter/figure.jpg" alt="Figure" /></figure>
+                    <div class="mt-guide-content">
+                        <ul class="mt-topic-hierarchy-listings">
+                            <li data-page-id="child"><a href="/chapter/child">Child</a></li>
+                        </ul>
+                    </div>
+                </section>
+            "#
+            .to_string(),
+            children: vec![super::PublicTocSeed {
+                page_id: Some("child".to_string()),
+                title: "Child".to_string(),
+                url: "https://example.com/chapter/child".to_string(),
+                chapter_number: 1,
+            }],
+            revision: None,
+        };
+
+        assert!(super::public_page_has_importable_content(
+            &page,
+            "https://example.com/chapter"
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_imports_small_public_book_with_images() {
+        let app_data_dir =
+            std::env::temp_dir().join(format!("johnny-reader-libretexts-smoke-{}", Uuid::new_v4()));
+        std::env::set_var("JOHNNY_READER_APP_DATA_DIR", &app_data_dir);
+        let db_path = app_data_dir.join("library.sqlite");
+        let pool = connection::init_pool(&db_path).expect("temporary database should initialize");
+
+        let document = super::import_book(pool.clone(), "human-15711", |current, total| {
+            eprintln!("LibreTexts smoke import progress: {current}/{total}");
+        })
+        .await
+        .expect("small public LibreTexts book should import");
+
+        assert!(
+            !document.sections.is_empty(),
+            "import should produce readable sections"
+        );
+        assert!(
+            document
+                .sections
+                .iter()
+                .any(|section| !section.images.is_empty()),
+            "import should download at least one section image"
+        );
+
+        let mut conn = pool.get().expect("database connection should be available");
+        let document_id = document
+            .persist(&mut conn)
+            .expect("imported document should persist");
+        let sections =
+            library::list_sections(&conn, &document_id).expect("sections should be listed");
+        let image_count = sections
+            .iter()
+            .map(|section| {
+                library::list_section_images(&conn, &section.id)
+                    .expect("section images should be listed")
+                    .len()
+            })
+            .sum::<usize>();
+
+        assert!(image_count > 0, "persisted document should include images");
+        library::delete_document(&conn, &document_id).expect("temporary document should delete");
+        drop(conn);
+        drop(pool);
+        let _ = std::fs::remove_dir_all(app_data_dir);
     }
 }

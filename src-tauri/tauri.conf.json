@@ -22,7 +22,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://openstax.org https://*.cnx.org https://*.libretexts.org; connect-src 'self' https://openstax.org https://*.cnx.org https://commons.libretexts.org https://api.libretexts.org https://*.libretexts.org https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co https://github.com https://api.github.com https://cdn.jsdelivr.net; media-src 'self' blob:; worker-src 'self' blob:"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost https://openstax.org https://assets.openstax.org https://images.openstax.org https://*.cnx.org https://*.libretexts.org https://files.mtstatic.com; connect-src 'self' https://openstax.org https://*.cnx.org https://commons.libretexts.org https://api.libretexts.org https://*.libretexts.org https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co https://github.com https://api.github.com https://cdn.jsdelivr.net; media-src 'self' blob:; worker-src 'self' blob:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/covers/**", "$APPDATA/images/**"]
+      }
     }
   },
   "bundle": {

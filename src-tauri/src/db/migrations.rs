@@ -11,6 +11,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0002_libretexts_import",
         include_str!("../../resources/migrations/0002_libretexts_import.sql"),
     ),
+    (
+        "0003_section_images",
+        include_str!("../../resources/migrations/0003_section_images.sql"),
+    ),
+    (
+        "0004_section_image_anchors",
+        include_str!("../../resources/migrations/0004_section_image_anchors.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {

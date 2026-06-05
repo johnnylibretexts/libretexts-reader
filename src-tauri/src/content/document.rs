@@ -19,6 +19,26 @@ pub struct DocumentBuilder {
 pub struct SectionBuilder {
     pub title: String,
     pub paragraphs: Vec<String>,
+    pub images: Vec<ImageBuilder>,
+}
+
+pub struct ImageBuilder {
+    pub source_url: String,
+    pub local_path: String,
+    pub alt_text: Option<String>,
+    pub caption: Option<String>,
+    pub content_type: Option<String>,
+    pub anchor_paragraph_ordinal: Option<u32>,
+}
+
+impl SectionBuilder {
+    pub fn text(title: impl Into<String>, paragraphs: Vec<String>) -> Self {
+        Self {
+            title: title.into(),
+            paragraphs,
+            images: Vec::new(),
+        }
+    }
 }
 
 impl DocumentBuilder {
@@ -92,6 +112,28 @@ impl DocumentBuilder {
                         paragraph_index as u32,
                         paragraph,
                         sentence_offsets,
+                    ],
+                )?;
+            }
+
+            for (image_index, image) in section.images.into_iter().enumerate() {
+                let image_id = Uuid::new_v4().to_string();
+                tx.execute(
+                    "INSERT INTO section_images (
+                        id, section_id, ordinal, source_url, local_path,
+                        alt_text, caption, content_type, anchor_paragraph_ordinal
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        image_id,
+                        section_id,
+                        image_index as u32,
+                        image.source_url,
+                        image.local_path,
+                        image.alt_text,
+                        image.caption,
+                        image.content_type,
+                        image.anchor_paragraph_ordinal,
                     ],
                 )?;
             }

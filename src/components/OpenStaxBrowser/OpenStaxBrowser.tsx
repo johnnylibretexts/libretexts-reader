@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { BookOpen, Loader2, Plus, Search } from "lucide-react";
+import { BookOpen, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import { api } from "../../lib/tauri";
 import type * as Domain from "../../types/domain";
 
@@ -13,6 +13,7 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
   const [query, setQuery] = useState("");
   const [subject, setSubject] = useState("all");
   const [language, setLanguage] = useState("all");
+  const [loading, setLoading] = useState(true);
   const [importingUuid, setImportingUuid] = useState<string | null>(null);
   const [progress, setProgress] = useState<Domain.ImportProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +30,11 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
       .catch((error) => {
         if (active) {
           setError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
         }
       });
 
@@ -156,47 +162,72 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
         </p>
       ) : null}
 
+      {loading ? (
+        <div className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          Loading OpenStax catalog
+        </div>
+      ) : null}
+
+      {!loading && filteredBooks.length === 0 ? (
+        <div className="rounded-md border border-neutral-200 bg-white px-4 py-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+          No OpenStax books matched the current search.
+        </div>
+      ) : null}
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {filteredBooks.map((book) => (
           <article
-            className="flex min-h-40 flex-col justify-between gap-4 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+            className="flex min-h-52 flex-col justify-between gap-4 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
             key={book.uuid}
           >
             <div className="flex min-w-0 gap-3">
-              <div className="grid size-10 shrink-0 place-items-center rounded-md bg-brand-50 text-brand-700 dark:bg-neutral-800 dark:text-brand-500">
-                <BookOpen className="size-5" aria-hidden="true" />
-              </div>
+              <OpenStaxThumbnail coverUrl={book.coverUrl} />
               <div className="min-w-0">
                 <h2 className="line-clamp-2 text-base font-semibold">
                   {book.title}
                 </h2>
-                <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+                <p className="mt-1 line-clamp-2 text-sm text-neutral-600 dark:text-neutral-400">
                   {book.subject} · {book.language.toUpperCase()}
                 </p>
               </div>
             </div>
 
+            <p className="line-clamp-3 text-sm text-neutral-600 dark:text-neutral-400">
+              {book.license}
+            </p>
+
             <div className="flex items-center justify-between gap-3">
-              <p className="min-h-5 text-sm text-neutral-500 dark:text-neutral-400">
+              <p className="min-h-5 min-w-0 truncate text-sm text-neutral-500 dark:text-neutral-400">
                 {importingUuid === book.uuid && progress
-                  ? progress.total > 0
-                    ? `${progress.current}/${progress.total}`
-                    : "Starting..."
+                  ? formatOpenStaxProgress(progress)
                   : `Edition ${book.edition}`}
               </p>
-              <button
-                className="inline-flex h-9 items-center gap-2 rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={Boolean(importingUuid)}
-                onClick={() => void importBook(book)}
-                type="button"
-              >
-                {importingUuid === book.uuid ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Plus className="size-4" aria-hidden="true" />
-                )}
-                Add
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                <a
+                  aria-label={`Open ${book.title} on OpenStax`}
+                  className="grid size-9 place-items-center rounded-md border border-neutral-200 text-neutral-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  href={openStaxBookUrl(book)}
+                  rel="noreferrer"
+                  target="_blank"
+                  title="Open source"
+                >
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                </a>
+                <button
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={Boolean(importingUuid)}
+                  onClick={() => void importBook(book)}
+                  type="button"
+                >
+                  {importingUuid === book.uuid ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="size-4" aria-hidden="true" />
+                  )}
+                  Add
+                </button>
+              </div>
             </div>
           </article>
         ))}
@@ -205,8 +236,45 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
   );
 }
 
+function OpenStaxThumbnail({ coverUrl }: { coverUrl: string | null }) {
+  const [failed, setFailed] = useState(false);
+  const showThumbnail = coverUrl && !failed;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [coverUrl]);
+
+  return (
+    <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-md bg-brand-50 text-brand-700 dark:bg-neutral-800 dark:text-brand-500">
+      {showThumbnail ? (
+        <img
+          alt=""
+          className="size-full object-cover"
+          loading="lazy"
+          onError={() => setFailed(true)}
+          src={coverUrl}
+        />
+      ) : (
+        <BookOpen className="size-5" aria-hidden="true" />
+      )}
+    </div>
+  );
+}
+
 function uniqueOptions(values: string[]) {
   return [...new Set(values.filter(Boolean))].sort((left, right) =>
     left.localeCompare(right),
   );
+}
+
+function formatOpenStaxProgress(progress: Domain.ImportProgress) {
+  if (progress.total > 0) {
+    return `Page ${progress.current}/${progress.total}`;
+  }
+
+  return "Preparing pages...";
+}
+
+function openStaxBookUrl(book: Domain.OpenStaxBook) {
+  return `https://openstax.org/books/${encodeURIComponent(book.slug)}`;
 }

@@ -1,9 +1,11 @@
 import { useEffect } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { BookOpen, Loader2 } from "lucide-react";
 import { usePlayerStore } from "../../stores/player";
 import { SupertonicChapterExport } from "./SupertonicChapterExport";
 import { ParagraphView } from "./ParagraphView";
 import { ReaderHeader } from "./ReaderHeader";
+import type * as Domain from "../../types/domain";
 
 interface ReaderProps {
   documentId: string | null;
@@ -12,6 +14,7 @@ interface ReaderProps {
 export function Reader({ documentId }: ReaderProps) {
   const document = usePlayerStore((state) => state.document);
   const paragraphs = usePlayerStore((state) => state.paragraphs);
+  const sectionImages = usePlayerStore((state) => state.sectionImages);
   const loading = usePlayerStore((state) => state.loading);
   const error = usePlayerStore((state) => state.error);
   const loadDocument = usePlayerStore((state) => state.loadDocument);
@@ -59,16 +62,83 @@ export function Reader({ documentId }: ReaderProps) {
         <>
           <SupertonicChapterExport />
           <div className="space-y-5 pb-24 font-reader">
+            <SectionImages
+              images={imagesBeforeFirstParagraph(sectionImages)}
+            />
             {paragraphs.map((paragraph, index) => (
-              <ParagraphView
-                key={paragraph.id}
-                paragraph={paragraph}
-                paragraphIndex={index}
-              />
+              <div className="space-y-5" key={paragraph.id}>
+                <ParagraphView
+                  paragraph={paragraph}
+                  paragraphIndex={index}
+                />
+                <SectionImages
+                  images={imagesAfterParagraph(sectionImages, index)}
+                />
+              </div>
             ))}
+            <SectionImages
+              images={imagesAfterLastParagraph(sectionImages, paragraphs.length)}
+            />
           </div>
         </>
       ) : null}
     </section>
+  );
+}
+
+function SectionImages({ images }: { images: Domain.SectionImage[] }) {
+  if (images.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-6">
+      {images.map((image) => {
+        const caption = image.caption ?? image.altText;
+
+        return (
+          <figure
+            className="reader-figure"
+            key={image.id}
+          >
+            <img
+              alt={image.altText ?? image.caption ?? ""}
+              className="mx-auto max-h-[34rem] max-w-full object-contain"
+              loading="lazy"
+              src={convertFileSrc(image.localPath)}
+            />
+            {caption ? (
+              <figcaption className="mx-auto mt-2 max-w-3xl text-sm leading-6 text-neutral-600 dark:text-neutral-300">
+                {caption}
+              </figcaption>
+            ) : null}
+          </figure>
+        );
+      })}
+    </div>
+  );
+}
+
+function imagesBeforeFirstParagraph(images: Domain.SectionImage[]) {
+  return images.filter((image) => image.anchorParagraphOrdinal === null);
+}
+
+function imagesAfterParagraph(
+  images: Domain.SectionImage[],
+  paragraphIndex: number,
+) {
+  return images.filter(
+    (image) => image.anchorParagraphOrdinal === paragraphIndex,
+  );
+}
+
+function imagesAfterLastParagraph(
+  images: Domain.SectionImage[],
+  paragraphCount: number,
+) {
+  return images.filter(
+    (image) =>
+      image.anchorParagraphOrdinal !== null &&
+      image.anchorParagraphOrdinal >= paragraphCount,
   );
 }

@@ -7,8 +7,9 @@ import {
   type SupertonicLanguage,
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
-import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import { displayError } from "../../lib/errors";
+import { mathContentToSpeech } from "../../lib/mathContent";
+import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
 
@@ -113,7 +114,9 @@ export function SupertonicChapterExport() {
     try {
       await persistSupertonicDefaults();
       const speech = await api.previewSupertonicTts({
-        text: supertonicPreviewText(activeSection.title, sampleText),
+        text: mathContentToSpeech(
+          supertonicPreviewText(activeSection.title, sampleText),
+        ),
         voiceStyle,
         language,
         documentTitle: activeDocument.title,

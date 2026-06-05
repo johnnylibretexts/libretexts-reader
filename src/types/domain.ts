@@ -8,6 +8,8 @@ export type Section = { id: string, documentId: string, ordinal: number, title: 
 
 export type Paragraph = { id: string, sectionId: string, ordinal: number, text: string, sentenceOffsets: Array<[number, number]>, };
 
+export type SectionImage = { id: string, sectionId: string, ordinal: number, sourceUrl: string, localPath: string, altText: string | null, caption: string | null, contentType: string | null, anchorParagraphOrdinal: number | null, };
+
 export type PlaybackState = { documentId: string, sectionId: string, paragraphId: string, sentenceIndex: number, sentenceOffsetMs: number, voiceId: string, speed: number, updatedAt: string, };
 
 export type Voice = { id: string, displayName: string, language: string, gender: string, isBundled: boolean, isDownloaded: boolean, sizeBytes: number, previewPath: string | null, };

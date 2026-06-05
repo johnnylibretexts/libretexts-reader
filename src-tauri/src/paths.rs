@@ -31,6 +31,10 @@ pub fn covers_dir() -> AppResult<PathBuf> {
     app_subdir("covers")
 }
 
+pub fn images_dir() -> AppResult<PathBuf> {
+    app_subdir("images")
+}
+
 pub fn cache_dir() -> AppResult<PathBuf> {
     app_subdir("cache")
 }

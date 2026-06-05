@@ -250,10 +250,7 @@ fn build_sections(
         let paragraphs = crate::content::split_paragraphs(&fallback_text);
 
         if !paragraphs.is_empty() {
-            sections.push(SectionBuilder {
-                title: "Content".to_string(),
-                paragraphs,
-            });
+            sections.push(SectionBuilder::text("Content", paragraphs));
         }
     }
 
@@ -272,10 +269,7 @@ fn push_section(
 ) {
     let paragraphs = paragraphs_from_lines(lines, median_line_gap);
     if !paragraphs.is_empty() {
-        sections.push(SectionBuilder {
-            title: title.to_string(),
-            paragraphs,
-        });
+        sections.push(SectionBuilder::text(title, paragraphs));
     }
 }
 

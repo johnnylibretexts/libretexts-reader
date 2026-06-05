@@ -127,7 +127,7 @@ fn section_from_html(html: &str, index: usize) -> Option<SectionBuilder> {
     if paragraphs.is_empty() {
         None
     } else {
-        Some(SectionBuilder { title, paragraphs })
+        Some(SectionBuilder::text(title, paragraphs))
     }
 }
 

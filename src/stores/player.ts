@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { synthesizeKokoroSpeech } from "../lib/kokoro";
+import { mathContentToSpeech } from "../lib/mathContent";
 import { api } from "../lib/tauri";
 import { displayError } from "../lib/errors";
 import { useSettingsStore } from "./settings";
@@ -17,6 +18,7 @@ interface PlayerState {
   sections: Domain.Section[];
   currentSectionIndex: number;
   paragraphs: Domain.Paragraph[];
+  sectionImages: Domain.SectionImage[];
   currentParagraphIndex: number;
   currentSentenceIndex: number;
   voice: string;
@@ -71,6 +73,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   sections: [],
   currentSectionIndex: 0,
   paragraphs: [],
+  sectionImages: [],
   currentParagraphIndex: 0,
   currentSentenceIndex: 0,
   voice: "af_heart",
@@ -101,17 +104,22 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           document,
           sections: [],
           paragraphs: [],
+          sectionImages: [],
           loading: false,
           error: "This document has no readable sections.",
         });
         return;
       }
 
-      const paragraphs = await api.listParagraphs(sections[0].id);
+      const [paragraphs, sectionImages] = await Promise.all([
+        api.listParagraphs(sections[0].id),
+        api.listSectionImages(sections[0].id),
+      ]);
       set({
         document,
         sections,
         paragraphs,
+        sectionImages,
         currentSectionIndex: 0,
         currentParagraphIndex: firstReadableParagraphIndex(paragraphs),
         currentSentenceIndex: 0,
@@ -142,6 +150,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       document: null,
       sections: [],
       paragraphs: [],
+      sectionImages: [],
       currentSectionIndex: 0,
       currentParagraphIndex: 0,
       currentSentenceIndex: 0,
@@ -274,7 +283,7 @@ function speakWithSystemVoice(
     return;
   }
 
-  const utterance = new SpeechSynthesisUtterance(sentence);
+  const utterance = new SpeechSynthesisUtterance(mathContentToSpeech(sentence));
   utterance.rate = clamp(get().speed, 0.5, 2);
   utterance.voice = chooseSystemVoice(get().voice);
   utterance.onend = () => {
@@ -438,7 +447,8 @@ async function cachedSpeechBlob({
   settings: SettingsState;
   onStatus?: (status: string) => void;
 }) {
-  const key = speechCacheKey(provider, position, text, state, settings);
+  const speechText = mathContentToSpeech(text);
+  const key = speechCacheKey(provider, position, speechText, state, settings);
   const cached = speechCache.get(key);
   if (cached) {
     cached.lastUsed = Date.now();
@@ -447,7 +457,7 @@ async function cachedSpeechBlob({
 
   const promise = synthesizeSpeechBlob({
     provider,
-    text,
+    text: speechText,
     state,
     settings,
     onStatus,
@@ -710,6 +720,7 @@ async function moveToPosition(
 
   try {
     let paragraphs = get().paragraphs;
+    let sectionImages = get().sectionImages;
     if (position.sectionIndex !== get().currentSectionIndex) {
       const section = get().sections[position.sectionIndex];
       if (!section) {
@@ -722,7 +733,10 @@ async function moveToPosition(
           error: null,
         });
       }
-      paragraphs = await api.listParagraphs(section.id);
+      [paragraphs, sectionImages] = await Promise.all([
+        api.listParagraphs(section.id),
+        api.listSectionImages(section.id),
+      ]);
     }
 
     const paragraphIndex = clamp(
@@ -738,6 +752,7 @@ async function moveToPosition(
 
     set({
       paragraphs,
+      sectionImages,
       currentSectionIndex: position.sectionIndex,
       currentParagraphIndex: paragraphIndex,
       currentSentenceIndex: sentenceIndex,
