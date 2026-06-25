@@ -47,12 +47,19 @@ interface PlayerState {
 }
 
 let utteranceToken = 0;
+// Monotonic token so an earlier document load that resolves late cannot
+// overwrite the state of a newer selection.
+let loadDocumentToken = 0;
 let activeAudio: HTMLAudioElement | null = null;
 let activeAudioUrl: string | null = null;
 const SPEECH_INITIAL_BUFFER_SENTENCES = 3;
 const SPEECH_LOOKAHEAD_SENTENCES = 10;
 const SPEECH_PREFETCH_CONCURRENCY = 2;
 const SPEECH_CACHE_LIMIT = 32;
+// Sentinel paragraph/sentence index meaning "the last one in the section".
+// moveToPosition clamps it to the real last index once the section's paragraphs
+// load, so backward navigation into another section lands at its end.
+const LAST_IN_SECTION = Number.MAX_SAFE_INTEGER;
 
 type NeuralTtsProvider = Extract<TtsProvider, "kokoro" | "supertonic">;
 
@@ -86,6 +93,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   activeSentenceText: "",
 
   loadDocument: async (documentId: string) => {
+    const requestId = ++loadDocumentToken;
     cancelSpeech();
     set({
       loading: true,
@@ -99,6 +107,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     try {
       const document = await api.getDocument(documentId);
       const sections = await api.listSections(documentId);
+      if (requestId !== loadDocumentToken) {
+        return;
+      }
       if (sections.length === 0) {
         set({
           document,
@@ -115,6 +126,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         api.listParagraphs(sections[0].id),
         api.listSectionImages(sections[0].id),
       ]);
+      if (requestId !== loadDocumentToken) {
+        return;
+      }
       set({
         document,
         sections,
@@ -128,6 +142,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       });
       await persistPlaybackState(get());
     } catch (error) {
+      if (requestId !== loadDocumentToken) {
+        return;
+      }
       set({
         loading: false,
         error: error instanceof Error ? error.message : String(error),
@@ -146,6 +163,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   reset: () => {
     cancelSpeech();
+    // Invalidate any in-flight loadDocument so a late response cannot
+    // repopulate the state we are clearing here.
+    loadDocumentToken += 1;
     set({
       document: null,
       sections: [],
@@ -232,6 +252,10 @@ async function speakCurrentSentence(
   if (token === undefined) {
     cancelSpeech();
     token = ++utteranceToken;
+  } else if (token !== utteranceToken) {
+    // A stale auto-advance/continuation request: playback was paused or a newer
+    // utterance started while this one was awaiting. Do not resume playback.
+    return;
   }
   const settings = useSettingsStore.getState();
   const position = currentPosition(state);
@@ -659,6 +683,11 @@ async function advanceBySentence(
   fromAutoAdvance = false,
   token?: number,
 ) {
+  // Reject a stale auto-advance before it mutates the reader position: playback
+  // was paused or a newer utterance started while this continuation awaited.
+  if (fromAutoAdvance && token !== undefined && token !== utteranceToken) {
+    return;
+  }
   const wasPlaying = get().isPlaying || fromAutoAdvance;
   const next = direction > 0 ? nextPosition(get()) : previousPosition(get());
   if (!next) {
@@ -724,6 +753,8 @@ async function moveToPosition(
     if (position.sectionIndex !== get().currentSectionIndex) {
       const section = get().sections[position.sectionIndex];
       if (!section) {
+        // Reset the buffering UI instead of leaving it stuck on "Loading section".
+        set({ isBuffering: false, bufferingMessage: "" });
         return;
       }
       if (options.preservePlayback) {
@@ -739,11 +770,10 @@ async function moveToPosition(
       ]);
     }
 
-    const paragraphIndex = clamp(
-      position.paragraphIndex,
-      0,
-      Math.max(0, paragraphs.length - 1),
-    );
+    const paragraphIndex =
+      position.paragraphIndex === LAST_IN_SECTION
+        ? lastReadableParagraphIndex(paragraphs)
+        : clamp(position.paragraphIndex, 0, Math.max(0, paragraphs.length - 1));
     const sentenceIndex = clamp(
       position.sentenceIndex,
       0,
@@ -921,14 +951,18 @@ function previousPosition(state: PlayerState): Position | null {
     return null;
   }
 
-  const paragraph =
-    previousParagraph.sectionIndex === state.currentSectionIndex
-      ? state.paragraphs[previousParagraph.paragraphIndex]
-      : null;
-  return {
-    ...previousParagraph,
-    sentenceIndex: paragraph ? Math.max(0, sentenceCount(paragraph) - 1) : 0,
-  };
+  // Same section: we know the paragraph, so resolve its last sentence now.
+  // Different section: defer to moveToPosition's clamp, which resolves
+  // LAST_IN_SECTION to the last sentence of the (now loaded) last paragraph.
+  if (previousParagraph.sectionIndex === state.currentSectionIndex) {
+    const paragraph = state.paragraphs[previousParagraph.paragraphIndex];
+    return {
+      ...previousParagraph,
+      sentenceIndex: paragraph ? Math.max(0, sentenceCount(paragraph) - 1) : 0,
+    };
+  }
+
+  return { ...previousParagraph, sentenceIndex: LAST_IN_SECTION };
 }
 
 function nextParagraphPosition(state: PlayerState): Position | null {
@@ -961,9 +995,11 @@ function previousParagraphPosition(state: PlayerState): Position | null {
   }
 
   if (state.currentSectionIndex > 0) {
+    // Going back a paragraph from the first paragraph lands on the LAST
+    // paragraph of the previous section (clamped once that section loads).
     return {
       sectionIndex: state.currentSectionIndex - 1,
-      paragraphIndex: 0,
+      paragraphIndex: LAST_IN_SECTION,
       sentenceIndex: 0,
     };
   }
@@ -984,6 +1020,15 @@ function firstReadableParagraphIndex(paragraphs: Domain.Paragraph[]) {
     0,
     paragraphs.findIndex((paragraph) => paragraph.text.trim().length > 0),
   );
+}
+
+function lastReadableParagraphIndex(paragraphs: Domain.Paragraph[]) {
+  for (let index = paragraphs.length - 1; index >= 0; index -= 1) {
+    if (paragraphs[index].text.trim().length > 0) {
+      return index;
+    }
+  }
+  return Math.max(0, paragraphs.length - 1);
 }
 
 function chooseSystemVoice(voiceId: string) {

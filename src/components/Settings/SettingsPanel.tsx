@@ -47,6 +47,7 @@ export function SettingsPanel() {
     useState<SupertonicLanguage>(supertonicLanguage);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [testing, setTesting] = useState<SelectableTtsProvider | null>(null);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -129,10 +130,17 @@ export function SettingsPanel() {
   async function save() {
     setSaving(true);
     setSaved(false);
-    await persistDraft();
-    setSaving(false);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1600);
+    setSaveError(null);
+    try {
+      await persistDraft();
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1600);
+    } catch (error) {
+      // Surface the failure and never leave the button stuck on "Saving...".
+      setSaveError(displayError(error));
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function persistDraft(providerOverride = provider) {
@@ -154,7 +162,8 @@ export function SettingsPanel() {
     setTestError(null);
 
     try {
-      await persistDraft(providerToTest);
+      // Testing only changes the in-memory draft (setProvider above); it must
+      // not persist the provider until the user explicitly clicks Save.
       if (providerToTest === "kokoro") {
         setTestStatus("Generating Kokoro sample...");
         const blob = await synthesizeKokoroSpeech({
@@ -211,12 +220,9 @@ export function SettingsPanel() {
         downloaded: status.downloadedBytes,
         total: status.totalBytes,
       });
+      // Only update the in-memory draft selection; the user persists it via
+      // the Save button rather than the download side-effect doing it silently.
       setProvider("supertonic");
-      await saveTtsSettings({
-        ttsProvider: "supertonic",
-        supertonicVoiceStyle: voiceStyle,
-        supertonicLanguage: language,
-      });
       if (directory) {
         setSupertonicModelStatus({ ...status, directory });
       }
@@ -420,6 +426,12 @@ export function SettingsPanel() {
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">
           {error}
+        </p>
+      ) : null}
+
+      {saveError ? (
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">
+          {saveError}
         </p>
       ) : null}
 

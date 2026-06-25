@@ -222,7 +222,9 @@ function formatDuration(seconds: number) {
     return `${Math.max(1, Math.round(seconds))}s`;
   }
 
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.round(seconds % 60);
+  // Round to whole seconds first, then split, so the remainder can never be 60.
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
   return `${minutes}m ${remainder}s`;
 }

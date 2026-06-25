@@ -113,6 +113,14 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
 
       {!loading && documents.length === 0 ? <EmptyState /> : null}
 
+      {!loading &&
+      documents.length > 0 &&
+      filteredDocuments.length === 0 ? (
+        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+          No documents match "{query.trim()}".
+        </p>
+      ) : null}
+
       {filteredDocuments.length > 0 ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {filteredDocuments.map((document) => (

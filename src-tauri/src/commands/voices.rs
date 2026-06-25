@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use futures::StreamExt;
 use serde::Serialize;
@@ -6,6 +7,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tauri::{Emitter, Runtime, State, Window};
 use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 
 use crate::db::connection::DbPool;
 use crate::db::models::Voice;
@@ -16,6 +18,14 @@ use crate::voices::manifest;
 use crate::voices::models;
 
 const USER_AGENT: &str = "johnny-reader/0.1 model-downloader";
+
+/// Time allowed to establish a connection before the download is aborted.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Time allowed between received chunks before a stalled download is aborted.
+/// An overall request timeout is intentionally avoided so that legitimately
+/// large model files can finish downloading on slow connections.
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,45 +79,61 @@ pub async fn download_voice<R: Runtime>(
     let mirror_url = voice_manifest
         .mirror_url_template
         .replace("{id}", &voice_id);
-    let temp_path = paths::temp_dir()?.join(format!("{voice_id}.bin.download"));
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
+    // Unique per-invocation temp file so concurrent downloads of the same voice
+    // cannot corrupt each other's in-progress file before the atomic rename.
+    let temp_path =
+        paths::temp_dir()?.join(format!("{voice_id}.{}.bin.download", Uuid::new_v4()));
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()?;
     emit_voice_progress(&window, &voice_id, 0, metadata.size_bytes)?;
 
-    let primary_result = download_file(
-        &client,
-        &primary_url,
-        &temp_path,
-        &metadata.sha256,
-        metadata.size_bytes,
-        |downloaded, total| emit_voice_progress(&window, &voice_id, downloaded, total),
-    )
-    .await;
-
-    if let Err(primary_error) = primary_result {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-        download_file(
+    // Download and publish in one fallible unit so the temp file is always
+    // cleaned up on any error path (mirror failure, finalize failure, rename).
+    let download_and_publish = async {
+        let primary_result = download_file(
             &client,
-            &mirror_url,
+            &primary_url,
             &temp_path,
             &metadata.sha256,
             metadata.size_bytes,
             |downloaded, total| emit_voice_progress(&window, &voice_id, downloaded, total),
         )
-        .await
-        .map_err(|mirror_error| {
-            AppError::Voice(format!(
-                "voice download failed: {primary_error}; mirror failed: {mirror_error}"
-            ))
-        })?;
-    }
+        .await;
 
-    if let Some(parent) = target_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        if let Err(primary_error) = primary_result {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            download_file(
+                &client,
+                &mirror_url,
+                &temp_path,
+                &metadata.sha256,
+                metadata.size_bytes,
+                |downloaded, total| emit_voice_progress(&window, &voice_id, downloaded, total),
+            )
+            .await
+            .map_err(|mirror_error| {
+                AppError::Voice(format!(
+                    "voice download failed: {primary_error}; mirror failed: {mirror_error}"
+                ))
+            })?;
+        }
+
+        if let Some(parent) = target_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if target_path.exists() {
+            tokio::fs::remove_file(&target_path).await?;
+        }
+        tokio::fs::rename(&temp_path, &target_path).await?;
+        Ok::<(), AppError>(())
+    };
+
+    if let Err(error) = download_and_publish.await {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(error);
     }
-    if target_path.exists() {
-        tokio::fs::remove_file(&target_path).await?;
-    }
-    tokio::fs::rename(&temp_path, &target_path).await?;
 
     let conn = state.get()?;
     manifest::set_voice_downloaded(&conn, &voice_id, true)?;
@@ -154,46 +180,63 @@ pub async fn ensure_model_downloaded<R: Runtime>(
         std::fs::remove_file(&target_path)?;
     }
 
-    let temp_path =
-        paths::temp_dir()?.join(format!("{}.download", models::model_file_name(&precision)?));
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
+    let temp_path = paths::temp_dir()?.join(format!(
+        "{}.{}.download",
+        models::model_file_name(&precision)?,
+        Uuid::new_v4()
+    ));
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()?;
     emit_model_progress(&window, 0, metadata.size_bytes)?;
 
-    let primary_result = download_file(
-        &client,
-        &metadata.url,
-        &temp_path,
-        &metadata.sha256,
-        metadata.size_bytes,
-        |downloaded, total| emit_model_progress(&window, downloaded, total),
-    )
-    .await;
-
-    if let Err(primary_error) = primary_result {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-        download_file(
+    // Download and publish in one fallible unit so the temp file is always
+    // cleaned up on any error path (mirror failure, finalize failure, rename).
+    let download_and_publish = async {
+        let primary_result = download_file(
             &client,
-            &metadata.mirror,
+            &metadata.url,
             &temp_path,
             &metadata.sha256,
             metadata.size_bytes,
             |downloaded, total| emit_model_progress(&window, downloaded, total),
         )
-        .await
-        .map_err(|mirror_error| {
-            AppError::Model(format!(
-                "model download failed: {primary_error}; mirror failed: {mirror_error}"
-            ))
-        })?;
+        .await;
+
+        if let Err(primary_error) = primary_result {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            download_file(
+                &client,
+                &metadata.mirror,
+                &temp_path,
+                &metadata.sha256,
+                metadata.size_bytes,
+                |downloaded, total| emit_model_progress(&window, downloaded, total),
+            )
+            .await
+            .map_err(|mirror_error| {
+                AppError::Model(format!(
+                    "model download failed: {primary_error}; mirror failed: {mirror_error}"
+                ))
+            })?;
+        }
+
+        if let Some(parent) = target_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if target_path.exists() {
+            tokio::fs::remove_file(&target_path).await?;
+        }
+        tokio::fs::rename(&temp_path, &target_path).await?;
+        Ok::<(), AppError>(())
+    };
+
+    if let Err(error) = download_and_publish.await {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(error);
     }
 
-    if let Some(parent) = target_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    if target_path.exists() {
-        tokio::fs::remove_file(&target_path).await?;
-    }
-    tokio::fs::rename(&temp_path, &target_path).await?;
     mark_model_downloaded(&state, &precision)?;
     emit_model_progress(&window, metadata.size_bytes, metadata.size_bytes)?;
 
@@ -240,11 +283,25 @@ where
 
     on_progress(0, total)?;
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        // Abort a stalled download if no chunk arrives within the read timeout.
+        let next = tokio::time::timeout(READ_TIMEOUT, stream.next())
+            .await
+            .map_err(|_| AppError::Model("download stalled: no data received".to_string()))?;
+        let Some(chunk) = next else {
+            break;
+        };
         let chunk = chunk?;
+        downloaded += chunk.len() as u64;
+        // Stop as soon as the stream exceeds the manifest size instead of
+        // writing past the expected size before the post-download check.
+        if expected_size > 0 && downloaded > expected_size {
+            return Err(AppError::Model(format!(
+                "downloaded model size mismatch: expected {expected_size} bytes, got at least {downloaded}"
+            )));
+        }
         file.write_all(&chunk).await?;
         hasher.update(&chunk);
-        downloaded += chunk.len() as u64;
         on_progress(downloaded, total)?;
     }
 
