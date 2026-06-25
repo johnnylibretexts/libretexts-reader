@@ -9,7 +9,7 @@ This repo is an in-progress Tauri desktop app for reading and listening to OpenS
 Work from wherever you cloned the repo, for example:
 
 ```bash
-$HOME/code/johnny-reader
+cd "$HOME/code/johnny-reader"
 ```
 
 If this folder is copied to another machine, run setup from the copied repo root.

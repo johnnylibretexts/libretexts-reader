@@ -120,7 +120,9 @@ fn is_sentence_boundary(
             return false;
         }
 
-        if is_abbreviation_period(text, period_index, paragraph_start) {
+        if is_abbreviation_period(text, period_index, paragraph_start)
+            && !is_sentence_ending_abbreviation(text, period_index, paragraph_start)
+        {
             return false;
         }
     }
@@ -147,6 +149,20 @@ fn is_abbreviation_period(text: &str, period_index: usize, paragraph_start: usiz
 
     let normalized = token.trim_matches('.').to_ascii_lowercase();
     abbreviations().contains(normalized.as_str())
+}
+
+/// Abbreviations that commonly end a sentence (unlike titles such as "Dr." that
+/// always precede a word). For these, the boundary is decided by the lookahead
+/// rather than always suppressed, so "..., etc. The next" splits correctly while
+/// "..., etc. and more" does not.
+fn is_sentence_ending_abbreviation(
+    text: &str,
+    period_index: usize,
+    paragraph_start: usize,
+) -> bool {
+    let token = token_before_period(text, period_index, paragraph_start);
+    let normalized = token.trim_matches('.').to_ascii_lowercase();
+    matches!(normalized.as_str(), "etc" | "al")
 }
 
 fn is_acronym_period(text: &str, period_index: usize) -> bool {
@@ -320,4 +336,36 @@ fn abbreviations() -> &'static HashSet<&'static str> {
         .into_iter()
         .collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sentence_boundaries;
+
+    fn sentences(text: &str) -> Vec<String> {
+        sentence_boundaries(text)
+            .into_iter()
+            .map(|(start, end)| text[start..end].to_string())
+            .collect()
+    }
+
+    #[test]
+    fn clause_ending_abbreviation_can_end_a_sentence() {
+        let result = sentences("Add eggs, milk, etc. The cake is ready.");
+        assert_eq!(result.len(), 2, "{result:?}");
+        assert_eq!(result[0], "Add eggs, milk, etc.");
+        assert_eq!(result[1], "The cake is ready.");
+    }
+
+    #[test]
+    fn clause_ending_abbreviation_mid_sentence_does_not_split() {
+        let result = sentences("Bring eggs, milk, etc. and sugar too.");
+        assert_eq!(result.len(), 1, "{result:?}");
+    }
+
+    #[test]
+    fn title_abbreviation_does_not_split_before_a_name() {
+        let result = sentences("Dr. Smith arrived early.");
+        assert_eq!(result.len(), 1, "{result:?}");
+    }
 }

@@ -123,9 +123,9 @@ pub async fn download_voice<R: Runtime>(
         if let Some(parent) = target_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        if target_path.exists() {
-            tokio::fs::remove_file(&target_path).await?;
-        }
+        // The destination was already cleared above if it existed and did not
+        // match the expected hash, so rename directly: it replaces the target
+        // atomically and avoids a window where the target is missing.
         tokio::fs::rename(&temp_path, &target_path).await?;
         Ok::<(), AppError>(())
     };
@@ -225,9 +225,9 @@ pub async fn ensure_model_downloaded<R: Runtime>(
         if let Some(parent) = target_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        if target_path.exists() {
-            tokio::fs::remove_file(&target_path).await?;
-        }
+        // The destination was already cleared above if it existed and did not
+        // match the expected hash, so rename directly: it replaces the target
+        // atomically and avoids a window where the target is missing.
         tokio::fs::rename(&temp_path, &target_path).await?;
         Ok::<(), AppError>(())
     };

@@ -60,6 +60,10 @@ pub fn seed_voice_catalog(conn: &mut Connection) -> AppResult<()> {
                 language = excluded.language,
                 gender = excluded.gender,
                 is_bundled = excluded.is_bundled,
+                is_downloaded = CASE
+                    WHEN excluded.is_bundled = 1 THEN 1
+                    ELSE voices.is_downloaded
+                END,
                 size_bytes = excluded.size_bytes",
             params![
                 voice.id,

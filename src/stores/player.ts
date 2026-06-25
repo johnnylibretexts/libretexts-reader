@@ -47,9 +47,9 @@ interface PlayerState {
 }
 
 let utteranceToken = 0;
-// Monotonic token so an earlier document load that resolves late cannot
-// overwrite the state of a newer selection.
-let loadDocumentToken = 0;
+// Monotonic token so an earlier navigation (document load or section move) that
+// resolves late cannot overwrite the state of a newer one.
+let navToken = 0;
 let activeAudio: HTMLAudioElement | null = null;
 let activeAudioUrl: string | null = null;
 const SPEECH_INITIAL_BUFFER_SENTENCES = 3;
@@ -93,7 +93,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   activeSentenceText: "",
 
   loadDocument: async (documentId: string) => {
-    const requestId = ++loadDocumentToken;
+    const requestId = ++navToken;
     cancelSpeech();
     set({
       loading: true,
@@ -107,7 +107,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     try {
       const document = await api.getDocument(documentId);
       const sections = await api.listSections(documentId);
-      if (requestId !== loadDocumentToken) {
+      if (requestId !== navToken) {
         return;
       }
       if (sections.length === 0) {
@@ -126,7 +126,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         api.listParagraphs(sections[0].id),
         api.listSectionImages(sections[0].id),
       ]);
-      if (requestId !== loadDocumentToken) {
+      if (requestId !== navToken) {
         return;
       }
       set({
@@ -142,7 +142,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       });
       await persistPlaybackState(get());
     } catch (error) {
-      if (requestId !== loadDocumentToken) {
+      if (requestId !== navToken) {
         return;
       }
       set({
@@ -163,9 +163,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   reset: () => {
     cancelSpeech();
-    // Invalidate any in-flight loadDocument so a late response cannot
+    // Invalidate any in-flight load/navigation so a late response cannot
     // repopulate the state we are clearing here.
-    loadDocumentToken += 1;
+    navToken += 1;
     set({
       document: null,
       sections: [],
@@ -737,6 +737,9 @@ async function moveToPosition(
   position: Position,
   options: { preservePlayback?: boolean } = {},
 ) {
+  // Claim the latest navigation slot so a slower section load started here
+  // cannot overwrite reader state after a newer navigation or reset wins.
+  const requestId = ++navToken;
   if (!options.preservePlayback) {
     cancelSpeech();
     set({
@@ -768,6 +771,9 @@ async function moveToPosition(
         api.listParagraphs(section.id),
         api.listSectionImages(section.id),
       ]);
+      if (requestId !== navToken) {
+        return;
+      }
     }
 
     const paragraphIndex =

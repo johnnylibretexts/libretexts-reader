@@ -81,6 +81,7 @@ impl DocumentBuilder {
 
         for (section_index, section) in self.sections.into_iter().enumerate() {
             let section_id = Uuid::new_v4().to_string();
+            let paragraph_count = section.paragraphs.len();
             let section_word_count = section
                 .paragraphs
                 .iter()
@@ -118,6 +119,13 @@ impl DocumentBuilder {
 
             for (image_index, image) in section.images.into_iter().enumerate() {
                 let image_id = Uuid::new_v4().to_string();
+                // Drop anchors that point past this section's paragraphs so a
+                // stale/incorrect ordinal renders the figure before the first
+                // paragraph instead of corrupting placement (or failing import).
+                let anchor_paragraph_ordinal = match image.anchor_paragraph_ordinal {
+                    Some(anchor) if (anchor as usize) < paragraph_count => Some(anchor),
+                    _ => None,
+                };
                 tx.execute(
                     "INSERT INTO section_images (
                         id, section_id, ordinal, source_url, local_path,
@@ -133,7 +141,7 @@ impl DocumentBuilder {
                         image.alt_text,
                         image.caption,
                         image.content_type,
-                        image.anchor_paragraph_ordinal,
+                        anchor_paragraph_ordinal,
                     ],
                 )?;
             }

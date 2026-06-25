@@ -32,6 +32,9 @@ use crate::paths;
 const SUPERTONIC_MODEL_ID: &str = "Supertone/supertonic-3";
 const SUPERTONIC_MODEL_VERSION: &str = "supertonic-3";
 const SUPERTONIC_USER_AGENT: &str = "johnny-reader/0.1 supertonic-model-downloader";
+/// Abort a stalled model download if no chunk arrives within this window. An
+/// overall request timeout is intentionally avoided so large files can finish.
+const SUPERTONIC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const SUPERTONIC_TOTAL_STEPS: usize = 8;
 const SUPERTONIC_SAMPLE_RATE: u32 = 44_100;
 const SUPERTONIC_DEFAULT_SPEED: f32 = 1.0;
@@ -188,7 +191,15 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
         let mut output = tokio::fs::File::create(&temp_path).await?;
         let mut file_downloaded = 0_u64;
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let next = tokio::time::timeout(SUPERTONIC_READ_TIMEOUT, stream.next())
+                .await
+                .map_err(|_| {
+                    AppError::Model("Supertonic model download stalled".to_string())
+                })?;
+            let Some(chunk) = next else {
+                break;
+            };
             let chunk = chunk?;
             file_downloaded += chunk.len() as u64;
             // Abort during streaming as soon as the body exceeds the manifest

@@ -5,10 +5,11 @@ use crate::error::{AppError, AppResult};
 const APP_DIR_NAME: &str = "dev.johnnyrobot.reader";
 
 pub fn app_data_dir() -> AppResult<PathBuf> {
-    let dir = if let Some(path) = std::env::var_os("JOHNNY_READER_APP_DATA_DIR") {
-        PathBuf::from(path)
-    } else {
-        platform_app_data_dir()?
+    let dir = match std::env::var_os("JOHNNY_READER_APP_DATA_DIR") {
+        // An empty override would resolve to the process working directory, so
+        // treat it as unset and fall back to the platform location.
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => platform_app_data_dir()?,
     };
 
     create_dir(&dir)?;

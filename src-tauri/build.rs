@@ -75,26 +75,49 @@ fn check_updater_pubkey() {
 
     let config = fs::read_to_string(&config_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", config_path.display()));
-    if !config.contains(UPDATER_PUBKEY_PLACEHOLDER) {
+
+    // Treat any set value as enabled unless explicitly "0"/"false" so the gate
+    // fails closed rather than being accidentally disabled by a truthy value.
+    let require_key = match env::var("JOHNNY_READER_REQUIRE_UPDATER_KEY") {
+        Ok(value) => {
+            let value = value.trim();
+            !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+        }
+        Err(_) => false,
+    };
+
+    // Inspect the actual configured key, not just the presence of the
+    // placeholder string, so a missing/empty pubkey cannot bypass the gate.
+    let pubkey = serde_json::from_str::<serde_json::Value>(&config)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("plugins")?
+                .get("updater")?
+                .get("pubkey")?
+                .as_str()
+                .map(str::to_owned)
+        });
+    let pubkey_is_real = pubkey
+        .as_deref()
+        .is_some_and(|key| !key.trim().is_empty() && key != UPDATER_PUBKEY_PLACEHOLDER);
+
+    if pubkey_is_real {
         return;
     }
 
-    let require_key = env::var("JOHNNY_READER_REQUIRE_UPDATER_KEY")
-        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
     if require_key {
         panic!(
-            "tauri.conf.json still contains the placeholder updater pubkey \
+            "Updater pubkey is missing or still the placeholder \
              ({UPDATER_PUBKEY_PLACEHOLDER}). Generate a key with \
-             `npm run tauri -- signer generate` and set it before a release \
-             build. See RELEASE.md."
+             `npm run tauri -- signer generate` and set \
+             plugins.updater.pubkey before a release build. See RELEASE.md."
         );
     }
 
     println!(
-        "cargo:warning=Updater pubkey is the placeholder ({UPDATER_PUBKEY_PLACEHOLDER}); \
-         auto-update is not release-ready. See RELEASE.md. Set \
+        "cargo:warning=Updater pubkey is not release-ready (missing or placeholder); \
+         auto-update will not verify signatures. See RELEASE.md. Set \
          JOHNNY_READER_REQUIRE_UPDATER_KEY=1 to make this fatal for release builds."
     );
 }
