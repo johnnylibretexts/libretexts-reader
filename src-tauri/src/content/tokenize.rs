@@ -155,6 +155,10 @@ fn is_abbreviation_period(text: &str, period_index: usize, paragraph_start: usiz
 /// always precede a word). For these, the boundary is decided by the lookahead
 /// rather than always suppressed, so "..., etc. The next" splits correctly while
 /// "..., etc. and more" does not.
+///
+/// Note: "al" (as in "et al.") is intentionally excluded — it is frequently
+/// followed by a capitalized citation like "(2020)", which the lookahead would
+/// misread as a new sentence.
 fn is_sentence_ending_abbreviation(
     text: &str,
     period_index: usize,
@@ -162,7 +166,7 @@ fn is_sentence_ending_abbreviation(
 ) -> bool {
     let token = token_before_period(text, period_index, paragraph_start);
     let normalized = token.trim_matches('.').to_ascii_lowercase();
-    matches!(normalized.as_str(), "etc" | "al")
+    matches!(normalized.as_str(), "etc")
 }
 
 fn is_acronym_period(text: &str, period_index: usize) -> bool {
@@ -366,6 +370,12 @@ mod tests {
     #[test]
     fn title_abbreviation_does_not_split_before_a_name() {
         let result = sentences("Dr. Smith arrived early.");
+        assert_eq!(result.len(), 1, "{result:?}");
+    }
+
+    #[test]
+    fn et_al_does_not_split_before_a_citation() {
+        let result = sentences("Smith et al. (2020) found a strong effect.");
         assert_eq!(result.len(), 1, "{result:?}");
     }
 }

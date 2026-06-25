@@ -797,6 +797,10 @@ async function moveToPosition(
     });
     await persistPlaybackState(get());
   } catch (error) {
+    // Ignore failures from a navigation that a newer one (or reset) superseded.
+    if (requestId !== navToken) {
+      return;
+    }
     set({
       isBuffering: false,
       bufferingMessage: "",
