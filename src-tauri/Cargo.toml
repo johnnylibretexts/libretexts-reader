@@ -27,7 +27,6 @@ zip = "3.0"
 tauri = { version = "2.1", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.0"
 tauri-plugin-fs = "2.0"
-tauri-plugin-updater = "2.0"
 tauri-plugin-shell = "2.0"
 
 tokio = { version = "1.40", features = ["full"] }

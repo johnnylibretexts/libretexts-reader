@@ -1,74 +1,76 @@
 # Releasing Johnny Reader
 
-This checklist covers the steps required before publishing a public build. The
-default repository state intentionally ships with placeholders so that local
-development works without secrets; a real release must supply them.
+Checklist for producing a signed, notarized macOS build.
 
-## 1. Auto-updater signing key (required if updater is enabled)
+## 1. Auto-updater
 
-`src-tauri/tauri.conf.json` enables the Tauri updater plugin with a placeholder
-public key (`TAURI_UPDATER_PUBKEY_PLACEHOLDER`). The build warns whenever this
-placeholder is present, and fails hard when `JOHNNY_READER_REQUIRE_UPDATER_KEY=1`
-is set (use this in release CI so a misconfigured updater can never ship).
+The auto-updater is **disabled** in v0.1.0 — the app ships without in-app
+updates; distribute new versions by publishing a new build. There is no updater
+plugin, endpoint, or signing key to manage.
 
-Generate a keypair once and keep the private key secret:
+To add auto-update later, re-introduce `tauri-plugin-updater` in
+`src-tauri/Cargo.toml`, register it in `src-tauri/src/lib.rs`, add
+`updater:default` to `src-tauri/capabilities/default.json`, add a
+`plugins.updater` block (endpoints + pubkey) to `src-tauri/tauri.conf.json`, and
+generate a key with `npm run tauri -- signer generate`. The `build.rs` guard will
+then enforce a real pubkey (fatal when `JOHNNY_READER_REQUIRE_UPDATER_KEY=1`).
+
+## 2. macOS code signing + notarization
+
+Requires a "Developer ID Application" certificate in the login keychain and a
+stored `notarytool` keychain profile (so secrets stay out of the shell):
 
 ```bash
-npm run tauri -- signer generate -w ~/.johnny-reader/updater.key
+# one-time: store notarization credentials in the keychain
+xcrun notarytool store-credentials jr-notary \
+  --apple-id "<apple-id-email>" --team-id <TEAMID>
 ```
 
-Then:
+### Important: sign the bundled native libraries first
 
-1. Put the printed **public** key in `tauri.conf.json` under
-   `plugins.updater.pubkey`.
-2. At build time, provide the **private** key so release artifacts are signed:
-
-   ```bash
-   export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.johnny-reader/updater.key)"
-   export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="<password-if-set>"
-   ```
-
-3. Confirm `plugins.updater.endpoints` in `tauri.conf.json` points at the
-   correct published release manifest (currently the project's GitHub
-   `releases/latest/download/latest.json`), and that the updater plugin is still
-   registered in `src-tauri/src/lib.rs`.
-4. Publish the generated `latest.json` and signatures to the GitHub release that
-   the `endpoints` URL points at.
-
-If you do **not** want auto-update in a release, remove the `updater` plugin from
-`tauri.conf.json` (`plugins.updater`), `src-tauri/Cargo.toml`
-(`tauri-plugin-updater`), `src-tauri/src/lib.rs` (the plugin registration), and
-`src-tauri/capabilities/default.json` (`updater:default`).
-
-## 2. macOS code signing and notarization
-
-`tauri.conf.json` ships with `bundle.macOS.signingIdentity: null`, so local builds
-are unsigned and users will see Gatekeeper warnings. For a public macOS release,
-sign and notarize:
+Tauri signs the main binary and the `ffmpeg` sidecar, but **not** the bundled
+ffmpeg shared libraries or `libpdfium.dylib` (they ship under
+`Contents/Resources/binaries/` and `…/resources/pdfium/`). Notarization rejects
+ad-hoc-signed Mach-O files, so sign the **source** libraries with Developer ID +
+hardened runtime + secure timestamp before building:
 
 ```bash
-export APPLE_SIGNING_IDENTITY="Developer ID Application: <Your Name> (<TEAMID>)"
-export APPLE_ID="<your-apple-id-email>"
-export APPLE_PASSWORD="<app-specific-password>"
-export APPLE_TEAM_ID="<TEAMID>"
+ID="Developer ID Application: <Name> (<TEAMID>)"
+find src-tauri/binaries/ffmpeg-*-libs -type f -name '*.dylib' \
+  -exec codesign --force --options runtime --timestamp --sign "$ID" {} \;
+codesign --force --options runtime --timestamp --sign "$ID" src-tauri/binaries/ffmpeg-*
+codesign --force --options runtime --timestamp --sign "$ID" \
+  src-tauri/resources/pdfium/*/libpdfium.dylib
+```
+
+(These dirs are gitignored local assets; re-sign after any ffmpeg/pdfium bump.)
+
+### Build, notarize, staple, verify
+
+```bash
+export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
 npm run tauri:build
+
+DMG="target/release/bundle/dmg/Johnny Reader_0.1.0_aarch64.dmg"
+xcrun notarytool submit "$DMG" --keychain-profile jr-notary --wait
+xcrun stapler staple "$DMG"
+xcrun stapler staple "target/release/bundle/macos/Johnny Reader.app"
+spctl -a -t open --context context:primary-signature -vvv "$DMG"   # expect: accepted, Notarized Developer ID
 ```
 
-Tauri notarizes automatically when the `APPLE_*` variables are present. Verify the
-result with `spctl -a -vvv "target/release/bundle/macos/Johnny Reader.app"`.
+If notarization returns Invalid, read the log:
+`xcrun notarytool log <submission-id> --keychain-profile jr-notary`.
 
-## 3. Build
-
-```bash
-JOHNNY_READER_REQUIRE_UPDATER_KEY=1 npm run tauri:build
-```
-
-Artifacts are written under `target/release/bundle/`.
-
-## 4. Pre-publish verification
+## 3. Pre-publish verification
 
 ```bash
 npm run build
 cargo test -p johnny-reader
 git diff --check
 ```
+
+## 4. Architectures
+
+The default build targets the host (Apple Silicon `aarch64`). For Intel/universal
+builds, install the `x86_64-apple-darwin` target and provide x86_64 ffmpeg/pdfium
+libraries signed the same way.

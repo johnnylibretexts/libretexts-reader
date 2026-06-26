@@ -8,7 +8,6 @@
     "dialog:default",
     "fs:default",
     "fs:allow-appdata-read-recursive",
-    "shell:default",
-    "updater:default"
+    "shell:default"
   ]
 }

@@ -57,12 +57,5 @@
       }
     }
   },
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/johnnyrobot/johnny-reader/releases/latest/download/latest.json"
-      ],
-      "pubkey": "TAURI_UPDATER_PUBKEY_PLACEHOLDER"
-    }
-  }
+  "plugins": {}
 }
