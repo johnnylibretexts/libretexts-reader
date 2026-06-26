@@ -6,10 +6,10 @@ This repo is an in-progress Tauri desktop app for reading and listening to OpenS
 
 ## Project Location
 
-Original machine path:
+Work from wherever you cloned the repo, for example:
 
 ```bash
-/Users/johnnyrobot/code/johnny-reader
+cd "$HOME/code/johnny-reader"
 ```
 
 If this folder is copied to another machine, run setup from the copied repo root.
@@ -86,14 +86,14 @@ There are also many modified tracked files. Treat the local worktree as the sour
 
 Date: 2026-05-20
 
-The app was set up and built on `/Users/libretexts/code/johnny-reader`.
+The app was set up and built from a fresh clone of the repo.
 
 Local machine setup:
 
 - Rust was not installed initially. Installed Rust via `rustup`; verified with `rustc 1.95.0` and `cargo 1.95.0`.
 - Node `24.13.1` was present, but Vite/Rollup native addon loading hung. Installed Node `22.20.0` with npm `10.9.3`, matching this handoff.
 - `nvm alias default 22.20.0` was set, but commands in this repo should still explicitly run `source "$HOME/.nvm/nvm.sh" && nvm use 22.20.0` if the shell starts on Node 24.
-- A copied Cargo `target` directory contained old absolute paths from `/Users/johnnyrobot/...`; `cargo clean -p mp3lame-sys` fixed the Rust build.
+- A copied Cargo `target` directory contained old absolute paths from a different machine; `cargo clean -p mp3lame-sys` fixed the Rust build.
 - macOS provenance/quarantine metadata caused native Rollup `.node` loading to hang even after reinstalling `node_modules` and ad-hoc signing. The working solution was adding this dev dependency alias:
 
   ```json
@@ -141,7 +141,7 @@ open target/debug/johnny-reader
 At the end of the session the debug app was running as:
 
 ```text
-/Users/libretexts/code/johnny-reader/target/debug/johnny-reader
+<repo>/target/debug/johnny-reader
 ```
 
 ## Key Implementation Details

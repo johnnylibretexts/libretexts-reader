@@ -200,7 +200,12 @@ fn detect_scanned_pdf(pages: &[ExtractedPage]) -> AppResult<()> {
         .map(|page| page.text.trim().chars().count())
         .sum::<usize>();
 
-    if character_count < inspected_pages * SCANNED_MIN_CHARS_PER_PAGE {
+    // Only treat the PDF as scanned when it has effectively no extractable text.
+    // A genuinely short single-page document (e.g. a one-page handout) should
+    // still import, so the per-page threshold only applies across multiple pages.
+    if character_count == 0
+        || (inspected_pages > 1 && character_count < inspected_pages * SCANNED_MIN_CHARS_PER_PAGE)
+    {
         return Err(AppError::Pdf(
             "PDF appears to be scanned. OCR is required and not yet supported.".into(),
         ));
@@ -335,7 +340,16 @@ fn append_line(current: &mut String, line: &str) {
         return;
     }
 
-    if current.ends_with('-') {
+    // Treat a trailing hyphen as a soft line-wrap (join without the hyphen) only
+    // when the next line continues with a lowercase letter, e.g. "exam-\nple".
+    // Otherwise keep the hyphen and add a space so terms like "COVID-19" or a
+    // wrapped "U-Net" are not mangled into one token.
+    if current.ends_with('-')
+        && line
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_lowercase())
+    {
         current.pop();
         current.push_str(line);
     } else {

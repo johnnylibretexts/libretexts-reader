@@ -85,7 +85,11 @@ export function PdfDialog({ onImported }: PdfDialogProps) {
       ) : null}
 
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+        <p
+          aria-live="polite"
+          className="text-sm text-neutral-500 dark:text-neutral-400"
+          role="status"
+        >
           {submitting ? stage : ""}
         </p>
         <button

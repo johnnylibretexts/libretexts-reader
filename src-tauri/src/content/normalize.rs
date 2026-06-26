@@ -326,7 +326,7 @@ fn replace_common_abbreviations(text: &str) -> String {
 }
 
 fn currency_to_words(dollars: &str, cents: Option<&str>) -> String {
-    let dollar_value = dollars.parse::<u64>().unwrap_or(0);
+    let dollar_value = dollars.replace(',', "").parse::<u64>().unwrap_or(0);
     let dollar_unit = if dollar_value == 1 {
         "dollar"
     } else {
@@ -362,12 +362,11 @@ fn numeric_phrase(value: &str) -> String {
 }
 
 fn integer_token_to_words(value: &str) -> String {
-    let number = value.parse::<u64>().unwrap_or(0);
-    if (1000..=2099).contains(&number) {
-        year_to_words(number)
-    } else {
-        integer_to_words(number)
-    }
+    // Strip digit-group separators ("1,200" -> 1200) and read as a plain
+    // cardinal. We intentionally do not guess years here: without explicit date
+    // context, "1024" must read as a number, not "ten twenty-four".
+    let digits = value.replace(',', "");
+    integer_to_words(digits.parse::<u64>().unwrap_or(0))
 }
 
 fn decimal_to_words(whole: &str, fractional: &str) -> String {
@@ -380,28 +379,6 @@ fn decimal_to_words(whole: &str, fractional: &str) -> String {
         .join(" ");
 
     format!("{} point {digits}", integer_to_words(whole))
-}
-
-fn year_to_words(year: u64) -> String {
-    if year == 2000 {
-        return "two thousand".to_string();
-    }
-
-    if (2001..=2009).contains(&year) {
-        return format!("two thousand {}", integer_to_words(year - 2000));
-    }
-
-    let first = year / 100;
-    let last = year % 100;
-    let first_words = integer_to_words(first);
-
-    if last == 0 {
-        format!("{first_words} hundred")
-    } else if last < 10 {
-        format!("{first_words} oh {}", integer_to_words(last))
-    } else {
-        format!("{first_words} {}", integer_to_words(last))
-    }
 }
 
 fn integer_to_words(number: u64) -> String {
@@ -612,7 +589,10 @@ fn tag_re() -> &'static Regex {
 
 fn currency_re() -> &'static Regex {
     CURRENCY_RE
-        .get_or_init(|| Regex::new(r"\$(\d+)(?:\.(\d{1,2}))?").expect("valid currency regex"))
+        .get_or_init(|| {
+            Regex::new(r"\$(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?")
+                .expect("valid currency regex")
+        })
 }
 
 fn percent_re() -> &'static Regex {
@@ -624,7 +604,9 @@ fn decimal_re() -> &'static Regex {
 }
 
 fn integer_re() -> &'static Regex {
-    INTEGER_RE.get_or_init(|| Regex::new(r"\b\d+\b").expect("valid integer regex"))
+    INTEGER_RE.get_or_init(|| {
+        Regex::new(r"\b\d{1,3}(?:,\d{3})+\b|\b\d+\b").expect("valid integer regex")
+    })
 }
 
 #[cfg(test)]
@@ -657,5 +639,29 @@ mod tests {
 
         assert!(normalized.contains("Given, x, equals, two"), "{normalized}");
         assert!(!normalized.contains("[[mathml:"), "{normalized}");
+    }
+
+    #[test]
+    fn reads_four_digit_numbers_as_cardinals_not_years() {
+        let normalized = normalize_for_tts("A buffer holds 1024 bytes.");
+        assert!(
+            normalized.contains("one thousand twenty-four"),
+            "{normalized}"
+        );
+        assert!(!normalized.contains("ten twenty"), "{normalized}");
+    }
+
+    #[test]
+    fn reads_comma_grouped_numbers_as_one_value() {
+        let normalized = normalize_for_tts("It cost $1,200 for 1,200 items.");
+        assert!(
+            normalized.contains("one thousand two hundred dollars"),
+            "{normalized}"
+        );
+        // The bare grouped number must not split into "one" and "two hundred".
+        assert!(
+            normalized.matches("one thousand two hundred").count() >= 2,
+            "{normalized}"
+        );
     }
 }

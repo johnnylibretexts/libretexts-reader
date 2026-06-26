@@ -47,6 +47,10 @@ export function SupertonicChapterExport() {
     [paragraphs],
   );
 
+  // Stop any in-flight preview playback and release its blob URL when the
+  // reader view unmounts, not just when playback ends or a new preview starts.
+  useEffect(() => () => stopPreview(), []);
+
   useEffect(() => {
     setVoiceStyle(defaultVoiceStyle);
   }, [defaultVoiceStyle]);

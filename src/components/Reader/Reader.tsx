@@ -72,12 +72,12 @@ export function Reader({ documentId }: ReaderProps) {
                   paragraphIndex={index}
                 />
                 <SectionImages
-                  images={imagesAfterParagraph(sectionImages, index)}
+                  images={imagesAfterParagraph(sectionImages, paragraph.ordinal)}
                 />
               </div>
             ))}
             <SectionImages
-              images={imagesAfterLastParagraph(sectionImages, paragraphs.length)}
+              images={imagesAfterLastParagraph(sectionImages, paragraphs)}
             />
           </div>
         </>
@@ -125,20 +125,25 @@ function imagesBeforeFirstParagraph(images: Domain.SectionImage[]) {
 
 function imagesAfterParagraph(
   images: Domain.SectionImage[],
-  paragraphIndex: number,
+  paragraphOrdinal: number,
 ) {
   return images.filter(
-    (image) => image.anchorParagraphOrdinal === paragraphIndex,
+    (image) => image.anchorParagraphOrdinal === paragraphOrdinal,
   );
 }
 
 function imagesAfterLastParagraph(
   images: Domain.SectionImage[],
-  paragraphCount: number,
+  paragraphs: Domain.Paragraph[],
 ) {
+  // Anchors that point past the last rendered paragraph fall through to the end
+  // so they are never silently dropped. Compare against the stored ordinal of
+  // the last paragraph rather than the paragraph count.
+  const lastOrdinal =
+    paragraphs.length > 0 ? paragraphs[paragraphs.length - 1].ordinal : -1;
   return images.filter(
     (image) =>
       image.anchorParagraphOrdinal !== null &&
-      image.anchorParagraphOrdinal >= paragraphCount,
+      image.anchorParagraphOrdinal > lastOrdinal,
   );
 }

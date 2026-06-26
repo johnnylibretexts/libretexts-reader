@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -57,7 +58,18 @@ pub fn model_file_name(precision: &str) -> AppResult<&'static str> {
 }
 
 pub fn file_matches_sha256(path: &Path, expected_sha256: &str) -> AppResult<bool> {
-    let bytes = std::fs::read(path)?;
-    let digest = Sha256::digest(bytes);
-    Ok(hex::encode(digest) == expected_sha256)
+    // Stream the file through the hasher so verifying a multi-hundred-megabyte
+    // ONNX model does not load the whole file into memory at once.
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()) == expected_sha256)
 }

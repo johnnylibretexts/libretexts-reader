@@ -1,6 +1,7 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { Link, Loader2 } from "lucide-react";
 import { api } from "../../lib/tauri";
+import { displayError } from "../../lib/errors";
 
 type ImportStage = "idle" | "Fetching..." | "Parsing..." | "Saving...";
 
@@ -39,7 +40,7 @@ export function UrlDialog({ onImported }: UrlDialogProps) {
       onImported(documentId, trimmedUrl);
       setUrl("");
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       timers.forEach(window.clearTimeout);
       setStage("idle");

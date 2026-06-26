@@ -42,7 +42,11 @@ struct FfmpegAsset {
     sidecar_file_name: &'static str,
 }
 
+const UPDATER_PUBKEY_PLACEHOLDER: &str = "TAURI_UPDATER_PUBKEY_PLACEHOLDER";
+
 fn main() {
+    check_updater_pubkey();
+
     let pdfium_library = ensure_pdfium();
     println!(
         "cargo:rustc-env=PDFIUM_LIBRARY_PATH={}",
@@ -56,6 +60,66 @@ fn main() {
     );
 
     tauri_build::build()
+}
+
+/// Guard against shipping a public build whose auto-updater is configured with
+/// the placeholder signing key. A real release must replace the `pubkey` in
+/// `tauri.conf.json` (see `RELEASE.md`). This always warns when the placeholder
+/// is present, and hard-fails the build when `JOHNNY_READER_REQUIRE_UPDATER_KEY`
+/// is set (intended for release CI), so a misconfigured updater cannot ship.
+fn check_updater_pubkey() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    let config_path = manifest_dir.join("tauri.conf.json");
+    println!("cargo:rerun-if-changed={}", config_path.display());
+    println!("cargo:rerun-if-env-changed=JOHNNY_READER_REQUIRE_UPDATER_KEY");
+
+    let config = fs::read_to_string(&config_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", config_path.display()));
+
+    // Treat any set value as enabled unless explicitly "0"/"false" so the gate
+    // fails closed rather than being accidentally disabled by a truthy value.
+    let require_key = match env::var("JOHNNY_READER_REQUIRE_UPDATER_KEY") {
+        Ok(value) => {
+            let value = value.trim();
+            !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+        }
+        Err(_) => false,
+    };
+
+    // Inspect the actual configured key, not just the presence of the
+    // placeholder string, so a missing/empty pubkey cannot bypass the gate.
+    let pubkey = serde_json::from_str::<serde_json::Value>(&config)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("plugins")?
+                .get("updater")?
+                .get("pubkey")?
+                .as_str()
+                .map(str::to_owned)
+        });
+    let pubkey_is_real = pubkey
+        .as_deref()
+        .is_some_and(|key| !key.trim().is_empty() && key != UPDATER_PUBKEY_PLACEHOLDER);
+
+    if pubkey_is_real {
+        return;
+    }
+
+    if require_key {
+        panic!(
+            "Updater pubkey is missing or still the placeholder \
+             ({UPDATER_PUBKEY_PLACEHOLDER}). Generate a key with \
+             `npm run tauri -- signer generate` and set \
+             plugins.updater.pubkey before a release build. See RELEASE.md."
+        );
+    }
+
+    println!(
+        "cargo:warning=Updater pubkey is not release-ready (missing or placeholder); \
+         auto-update will not verify signatures. See RELEASE.md. Set \
+         JOHNNY_READER_REQUIRE_UPDATER_KEY=1 to make this fatal for release builds."
+    );
 }
 
 fn ensure_pdfium() -> PathBuf {
@@ -274,6 +338,12 @@ fn ffmpeg_asset_for_target(target: &str) -> FfmpegAsset {
 
 fn download_ffmpeg(asset: &FfmpegAsset) -> Vec<u8> {
     let url = match asset.source {
+        // NOTE: BtbN publishes Windows/Linux ffmpeg under a rolling `latest`
+        // tag. The pinned `archive_sha256` keeps this fail-safe (a moved asset
+        // fails verification rather than producing a wrong binary), but the
+        // download is not reproducible: when BtbN rotates `latest`, this SHA
+        // must be regenerated, or — preferably — repointed at a dated
+        // `autobuild-YYYY-MM-DD` tag whose asset matches the recorded SHA.
         FfmpegSource::BtbN => format!(
             "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/{}",
             asset.asset_name

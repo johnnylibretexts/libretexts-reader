@@ -125,16 +125,22 @@ function sourceIcon(sourceType: Domain.SourceType) {
 }
 
 function sourceLabel(sourceType: Domain.SourceType) {
-  if (sourceType === "url") {
-    return "URL";
+  switch (sourceType) {
+    case "url":
+      return "URL";
+    case "openstax":
+      return "OpenStax";
+    case "libretexts":
+      return "LibreTexts";
+    case "epub":
+      return "EPUB";
+    case "pdf":
+      return "PDF";
+    case "pasted":
+      return "Pasted text";
+    default:
+      return sourceType;
   }
-  if (sourceType === "openstax") {
-    return "OpenStax";
-  }
-  if (sourceType === "libretexts") {
-    return "LibreTexts";
-  }
-  return sourceType;
 }
 
 function formatDate(value: string) {

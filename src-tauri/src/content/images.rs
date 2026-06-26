@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use futures::StreamExt;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::{Client, Url};
 use scraper::{ElementRef, Html, Selector};
@@ -123,8 +124,18 @@ async fn download_image(
         return None;
     }
 
-    let bytes = response.bytes().await.ok()?;
-    if bytes.is_empty() || bytes.len() as u64 > MAX_IMAGE_BYTES {
+    // Stream the body and abort as soon as the cap is exceeded, rather than
+    // buffering the whole response before checking its size.
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.ok()?;
+        if bytes.len() as u64 + chunk.len() as u64 > MAX_IMAGE_BYTES {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if bytes.is_empty() {
         return None;
     }
 

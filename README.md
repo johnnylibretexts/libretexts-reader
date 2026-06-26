@@ -34,4 +34,8 @@ run through the Rust ONNX Runtime backend with on-demand model downloads.
 
 ## License
 
-Apache-2.0.
+The Johnny Reader source code is licensed under Apache-2.0 (see `LICENSE`).
+
+Distributed app bundles also include third-party components under their own
+licenses — for example FFmpeg (LGPL) and the PDFium binaries. Their notices are
+collected in the `LICENSES/` directory.

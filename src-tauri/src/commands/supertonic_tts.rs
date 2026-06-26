@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use tauri::{Emitter, Runtime, State, Window};
 use tokio::io::AsyncWriteExt;
 use unicode_normalization::UnicodeNormalization;
+use uuid::Uuid;
 
 use crate::commands::tts::SpeechAudio;
 use crate::content::normalize::normalize_for_tts;
@@ -31,6 +32,9 @@ use crate::paths;
 const SUPERTONIC_MODEL_ID: &str = "Supertone/supertonic-3";
 const SUPERTONIC_MODEL_VERSION: &str = "supertonic-3";
 const SUPERTONIC_USER_AGENT: &str = "johnny-reader/0.1 supertonic-model-downloader";
+/// Abort a stalled model download if no chunk arrives within this window. An
+/// overall request timeout is intentionally avoided so large files can finish.
+const SUPERTONIC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const SUPERTONIC_TOTAL_STEPS: usize = 8;
 const SUPERTONIC_SAMPLE_RATE: u32 = 44_100;
 const SUPERTONIC_DEFAULT_SPEED: f32 = 1.0;
@@ -160,6 +164,7 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
     let mut downloaded = existing_supertonic_model_bytes(&directory, &manifest.files);
     let client = reqwest::Client::builder()
         .user_agent(SUPERTONIC_USER_AGENT)
+        .connect_timeout(std::time::Duration::from_secs(30))
         .build()?;
 
     emit_supertonic_model_progress(&window, "Preparing", downloaded, total)?;
@@ -186,10 +191,27 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
         let mut output = tokio::fs::File::create(&temp_path).await?;
         let mut file_downloaded = 0_u64;
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let next = tokio::time::timeout(SUPERTONIC_READ_TIMEOUT, stream.next())
+                .await
+                .map_err(|_| {
+                    AppError::Model("Supertonic model download stalled".to_string())
+                })?;
+            let Some(chunk) = next else {
+                break;
+            };
             let chunk = chunk?;
-            output.write_all(&chunk).await?;
             file_downloaded += chunk.len() as u64;
+            // Abort during streaming as soon as the body exceeds the manifest
+            // size, instead of writing past the expected size before checking.
+            if file.size_bytes > 0 && file_downloaded > file.size_bytes {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(AppError::Model(format!(
+                    "Supertonic model file size mismatch for {}: expected {} bytes",
+                    file.path, file.size_bytes
+                )));
+            }
+            output.write_all(&chunk).await?;
             emit_supertonic_model_progress(
                 &window,
                 &file.path,
@@ -314,7 +336,9 @@ pub async fn export_supertonic_chapter_mp3(
         return Err(AppError::Tts("Supertonic returned empty audio.".into()));
     }
 
-    let temp_path = cache_path.with_extension("mp3.download");
+    // Unique temp name so concurrent exports of the same chapter cannot write
+    // to the same in-progress file before the atomic rename into place.
+    let temp_path = cache_path.with_extension(format!("{}.mp3.download", Uuid::new_v4()));
     tokio::fs::write(&temp_path, &mp3).await?;
     tokio::fs::rename(&temp_path, &cache_path).await?;
     copy_cached_mp3(&cache_path, &output_path).await?;

@@ -50,6 +50,9 @@ pub enum AppError {
 
     #[error("invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("migration error: {0}")]
+    Migration(String),
 }
 
 impl Serialize for AppError {

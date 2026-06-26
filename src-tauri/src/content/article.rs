@@ -2,6 +2,7 @@ use std::io::Cursor;
 use std::time::Duration;
 
 use chrono::Utc;
+use futures::StreamExt;
 use readability::extractor;
 use reqwest::Url;
 use serde_json::json;
@@ -81,12 +82,19 @@ async fn fetch_article_html(url: &str) -> AppResult<Vec<u8>> {
         ));
     }
 
-    let bytes = response.bytes().await?;
-    if bytes.len() as u64 > MAX_ARTICLE_BYTES {
-        return Err(AppError::InvalidInput(
-            "article is larger than the 5 MB import limit".into(),
-        ));
+    // Stream the body and enforce the size cap incrementally so a server that
+    // omits or lies about Content-Length cannot make us buffer an unbounded body.
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len() as u64 + chunk.len() as u64 > MAX_ARTICLE_BYTES {
+            return Err(AppError::InvalidInput(
+                "article is larger than the 5 MB import limit".into(),
+            ));
+        }
+        body.extend_from_slice(&chunk);
     }
 
-    Ok(bytes.to_vec())
+    Ok(body)
 }
