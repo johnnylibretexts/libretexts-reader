@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build + Developer-ID sign, but skip notarize/publish'
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.repository == 'johnnyrobot/johnny-reader'
+    runs-on: [self-hosted, macos, release]
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version, tag, and mode
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+            DRY_RUN="false"
+          else
+            VERSION="$(node -e "process.stdout.write(String(require('./src-tauri/tauri.conf.json').version))")"
+            TAG="v${VERSION}"
+            DRY_RUN="${{ github.event.inputs.dry_run }}"
+          fi
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "dry_run=$DRY_RUN"
+            # semver pre-release (a hyphen after the version core) -> mark prerelease
+            if [[ "$VERSION" == *-* ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches configured version
+        if: github.event_name == 'push'
+        run: scripts/ci/check-version.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Install npm dependencies (Node 22.20.0)
+        run: |
+          set -euo pipefail
+          source "$HOME/.nvm/nvm.sh"
+          nvm use 22.20.0
+          npm ci
+
+      - name: Materialize native libs via build.rs
+        run: |
+          set -euo pipefail
+          source "$HOME/.cargo/env"
+          cargo build --release -p johnny-reader
+
+      - name: Developer-ID re-sign native libs
+        run: |
+          set -euo pipefail
+          ID="$APPLE_SIGNING_IDENTITY"
+          if [ -z "$ID" ]; then echo "APPLE_SIGNING_IDENTITY variable is not set" >&2; exit 1; fi
+          # ffmpeg dylibs (under binaries/<sidecar>-libs/) + any other bundled dylibs
+          find src-tauri/binaries -type f -name '*.dylib' \
+            -exec codesign --force --options runtime --timestamp --sign "$ID" {} \;
+          # pdfium dylib(s)
+          for lib in src-tauri/resources/pdfium/*/libpdfium.dylib; do
+            codesign --force --options runtime --timestamp --sign "$ID" "$lib"
+          done
+          # ffmpeg sidecar executable (exact target name; not the -libs dir or .sha256 markers)
+          codesign --force --options runtime --timestamp --sign "$ID" \
+            src-tauri/binaries/ffmpeg-aarch64-apple-darwin
+
+      - name: Build signed bundle
+        run: |
+          set -euo pipefail
+          source "$HOME/.nvm/nvm.sh"; nvm use 22.20.0
+          source "$HOME/.cargo/env"
+          export APPLE_SIGNING_IDENTITY
+          export JOHNNY_READER_REQUIRE_UPDATER_KEY=1   # fail-closed safety belt (no-op today)
+          npm run tauri:build
+
+      - name: Locate DMG
+        id: dmg
+        run: |
+          set -euo pipefail
+          DMG="target/release/bundle/dmg/Johnny Reader_${{ steps.meta.outputs.version }}_aarch64.dmg"
+          test -f "$DMG"
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: Notarize, staple, verify
+        if: steps.meta.outputs.dry_run != 'true'
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.path }}"
+          xcrun notarytool submit "$DMG" --keychain-profile jr-notary --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler staple "target/release/bundle/macos/Johnny Reader.app"
+          spctl -a -t open --context context:primary-signature -vvv "$DMG"
+
+      - name: Publish GitHub Release
+        if: steps.meta.outputs.dry_run != 'true' && github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.path }}"
+          BASENAME="$(basename "$DMG")"
+          SHA="$(shasum -a 256 "$DMG" | awk '{print $1}')"
+          # Commit-based notes via the API, then append the checksum.
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${{ steps.meta.outputs.tag }}" --jq '.body' > notes.md \
+            || echo "Release ${{ steps.meta.outputs.tag }}" > notes.md
+          # shellcheck disable=SC2016 # single-quoted intentionally: backticks are literal markdown, not command substitution
+          printf '\n\n---\nSHA-256 (%s):\n`%s`\n' "$BASENAME" "$SHA" >> notes.md
+          PRERELEASE=""
+          if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then PRERELEASE="--prerelease"; fi
+          gh release create "${{ steps.meta.outputs.tag }}" "$DMG" \
+            --title "Johnny Reader ${{ steps.meta.outputs.tag }}" \
+            --notes-file notes.md $PRERELEASE
