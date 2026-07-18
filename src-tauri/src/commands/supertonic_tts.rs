@@ -194,9 +194,7 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
         loop {
             let next = tokio::time::timeout(SUPERTONIC_READ_TIMEOUT, stream.next())
                 .await
-                .map_err(|_| {
-                    AppError::Model("Supertonic model download stalled".to_string())
-                })?;
+                .map_err(|_| AppError::Model("Supertonic model download stalled".to_string()))?;
             let Some(chunk) = next else {
                 break;
             };

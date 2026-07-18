@@ -588,11 +588,9 @@ fn tag_re() -> &'static Regex {
 }
 
 fn currency_re() -> &'static Regex {
-    CURRENCY_RE
-        .get_or_init(|| {
-            Regex::new(r"\$(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?")
-                .expect("valid currency regex")
-        })
+    CURRENCY_RE.get_or_init(|| {
+        Regex::new(r"\$(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?").expect("valid currency regex")
+    })
 }
 
 fn percent_re() -> &'static Regex {
@@ -604,9 +602,8 @@ fn decimal_re() -> &'static Regex {
 }
 
 fn integer_re() -> &'static Regex {
-    INTEGER_RE.get_or_init(|| {
-        Regex::new(r"\b\d{1,3}(?:,\d{3})+\b|\b\d+\b").expect("valid integer regex")
-    })
+    INTEGER_RE
+        .get_or_init(|| Regex::new(r"\b\d{1,3}(?:,\d{3})+\b|\b\d+\b").expect("valid integer regex"))
 }
 
 #[cfg(test)]

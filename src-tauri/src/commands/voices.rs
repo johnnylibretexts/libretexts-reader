@@ -81,8 +81,7 @@ pub async fn download_voice<R: Runtime>(
         .replace("{id}", &voice_id);
     // Unique per-invocation temp file so concurrent downloads of the same voice
     // cannot corrupt each other's in-progress file before the atomic rename.
-    let temp_path =
-        paths::temp_dir()?.join(format!("{voice_id}.{}.bin.download", Uuid::new_v4()));
+    let temp_path = paths::temp_dir()?.join(format!("{voice_id}.{}.bin.download", Uuid::new_v4()));
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .connect_timeout(CONNECT_TIMEOUT)
