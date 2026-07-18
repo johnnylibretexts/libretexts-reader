@@ -2,6 +2,15 @@
 
 Checklist for producing a signed, notarized macOS build.
 
+## Automated release (preferred)
+
+Push a `vX.Y.Z` tag with the self-hosted runner up and CI does everything below
+automatically — build, Developer-ID signing of the bundled ffmpeg/pdfium libs,
+`tauri build`, notarization via the `jr-notary` profile, stapling, and publishing
+the GitHub Release with the DMG + SHA-256. See `docs/ci.md` for runner setup and
+the exact steps. The manual checklist below is the fallback and documents what the
+workflow runs under the hood.
+
 ## 1. Auto-updater
 
 The auto-updater is **disabled** in v0.1.0 — the app ships without in-app
