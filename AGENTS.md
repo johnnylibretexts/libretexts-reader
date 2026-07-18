@@ -1,0 +1,64 @@
+# AGENTS.md
+
+Johnny Reader is a free, open-source **Tauri 2 desktop app** that reads OpenStax/LibreTexts textbooks, EPUBs, PDFs, pasted text, and article URLs aloud with on-device neural TTS. Stack: **React 19 + Vite 6 + TypeScript + Tailwind v4** in the webview (`src/`); **Rust** for content import, SQLite persistence, and part of TTS (`src-tauri/`). No backend server — everything runs locally. Apache-2.0.
+
+## Setup
+
+Required tooling:
+- **Node 22.x** (last verified 22.20.0 / npm 10.9.3). Do **not** use Node 24 — Vite/Rollup native addon loading hangs. If your shell defaults to 24: `source "$HOME/.nvm/nvm.sh" && nvm use 22.20.0`.
+- **Rust stable** via rustup — `rust-toolchain.toml` pins it and adds `clippy` + `rustfmt` (workspace `rust-version = 1.88`).
+- macOS: Xcode Command Line Tools. First build needs **network** (Cargo crates + `src-tauri/build.rs` fetching bundled PDFium/ffmpeg).
+
+```bash
+npm install
+cargo check -p johnny-reader
+npm run build
+```
+
+If a copied `target/` fails with stale absolute paths, `cargo clean -p mp3lame-sys` (or `cargo clean`) fixes it.
+
+## Build & Run
+
+```bash
+npm run tauri:dev          # live development (Vite + Rust, hot reload)
+
+# fast runnable binary without packaging installers:
+npm run tauri -- build --debug --no-bundle
+open target/debug/johnny-reader             # quit any stale instance first
+
+npm run tauri:build        # full release bundle → target/release/bundle/{dmg,macos}/...
+```
+
+Frontend-only build/typecheck: `npm run build` (`tsc && vite build`). Vite dev server is pinned to port 1420 (`strictPort`).
+
+## Testing
+
+```bash
+npm run build                               # TypeScript typecheck + frontend build (the frontend gate)
+cargo check -p johnny-reader                # Rust typecheck
+cargo test -p johnny-reader                 # Rust unit/integration tests
+git diff --check                            # whitespace/conflict-marker gate
+```
+
+- **Before a change is done**, both the frontend build and `cargo test -p johnny-reader` must pass; re-run **both** whenever you touch shared DB models or migrations.
+- Live network smoke (opt-in, uses a temp app-data dir): `cargo test -p johnny-reader live_imports_small_public_book_with_images -- --ignored --nocapture`.
+- There is no JS unit-test runner configured; verify UI changes by running the debug binary. Point runs at a scratch library with `JOHNNY_READER_APP_DATA_DIR=/tmp/jr-test`.
+
+## Code Style
+
+- Rust: `cargo fmt` + `cargo clippy`. Commands are `#[tauri::command]` fns in `src-tauri/src/commands/`, registered in `generate_handler!` in `src-tauri/src/lib.rs`. Content importers live in `src-tauri/src/content/`, DB access in `src-tauri/src/db/` (`rusqlite` + `r2d2` pool).
+- TypeScript/React: functional components, **Zustand** stores (`src/stores/`), Tailwind v4. All calls into Rust go through the typed wrappers in `src/lib/tauri.ts`; payload types live in `src/types/domain.ts`. Keep the wrapper list, the `generate_handler!` list, and the type definitions in sync.
+- Database migrations: add a new numbered SQL file in `src-tauri/resources/migrations/` (`0005_*.sql`, …). **Never edit an already-applied migration** — a new one is required so existing local databases upgrade cleanly.
+
+## Commit & PR Conventions
+
+- Git repo (default branch `main`, PRs used; Dependabot enabled). Commits use short imperative prefixes: `build:`, `deps:`, `fix:`, `chore:`, `license:`, `review:`.
+- Re-run frontend + Rust checks before committing. Keep the intentionally-dirty WIP in mind: **do not `git reset --hard` or checkout files to "clean up" unless explicitly asked** — uncommitted feature work is the source of truth (see `HANDOFF.md`).
+
+## Security & Data
+
+- **On-device / offline by design.** The library, downloaded books, TTS models, and images live in the OS app-data dir (`~/Library/Application Support/dev.johnnyrobot.reader`), never in the repo. Nothing is uploaded.
+- Outbound network is **allowlisted via CSP** in `src-tauri/tauri.conf.json` (`connect-src`/`img-src`: OpenStax, LibreTexts, Hugging Face model hosts, jsDelivr, GitHub). Widen it deliberately when adding a source, and keep the `assetProtocol` scope tight (`$APPDATA/covers/**`, `images/**`).
+- Bundled native binaries/models are gitignored (`src-tauri/binaries/`, `resources/pdfium/`, `resources/voices/`) — never commit them.
+- **Release builds are signed + notarized** (macOS Developer ID). Bundled ffmpeg `.dylib`s and `libpdfium.dylib` must be signed manually with hardened runtime before `tauri:build`, and notarization secrets are stored in a `notarytool` keychain profile — never in the shell or the repo. Full checklist: `RELEASE.md`.
+- Distributed bundles include third-party components under their own licenses (FFmpeg/LGPL, PDFium) — notices are collected in `LICENSES/`.
