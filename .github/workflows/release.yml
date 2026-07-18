@@ -21,6 +21,7 @@ jobs:
   release:
     if: github.repository == 'johnnyrobot/johnny-reader'
     runs-on: [self-hosted, macos, release]
+    timeout-minutes: 60
     env:
       APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -60,6 +61,9 @@ jobs:
           npm ci
 
       - name: Materialize native libs via build.rs
+        # Load-bearing: this build triggers build.rs to download pdfium/ffmpeg so the
+        # next step can Developer-ID re-sign them BEFORE tauri:build bundles them. Do
+        # not remove or fold into the build step — the re-sign must happen in between.
         run: |
           set -euo pipefail
           source "$HOME/.cargo/env"
