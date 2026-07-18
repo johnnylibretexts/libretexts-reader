@@ -28,4 +28,24 @@ if ROOT="$tmp" bash "$script" 0.0.0 >/dev/null 2>&1; then
 fi
 echo "PASS: wrong expected rejected"
 
+# Case 4: decoy versions in other tables should not be picked up
+cat > "$tmp/Cargo.toml" << 'EOF'
+[package]
+version = "9.9.9"
+
+[workspace.package]
+version = "1.2.3"
+
+[dependencies.foo]
+version = "8.8.8"
+EOF
+
+ROOT="$tmp" bash "$script" 1.2.3 >/dev/null
+echo "PASS: workspace.package version scoping honored"
+
+if ROOT="$tmp" bash "$script" 9.9.9 >/dev/null 2>&1; then
+  echo "FAIL: decoy [package] version was extracted" >&2; exit 1
+fi
+echo "PASS: decoy table version ignored"
+
 echo "ALL TESTS PASSED"
