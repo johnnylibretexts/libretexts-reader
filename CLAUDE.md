@@ -59,3 +59,17 @@ Pre-commit/verification gate that was green at last handoff: `npm run build`, `c
 - **Release signing is manual for bundled natives.** Tauri does not sign the bundled ffmpeg `.dylib`s or `libpdfium.dylib`; sign the source libs with Developer ID + hardened runtime **before** `tauri:build`, or notarization fails. Full runbook: `RELEASE.md`. The auto-updater is disabled in v0.1.0.
 - `build.rs` needs **network on first build** to fetch PDFium/ffmpeg. Bundled binaries/models live in gitignored paths (`src-tauri/binaries/`, `resources/pdfium/`, `resources/voices/`).
 - The working tree is often intentionally dirty with uncommitted feature work — **do not `git reset --hard`/checkout to "clean up" unless asked.** See `HANDOFF.md` for current WIP and full context.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `johnnyrobot/johnny-reader`, driven via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary — each canonical role's label string equals its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (neither exists yet; created lazily). See `docs/agents/domain.md`.
