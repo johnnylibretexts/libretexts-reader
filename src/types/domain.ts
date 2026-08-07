@@ -6,7 +6,8 @@ export type Document = { id: string, title: string, sourceType: SourceType, sour
 
 export type Section = { id: string, documentId: string, ordinal: number, title: string, wordCount: number, };
 
-export type Paragraph = { id: string, sectionId: string, ordinal: number, text: string, sentenceOffsets: Array<[number, number]>, };
+/** `text` is the display form; `sentenceSpeech` holds one speech form per entry in `sentenceOffsets`, in the same order. */
+export type Paragraph = { id: string, sectionId: string, ordinal: number, text: string, sentenceOffsets: Array<[number, number]>, sentenceSpeech: string[], };
 
 export type SectionImage = { id: string, sectionId: string, ordinal: number, sourceUrl: string, localPath: string, altText: string | null, caption: string | null, contentType: string | null, anchorParagraphOrdinal: number | null, };
 

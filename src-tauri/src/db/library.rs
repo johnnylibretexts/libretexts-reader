@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
+use crate::content::normalize::normalize_for_tts;
 use crate::db::models::{Document, Paragraph, Section, SectionImage, SourceType};
 use crate::error::{AppError, AppResult};
 
@@ -70,19 +71,32 @@ pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Par
          ORDER BY ordinal",
     )?;
     let rows = statement.query_map(params![section_id], |row| {
-        let sentence_offsets: String = row.get(4)?;
-        Ok(Paragraph {
-            id: row.get(0)?,
-            section_id: row.get(1)?,
-            ordinal: row.get(2)?,
-            text: row.get(3)?,
-            sentence_offsets: serde_json::from_str(&sentence_offsets).map_err(|error| {
+        let raw_offsets: String = row.get(4)?;
+        let text: String = row.get(3)?;
+        let sentence_offsets: Vec<(usize, usize)> =
+            serde_json::from_str(&raw_offsets).map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(
                     4,
                     rusqlite::types::Type::Text,
                     Box::new(error),
                 )
-            })?,
+            })?;
+
+        // Every Paragraph carries both forms, so this is the one place they can
+        // fall out of step — and they cannot, because the speech form is
+        // derived from the display form right here, sentence by sentence.
+        let sentence_speech = sentence_offsets
+            .iter()
+            .map(|(start, end)| normalize_for_tts(text.get(*start..*end).unwrap_or_default()))
+            .collect();
+
+        Ok(Paragraph {
+            id: row.get(0)?,
+            section_id: row.get(1)?,
+            ordinal: row.get(2)?,
+            text,
+            sentence_offsets,
+            sentence_speech,
         })
     })?;
 

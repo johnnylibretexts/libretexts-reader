@@ -30,6 +30,9 @@ const PARAGRAPHS: Domain.Paragraph[] = [
       [0, 15],
       [16, 32],
     ],
+    // Deliberately unlike the display text: a test can then tell whether the
+    // player spoke the backend's speech form or fell back to slicing.
+    sentenceSpeech: ["First sentence spoken.", "Second sentence spoken."],
   },
   {
     id: "para-2",
@@ -37,6 +40,7 @@ const PARAGRAPHS: Domain.Paragraph[] = [
     ordinal: 1,
     text: "Third sentence.",
     sentenceOffsets: [[0, 15]],
+    sentenceSpeech: ["Third sentence spoken."],
   },
 ];
 
@@ -89,7 +93,7 @@ describe("playback through SpeechEngine", () => {
     await usePlayerStore.getState().loadDocument("doc-1");
     await usePlayerStore.getState().play();
 
-    expect(engine.calls[0].text).toBe("First sentence.");
+    expect(engine.calls[0].text).toBe("First sentence spoken.");
     expect(usePlayerStore.getState().isPlaying).toBe(true);
   });
 
@@ -111,8 +115,8 @@ describe("playback through SpeechEngine", () => {
     await usePlayerStore.getState().play();
 
     const spoken = engine.calls.map((call) => call.text);
-    expect(spoken).toContain("Second sentence.");
-    expect(spoken).toContain("Third sentence.");
+    expect(spoken).toContain("Second sentence spoken.");
+    expect(spoken).toContain("Third sentence spoken.");
   });
 
   it("serves a repeated sentence from the cache instead of the engine", async () => {
@@ -205,5 +209,43 @@ describe("cancellation", () => {
 
     expect(usePlayerStore.getState().error).toBe("model is missing");
     expect(usePlayerStore.getState().isPlaying).toBe(false);
+  });
+});
+
+describe("speech text", () => {
+  it("speaks the backend's speech form, not the displayed text", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine]);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    // Conversion happens in Rust now. If this ever reads "First sentence."
+    // the player has gone back to converting — or to slicing display text.
+    expect(engine.calls[0].text).toBe("First sentence spoken.");
+  });
+
+  it("falls back to display text when a paragraph carries no speech form", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine]);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    usePlayerStore.setState({
+      paragraphs: [
+        {
+          id: "para-legacy",
+          sectionId: "sec-1",
+          ordinal: 0,
+          text: "Legacy sentence.",
+          sentenceOffsets: [[0, 16]],
+          sentenceSpeech: [],
+        },
+      ],
+      currentParagraphIndex: 0,
+      currentSentenceIndex: 0,
+    });
+    await usePlayerStore.getState().play();
+
+    expect(engine.calls[engine.calls.length - 1].text).toBe("Legacy sentence.");
   });
 });

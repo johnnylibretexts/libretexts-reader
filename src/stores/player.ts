@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { mathContentToSpeech } from "../lib/mathContent";
 import { api } from "../lib/tauri";
 import { displayError } from "../lib/errors";
 import {
@@ -354,7 +353,7 @@ async function speakWithBufferedSpeech(
     const blob = await cachedSpeechBlob({
       engine,
       position,
-      text: sentence,
+      speechText: sentenceSpeechAtPosition(get(), position) ?? sentence,
       state: get(),
       settings: useSettingsStore.getState(),
       onStatus: (bufferingMessage) => {
@@ -391,19 +390,19 @@ async function speakWithBufferedSpeech(
 async function cachedSpeechBlob({
   engine,
   position,
-  text,
+  speechText,
   state,
   settings,
   onStatus,
 }: {
   engine: SpeechEngine;
   position: Position;
-  text: string;
+  /** Already in spoken form — see Paragraph.sentenceSpeech. */
+  speechText: string;
   state: PlayerState;
   settings: SettingsState;
   onStatus?: (status: string) => void;
 }) {
-  const speechText = mathContentToSpeech(text);
   const key = speechCacheKey(engine, position, speechText, state, settings);
   const cached = speechCache.get(key);
   if (cached) {
@@ -452,8 +451,8 @@ async function fillSpeechBuffer(
       const position = positions[cursor];
       cursor += 1;
       const state = get();
-      const text = sentenceAtPosition(state, position);
-      if (!text) {
+      const speechText = sentenceSpeechAtPosition(state, position);
+      if (!speechText) {
         continue;
       }
 
@@ -461,7 +460,7 @@ async function fillSpeechBuffer(
         await cachedSpeechBlob({
           engine,
           position,
-          text,
+          speechText,
           state,
           settings,
         });
@@ -719,16 +718,34 @@ function currentPosition(state: PlayerState): Position {
 }
 
 function sentenceAtPosition(state: PlayerState, position: Position) {
-  if (position.sectionIndex !== state.currentSectionIndex) {
-    return null;
-  }
+  const paragraph = paragraphAtPosition(state, position);
+  return paragraph ? sentenceText(paragraph, position.sentenceIndex) : null;
+}
 
-  const paragraph = state.paragraphs[position.paragraphIndex];
+/**
+ * The spoken form of a sentence, as computed by the backend.
+ *
+ * Falls back to the display text when a paragraph predates this field — the
+ * reader still hears the sentence, just with notation read literally.
+ */
+function sentenceSpeechAtPosition(state: PlayerState, position: Position) {
+  const paragraph = paragraphAtPosition(state, position);
   if (!paragraph) {
     return null;
   }
 
-  return sentenceText(paragraph, position.sentenceIndex);
+  return (
+    paragraph.sentenceSpeech?.[position.sentenceIndex] ??
+    sentenceText(paragraph, position.sentenceIndex)
+  );
+}
+
+function paragraphAtPosition(state: PlayerState, position: Position) {
+  if (position.sectionIndex !== state.currentSectionIndex) {
+    return null;
+  }
+
+  return state.paragraphs[position.paragraphIndex] ?? null;
 }
 
 export function sentenceText(
