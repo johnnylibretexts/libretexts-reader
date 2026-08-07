@@ -10,8 +10,8 @@ import { displayError } from "../lib/errors";
 
 export type AppTheme = "light" | "dark" | "system";
 export type ModelPrecision = "fp32" | "q8";
-export type TtsProvider = "kokoro" | "supertonic" | "system";
-export type SelectableTtsProvider = "kokoro" | "supertonic";
+/** Mirrors `SpeechEngineId` — every provider here is one a reader can pick. */
+export type TtsProvider = "kokoro" | "supertonic";
 
 export interface TtsSettingsPatch {
   ttsProvider?: TtsProvider;
@@ -40,7 +40,7 @@ interface SettingsStore extends SettingsState {
   hydrate: () => Promise<void>;
   markModelDownloaded: (precision: ModelPrecision) => void;
   setTheme: (theme: AppTheme) => Promise<void>;
-  setTtsProvider: (provider: SelectableTtsProvider) => Promise<void>;
+  setTtsProvider: (provider: TtsProvider) => Promise<void>;
   saveTtsSettings: (settings: TtsSettingsPatch) => Promise<void>;
 }
 
@@ -71,21 +71,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     set({ loading: true, error: null });
     try {
+      // Legacy stored values are coerced in asTtsProvider, so anything that
+      // survives loadSettings is already a provider a reader can pick.
       const loaded = await loadSettings();
-      const ttsProvider =
-        loaded.ttsProvider === undefined || loaded.ttsProvider === "system"
-          ? DEFAULT_SETTINGS.ttsProvider
-          : loaded.ttsProvider;
       set({
         ...DEFAULT_SETTINGS,
         ...definedSettings(loaded),
-        ttsProvider,
         hydrated: true,
         loading: false,
       });
-      if (loaded.ttsProvider === "system") {
-        void api.setSetting("tts_provider", ttsProvider).catch(() => undefined);
-      }
     } catch (error) {
       set({
         ...DEFAULT_SETTINGS,
@@ -115,7 +109,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       });
     }
   },
-  setTtsProvider: async (provider: SelectableTtsProvider) => {
+  setTtsProvider: async (provider: TtsProvider) => {
     set({ ttsProvider: provider, error: null });
 
     try {
@@ -135,14 +129,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       ttsSettings.supertonicLanguage ??
       get().supertonicLanguage ??
       DEFAULT_SETTINGS.supertonicLanguage;
-    const requestedProvider =
+    const ttsProvider =
       ttsSettings.ttsProvider ??
       get().ttsProvider ??
       DEFAULT_SETTINGS.ttsProvider;
-    const ttsProvider =
-      requestedProvider === "system"
-        ? DEFAULT_SETTINGS.ttsProvider
-        : requestedProvider;
     set({
       ttsProvider,
       supertonicVoiceStyle,
@@ -211,13 +201,18 @@ function asModelPrecision(value: unknown): ModelPrecision | undefined {
   return value === "fp32" || value === "q8" ? value : undefined;
 }
 
+/**
+ * The single place stored provider values are interpreted, including retired
+ * ones. `system` was the Web Speech path, removed once every engine sat behind
+ * SpeechEngine; `gemini` and `fish` predate Supertonic. All fall back to the
+ * default rather than being written back — the next settings save overwrites
+ * the stale row anyway.
+ */
 function asTtsProvider(value: unknown): TtsProvider | undefined {
   if (value === "gemini" || value === "fish") {
     return "supertonic";
   }
-  return value === "kokoro" || value === "supertonic" || value === "system"
-    ? value
-    : undefined;
+  return value === "kokoro" || value === "supertonic" ? value : undefined;
 }
 
 function localTheme(): AppTheme | undefined {

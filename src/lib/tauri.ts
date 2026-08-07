@@ -8,6 +8,7 @@ export interface SynthesizeSpeechRequest {
   text: string;
   speed: number;
   voiceId?: string | null;
+  language?: string | null;
 }
 
 export interface SpeechAudio {

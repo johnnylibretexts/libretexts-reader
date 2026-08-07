@@ -1,10 +1,14 @@
 import { create } from "zustand";
-import { synthesizeKokoroSpeech } from "../lib/kokoro";
 import { mathContentToSpeech } from "../lib/mathContent";
 import { api } from "../lib/tauri";
 import { displayError } from "../lib/errors";
+import {
+  createSpeechEngine,
+  SpeechAbortedError,
+  type SpeechEngine,
+} from "../lib/speech";
 import { useSettingsStore } from "./settings";
-import type { SettingsState, TtsProvider } from "./settings";
+import type { SettingsState } from "./settings";
 import type * as Domain from "../types/domain";
 
 interface Position {
@@ -28,7 +32,6 @@ interface PlayerState {
   bufferingMessage: string;
   loading: boolean;
   error: string | null;
-  activeSentenceText: string;
   loadDocument: (documentId: string) => Promise<void>;
   play: () => Promise<void>;
   pause: () => void;
@@ -61,7 +64,16 @@ const SPEECH_CACHE_LIMIT = 32;
 // load, so backward navigation into another section lands at its end.
 const LAST_IN_SECTION = Number.MAX_SAFE_INTEGER;
 
-type NeuralTtsProvider = Extract<TtsProvider, "kokoro" | "supertonic">;
+/**
+ * The engine in use, rebuilt only when the settings that define it change.
+ * Holding it here rather than passing it around keeps every caller below from
+ * having to know which engine is active — that decision happens once, in
+ * `activeEngine`, and nowhere else in this file.
+ */
+let cachedEngine: { key: string; engine: SpeechEngine } | null = null;
+
+/** Aborts in-flight synthesis for the current utterance. See SpeechEngine. */
+let speechAbort: AbortController | null = null;
 
 interface SpeechCacheEntry {
   promise: Promise<Blob>;
@@ -90,7 +102,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   bufferingMessage: "",
   loading: false,
   error: null,
-  activeSentenceText: "",
 
   loadDocument: async (documentId: string) => {
     const requestId = ++navToken;
@@ -101,7 +112,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
-      activeSentenceText: "",
     });
 
     try {
@@ -179,7 +189,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       bufferingMessage: "",
       loading: false,
       error: null,
-      activeSentenceText: "",
     });
   },
 
@@ -242,7 +251,6 @@ async function speakCurrentSentence(
   if (!sentence) {
     set({
       isPlaying: false,
-      activeSentenceText: "",
       error: "No sentence selected.",
     });
     return;
@@ -252,102 +260,17 @@ async function speakCurrentSentence(
   if (token === undefined) {
     cancelSpeech();
     token = ++utteranceToken;
+    speechAbort = new AbortController();
   } else if (token !== utteranceToken) {
     // A stale auto-advance/continuation request: playback was paused or a newer
     // utterance started while this one was awaiting. Do not resume playback.
     return;
   }
-  const settings = useSettingsStore.getState();
   const position = currentPosition(state);
   const requireInitialBuffer = options.requireInitialBuffer ?? true;
 
-  if (settings.ttsProvider === "kokoro") {
-    await speakWithKokoro(
-      position,
-      sentence,
-      token,
-      set,
-      get,
-      requireInitialBuffer,
-    );
-    return;
-  }
-
-  if (settings.ttsProvider === "supertonic") {
-    await speakWithSupertonic(
-      position,
-      sentence,
-      token,
-      set,
-      get,
-      requireInitialBuffer,
-    );
-    return;
-  }
-
-  speakWithSystemVoice(sentence, token, set, get);
-}
-
-function speakWithSystemVoice(
-  sentence: string,
-  token: number,
-  set: (partial: Partial<PlayerState>) => void,
-  get: () => PlayerState,
-) {
-  if (
-    !("speechSynthesis" in window) ||
-    !("SpeechSynthesisUtterance" in window)
-  ) {
-    set({
-      isPlaying: false,
-      isBuffering: false,
-      bufferingMessage: "",
-      error: "Speech playback is unavailable in this webview.",
-    });
-    return;
-  }
-
-  const utterance = new SpeechSynthesisUtterance(mathContentToSpeech(sentence));
-  utterance.rate = clamp(get().speed, 0.5, 2);
-  utterance.voice = chooseSystemVoice(get().voice);
-  utterance.onend = () => {
-    if (token !== utteranceToken || !get().isPlaying) {
-      return;
-    }
-    void advanceBySentence(set, get, 1, true, token);
-  };
-  utterance.onerror = (event) => {
-    if (token !== utteranceToken) {
-      return;
-    }
-    set({
-      isPlaying: false,
-      isBuffering: false,
-      error: event.error ? `Playback error: ${event.error}` : "Playback error.",
-    });
-  };
-
-  set({
-    isPlaying: true,
-    isBuffering: false,
-    bufferingMessage: "",
-    error: null,
-    activeSentenceText: sentence,
-  });
-  window.speechSynthesis.speak(utterance);
-  void persistPlaybackState(get());
-}
-
-async function speakWithKokoro(
-  position: Position,
-  sentence: string,
-  token: number,
-  set: (partial: Partial<PlayerState>) => void,
-  get: () => PlayerState,
-  requireInitialBuffer: boolean,
-) {
   await speakWithBufferedSpeech(
-    "kokoro",
+    activeEngine(set),
     position,
     sentence,
     token,
@@ -357,27 +280,36 @@ async function speakWithKokoro(
   );
 }
 
-async function speakWithSupertonic(
-  position: Position,
-  sentence: string,
-  token: number,
-  set: (partial: Partial<PlayerState>) => void,
-  get: () => PlayerState,
-  requireInitialBuffer: boolean,
-) {
-  await speakWithBufferedSpeech(
-    "supertonic",
-    position,
-    sentence,
-    token,
-    set,
-    get,
-    requireInitialBuffer,
-  );
+/**
+ * Resolve the engine for the current settings, rebuilding it only when those
+ * settings change.
+ *
+ * A voice id means something only to the engine that offered it, so switching
+ * engines resets the reader's voice to the new engine's default rather than
+ * handing it an id it cannot interpret.
+ */
+function activeEngine(set: (partial: Partial<PlayerState>) => void) {
+  const settings = useSettingsStore.getState();
+  const key = [
+    settings.ttsProvider,
+    settings.modelPrecision,
+    settings.supertonicLanguage,
+  ].join(":");
+
+  if (cachedEngine?.key !== key) {
+    const previous = cachedEngine?.engine;
+    const engine = createSpeechEngine(settings);
+    cachedEngine = { key, engine };
+    if (previous && previous.id !== engine.id) {
+      set({ voice: engine.defaultVoice });
+    }
+  }
+
+  return cachedEngine.engine;
 }
 
 async function speakWithBufferedSpeech(
-  provider: NeuralTtsProvider,
+  engine: SpeechEngine,
   position: Position,
   sentence: string,
   token: number,
@@ -385,7 +317,7 @@ async function speakWithBufferedSpeech(
   get: () => PlayerState,
   requireInitialBuffer: boolean,
 ) {
-  const label = provider === "kokoro" ? "Kokoro" : "Supertonic";
+  const label = engine.id === "kokoro" ? "Kokoro" : "Supertonic";
   const lookaheadPositions = speechPositionsFromCurrent(
     get(),
     SPEECH_LOOKAHEAD_SENTENCES,
@@ -395,18 +327,17 @@ async function speakWithBufferedSpeech(
     isBuffering: true,
     bufferingMessage: `Buffering ${label} audio`,
     error: null,
-    activeSentenceText: sentence,
   });
 
   try {
-    void fillSpeechBuffer(provider, lookaheadPositions, token, get);
+    void fillSpeechBuffer(engine, lookaheadPositions, token, get);
     if (requireInitialBuffer) {
       const initialPositions = lookaheadPositions.slice(
         0,
         SPEECH_INITIAL_BUFFER_SENTENCES,
       );
       await fillSpeechBuffer(
-        provider,
+        engine,
         initialPositions,
         token,
         get,
@@ -421,7 +352,7 @@ async function speakWithBufferedSpeech(
     }
 
     const blob = await cachedSpeechBlob({
-      provider,
+      engine,
       position,
       text: sentence,
       state: get(),
@@ -438,13 +369,14 @@ async function speakWithBufferedSpeech(
 
     await playGeneratedAudio(blob, token, set, get);
     void fillSpeechBuffer(
-      provider,
+      engine,
       speechPositionsFromCurrent(get(), SPEECH_LOOKAHEAD_SENTENCES),
       token,
       get,
     );
   } catch (error) {
-    if (token !== utteranceToken) {
+    // A cancelled utterance is not a failure worth showing anyone.
+    if (token !== utteranceToken || error instanceof SpeechAbortedError) {
       return;
     }
     set({
@@ -457,14 +389,14 @@ async function speakWithBufferedSpeech(
 }
 
 async function cachedSpeechBlob({
-  provider,
+  engine,
   position,
   text,
   state,
   settings,
   onStatus,
 }: {
-  provider: NeuralTtsProvider;
+  engine: SpeechEngine;
   position: Position;
   text: string;
   state: PlayerState;
@@ -472,20 +404,21 @@ async function cachedSpeechBlob({
   onStatus?: (status: string) => void;
 }) {
   const speechText = mathContentToSpeech(text);
-  const key = speechCacheKey(provider, position, speechText, state, settings);
+  const key = speechCacheKey(engine, position, speechText, state, settings);
   const cached = speechCache.get(key);
   if (cached) {
     cached.lastUsed = Date.now();
     return cached.promise;
   }
 
-  const promise = synthesizeSpeechBlob({
-    provider,
-    text: speechText,
-    state,
-    settings,
-    onStatus,
-  }).catch((error) => {
+  const promise = (async () => {
+    // Cold engines report progress while they load; synthesis itself does not.
+    await engine.ensureReady(onStatus);
+    return engine.synthesize(
+      { text: speechText, voice: state.voice, speed: state.speed },
+      speechAbort?.signal,
+    );
+  })().catch((error) => {
     speechCache.delete(key);
     throw error;
   });
@@ -495,42 +428,8 @@ async function cachedSpeechBlob({
   return promise;
 }
 
-async function synthesizeSpeechBlob({
-  provider,
-  text,
-  state,
-  settings,
-  onStatus,
-}: {
-  provider: NeuralTtsProvider;
-  text: string;
-  state: PlayerState;
-  settings: SettingsState;
-  onStatus?: (status: string) => void;
-}) {
-  if (provider === "kokoro") {
-    return synthesizeKokoroSpeech({
-      text,
-      speed: state.speed,
-      voiceId: state.voice,
-      precision: settings.modelPrecision,
-      onStatus,
-    });
-  }
-
-  const speech = await api.synthesizeSpeech({
-    text,
-    speed: state.speed,
-    voiceId:
-      provider === "supertonic" ? settings.supertonicVoiceStyle : state.voice,
-  });
-  return new Blob([new Uint8Array(speech.audio)], {
-    type: speech.mimeType || "audio/mpeg",
-  });
-}
-
 async function fillSpeechBuffer(
-  provider: NeuralTtsProvider,
+  engine: SpeechEngine,
   positions: Position[],
   token: number,
   get: () => PlayerState,
@@ -560,7 +459,7 @@ async function fillSpeechBuffer(
 
       try {
         await cachedSpeechBlob({
-          provider,
+          engine,
           position,
           text,
           state,
@@ -583,7 +482,7 @@ async function fillSpeechBuffer(
 }
 
 function speechCacheKey(
-  provider: NeuralTtsProvider,
+  engine: SpeechEngine,
   position: Position,
   text: string,
   state: PlayerState,
@@ -591,8 +490,11 @@ function speechCacheKey(
 ) {
   const section = state.sections[position.sectionIndex];
   const paragraph = state.paragraphs[position.paragraphIndex];
+  // Engine-specific settings are folded in unconditionally rather than per
+  // engine: a superset key costs an occasional extra synthesis after a settings
+  // change, where a too-narrow one would serve audio in the wrong voice.
   return JSON.stringify({
-    provider,
+    engine: engine.id,
     documentId: state.document?.id ?? "",
     sectionId: section?.id ?? "",
     paragraphId: paragraph?.id ?? "",
@@ -601,10 +503,7 @@ function speechCacheKey(
     voice: state.voice,
     speed: state.speed,
     precision: settings.modelPrecision,
-    supertonicVoiceStyle:
-      provider === "supertonic" ? settings.supertonicVoiceStyle : "",
-    supertonicLanguage:
-      provider === "supertonic" ? settings.supertonicLanguage : "",
+    supertonicLanguage: settings.supertonicLanguage,
   });
 }
 
@@ -656,7 +555,6 @@ async function playGeneratedAudio(
     isBuffering: false,
     bufferingMessage: "",
     error: null,
-    activeSentenceText: currentSentence(get()) ?? "",
   });
 
   try {
@@ -696,7 +594,6 @@ async function advanceBySentence(
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
-      activeSentenceText: "",
     });
     return;
   }
@@ -1041,32 +938,6 @@ function lastReadableParagraphIndex(paragraphs: Domain.Paragraph[]) {
   return Math.max(0, paragraphs.length - 1);
 }
 
-function chooseSystemVoice(voiceId: string) {
-  const voices = window.speechSynthesis.getVoices();
-  if (voices.length === 0) {
-    return null;
-  }
-
-  const wantsFemale =
-    voiceId.includes("f_") ||
-    voiceId.startsWith("af") ||
-    voiceId.startsWith("bf");
-  const wantsBritish = voiceId.startsWith("b");
-  return (
-    voices.find((voice) =>
-      wantsBritish
-        ? voice.lang.toLowerCase().includes("gb")
-        : voice.lang.toLowerCase().includes("us"),
-    ) ??
-    voices.find((voice) =>
-      wantsFemale
-        ? /samantha|victoria|karen|female/i.test(voice.name)
-        : /alex|daniel|male/i.test(voice.name),
-    ) ??
-    voices[0]
-  );
-}
-
 async function persistPlaybackState(state: PlayerState) {
   const document = state.document;
   const section = state.sections[state.currentSectionIndex];
@@ -1091,12 +962,18 @@ async function persistPlaybackState(state: PlayerState) {
   }
 }
 
+/**
+ * Stop caring about the current utterance, and tell the engine so.
+ *
+ * The token is what makes late results harmless; the abort is what lets an
+ * engine skip work it has not started. Neither can stop synthesis already in
+ * flight — see SpeechEngine.
+ */
 function cancelSpeech() {
   utteranceToken += 1;
+  speechAbort?.abort();
+  speechAbort = null;
   clearGeneratedAudio();
-  if ("speechSynthesis" in window) {
-    window.speechSynthesis.cancel();
-  }
 }
 
 function clearGeneratedAudio() {

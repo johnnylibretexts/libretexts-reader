@@ -8,10 +8,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { usePlayerStore } from "../../stores/player";
-import {
-  type SelectableTtsProvider,
-  useSettingsStore,
-} from "../../stores/settings";
+import { type TtsProvider, useSettingsStore } from "../../stores/settings";
 
 export function PlaybackControls() {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
@@ -28,10 +25,7 @@ export function PlaybackControls() {
   const setSpeed = usePlayerStore((state) => state.setSpeed);
   const ttsProvider = useSettingsStore((state) => state.ttsProvider);
   const setTtsProvider = useSettingsStore((state) => state.setTtsProvider);
-  const selectedProvider: SelectableTtsProvider =
-    ttsProvider === "supertonic" ? "supertonic" : "kokoro";
-
-  async function changeProvider(provider: SelectableTtsProvider) {
+  async function changeProvider(provider: TtsProvider) {
     if (isPlaying) {
       pause();
     }
@@ -104,9 +98,9 @@ export function PlaybackControls() {
           className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900"
           disabled={isBuffering}
           onChange={(event) =>
-            void changeProvider(event.target.value as SelectableTtsProvider)
+            void changeProvider(event.target.value as TtsProvider)
           }
-          value={selectedProvider}
+          value={ttsProvider}
         >
           <option value="kokoro">Kokoro</option>
           <option value="supertonic">Supertonic</option>

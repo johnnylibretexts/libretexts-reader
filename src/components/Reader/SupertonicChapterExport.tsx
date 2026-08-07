@@ -8,6 +8,7 @@ import {
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
 import { displayError } from "../../lib/errors";
+import { speechAudioToBlob } from "../../lib/speech";
 import { mathContentToSpeech } from "../../lib/mathContent";
 import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import { usePlayerStore } from "../../stores/player";
@@ -126,11 +127,7 @@ export function SupertonicChapterExport() {
         documentTitle: activeDocument.title,
         sectionTitle: activeSection.title,
       });
-      await playBlob(
-        new Blob([new Uint8Array(speech.audio)], {
-          type: speech.mimeType || "audio/wav",
-        }),
-      );
+      await playBlob(speechAudioToBlob(speech));
     } catch (error) {
       setError(displayError(error));
     } finally {

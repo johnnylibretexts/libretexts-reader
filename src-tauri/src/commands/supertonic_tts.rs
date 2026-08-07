@@ -50,6 +50,9 @@ pub const SUPERTONIC_LANGUAGES: &[&str] = &[
 const SUPERTONIC_VOICE_STYLES: &[&str] =
     &["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
 
+const DEFAULT_VOICE_STYLE: &str = "M1";
+const DEFAULT_LANGUAGE: &str = "en";
+
 static SUPERTONIC_ENGINE: Lazy<Mutex<Option<CachedSupertonicEngine>>> =
     Lazy::new(|| Mutex::new(None));
 
@@ -350,15 +353,21 @@ pub async fn export_supertonic_chapter_mp3(
     })
 }
 
+/// Playback synthesis, driven entirely by what the caller passes.
+///
+/// Deliberately lenient about voice and language rather than erroring the way
+/// the preview and export commands do: the player carries one voice id across
+/// engines, so a reader who switches from Kokoro to Supertonic mid-session can
+/// briefly hold an id this engine does not know. Falling back beats cutting the
+/// audio off. User-initiated commands still reject unknown values outright.
 pub async fn synthesize_supertonic_text(
-    values: &HashMap<String, JsonValue>,
     text: &str,
     voice_id: Option<&str>,
+    language: Option<&str>,
     speed: f32,
 ) -> AppResult<SpeechAudio> {
-    let config = SupertonicConfig::from_settings(values)?;
-    let voice_style = playback_voice_style(voice_id, &config.voice_style);
-    let language = config.language;
+    let voice_style = playback_voice_style(voice_id, DEFAULT_VOICE_STYLE);
+    let language = normalize_language(language, DEFAULT_LANGUAGE).to_string();
 
     synthesize_supertonic_audio(
         normalize_for_tts(text),
@@ -373,12 +382,12 @@ impl SupertonicConfig {
     fn from_settings(values: &HashMap<String, JsonValue>) -> AppResult<Self> {
         let voice_style = normalize_voice_style(
             optional_setting_string(values, "supertonic_voice_style").as_deref(),
-            "M1",
+            DEFAULT_VOICE_STYLE,
         )
         .to_string();
         let language = normalize_language(
             optional_setting_string(values, "supertonic_language").as_deref(),
-            "en",
+            DEFAULT_LANGUAGE,
         )
         .to_string();
 
@@ -1064,7 +1073,7 @@ fn normalize_language<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str 
     if is_valid_supertonic_language(candidate) {
         candidate
     } else {
-        "en"
+        DEFAULT_LANGUAGE
     }
 }
 
@@ -1103,7 +1112,7 @@ fn normalize_voice_style<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a s
         .iter()
         .find(|voice_style| voice_style.eq_ignore_ascii_case(candidate))
         .copied()
-        .unwrap_or("M1")
+        .unwrap_or(DEFAULT_VOICE_STYLE)
 }
 
 fn setting_string(values: &HashMap<String, JsonValue>, key: &str, fallback: &str) -> String {
