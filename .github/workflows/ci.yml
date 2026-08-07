@@ -18,6 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Cheap, needs no toolchain -- run it before anything that takes minutes.
+      - name: Error kind sync check
+        run: |
+          scripts/ci/check-error-kinds.test.sh
+          scripts/ci/check-error-kinds.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22.20.0'

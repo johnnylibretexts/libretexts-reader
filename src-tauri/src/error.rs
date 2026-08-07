@@ -1,3 +1,4 @@
+use serde::ser::SerializeStruct;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -55,9 +56,92 @@ pub enum AppError {
     Migration(String),
 }
 
+impl AppError {
+    /// Stable identifier for this error, mirrored by `AppErrorKind` in
+    /// `src/types/domain.ts`. The match is exhaustive on purpose: adding a
+    /// variant will not compile until this is updated, and
+    /// `scripts/ci/check-error-kinds.sh` fails if the TypeScript union drifts.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Database(_) => "database",
+            Self::Pool(_) => "pool",
+            Self::Io(_) => "io",
+            Self::Serde(_) => "serde",
+            Self::Http(_) => "http",
+            Self::Readability(_) => "readability",
+            Self::Epub(_) => "epub",
+            Self::Pdf(_) => "pdf",
+            Self::OpenStax(_) => "openstax",
+            Self::LibreTexts(_) => "libretexts",
+            Self::Model(_) => "model",
+            Self::Voice(_) => "voice",
+            Self::Tts(_) => "tts",
+            Self::DrmProtected => "drm_protected",
+            Self::Tauri(_) => "tauri",
+            Self::InvalidInput(_) => "invalid_input",
+            Self::Migration(_) => "migration",
+        }
+    }
+
+    /// The human-readable part, without the kind prefix that `Display` adds.
+    /// `Display` keeps the prefix because it is useful in Rust logs; callers
+    /// across the invoke boundary already have `kind` and do not need it twice.
+    pub fn message(&self) -> String {
+        match self {
+            Self::Database(error) => error.to_string(),
+            Self::Pool(error) => error.to_string(),
+            Self::Io(error) => error.to_string(),
+            Self::Serde(error) => error.to_string(),
+            Self::Http(error) => error.to_string(),
+            Self::Readability(error) => error.to_string(),
+            Self::Epub(error) => error.to_string(),
+            Self::Tauri(error) => error.to_string(),
+            Self::Pdf(message)
+            | Self::OpenStax(message)
+            | Self::LibreTexts(message)
+            | Self::Model(message)
+            | Self::Voice(message)
+            | Self::Tts(message)
+            | Self::InvalidInput(message)
+            | Self::Migration(message) => message.clone(),
+            Self::DrmProtected => self.to_string(),
+        }
+    }
+
+    /// Whether retrying the same operation could plausibly succeed. Exhaustive
+    /// so that a new variant forces a deliberate answer rather than inheriting
+    /// a default.
+    pub fn retryable(&self) -> bool {
+        match self {
+            // A timed-out or unestablished connection is worth another go; a
+            // 404 or a malformed body is not.
+            Self::Http(error) => error.is_timeout() || error.is_connect(),
+            Self::Io(_) | Self::Pool(_) => true,
+            Self::Database(_)
+            | Self::Serde(_)
+            | Self::Readability(_)
+            | Self::Epub(_)
+            | Self::Pdf(_)
+            | Self::OpenStax(_)
+            | Self::LibreTexts(_)
+            | Self::Model(_)
+            | Self::Voice(_)
+            | Self::Tts(_)
+            | Self::DrmProtected
+            | Self::Tauri(_)
+            | Self::InvalidInput(_)
+            | Self::Migration(_) => false,
+        }
+    }
+}
+
 impl Serialize for AppError {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
+        let mut state = serializer.serialize_struct("AppError", 3)?;
+        state.serialize_field("kind", self.kind())?;
+        state.serialize_field("message", &self.message())?;
+        state.serialize_field("retryable", &self.retryable())?;
+        state.end()
     }
 }
 
@@ -66,5 +150,53 @@ pub type AppResult<T> = Result<T, AppError>;
 impl From<pdfium_render::prelude::PdfiumError> for AppError {
     fn from(error: pdfium_render::prelude::PdfiumError) -> Self {
         Self::Pdf(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_kind_message_and_retryable() {
+        let value = serde_json::to_value(AppError::InvalidInput("text is empty".into()))
+            .expect("AppError should serialize");
+
+        assert_eq!(value["kind"], "invalid_input");
+        assert_eq!(value["message"], "text is empty");
+        assert_eq!(value["retryable"], false);
+    }
+
+    #[test]
+    fn message_drops_the_prefix_that_display_keeps() {
+        let error = AppError::Model("checksum mismatch".into());
+
+        // Display stays useful for Rust logs; the wire form does not repeat the
+        // kind inside the message.
+        assert_eq!(error.to_string(), "model error: checksum mismatch");
+        assert_eq!(error.message(), "checksum mismatch");
+    }
+
+    #[test]
+    fn drm_protected_carries_its_whole_sentence() {
+        // This variant has no `{0}` payload, so `message` falls back to the
+        // Display string. It is also the variant the old prefix-stripping
+        // frontend could never match, because it contains no colon.
+        let error = AppError::DrmProtected;
+
+        assert_eq!(error.kind(), "drm_protected");
+        assert_eq!(error.message(), "DRM-protected content cannot be imported");
+        assert!(!error.retryable());
+    }
+
+    #[test]
+    fn transient_io_is_retryable() {
+        let error = AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "read timed out",
+        ));
+
+        assert_eq!(error.kind(), "io");
+        assert!(error.retryable());
     }
 }
