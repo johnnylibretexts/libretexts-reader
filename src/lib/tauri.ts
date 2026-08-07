@@ -20,8 +20,6 @@ export interface SupertonicPreviewRequest {
   text: string;
   voiceStyle?: string | null;
   language?: string | null;
-  documentTitle?: string | null;
-  sectionTitle?: string | null;
 }
 
 export interface SupertonicChapterRequest {

@@ -123,8 +123,6 @@ export function SupertonicChapterExport() {
         text: supertonicPreviewText(activeSection.title, sampleText),
         voiceStyle,
         language,
-        documentTitle: activeDocument.title,
-        sectionTitle: activeSection.title,
       });
       await playBlob(speechAudioToBlob(speech));
     } catch (error) {

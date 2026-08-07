@@ -2,7 +2,9 @@ pub mod commands;
 pub mod content;
 pub mod db;
 pub mod error;
+pub mod net;
 mod paths;
+pub mod tts;
 mod voices;
 
 use db::connection::init_pool;

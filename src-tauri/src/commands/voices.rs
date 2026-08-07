@@ -1,18 +1,16 @@
 use std::path::Path;
 use std::time::Duration;
 
-use futures::StreamExt;
 use serde::Serialize;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use tauri::{Emitter, Runtime, State, Window};
-use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::db::connection::DbPool;
 use crate::db::models::Voice;
 use crate::db::settings;
 use crate::error::{AppError, AppResult};
+use crate::net::download::{download_verified, Download};
 use crate::paths;
 use crate::voices::manifest;
 use crate::voices::models;
@@ -91,24 +89,32 @@ pub async fn download_voice<R: Runtime>(
     // Download and publish in one fallible unit so the temp file is always
     // cleaned up on any error path (mirror failure, finalize failure, rename).
     let download_and_publish = async {
-        let primary_result = download_file(
+        let primary_result = download_verified(
             &client,
-            &primary_url,
-            &temp_path,
-            &metadata.sha256,
-            metadata.size_bytes,
+            Download {
+                url: &primary_url,
+                temp_path: &temp_path,
+                expected_sha256: &metadata.sha256,
+                expected_size: metadata.size_bytes,
+                read_timeout: READ_TIMEOUT,
+                error: AppError::Voice,
+            },
             |downloaded, total| emit_voice_progress(&window, &voice_id, downloaded, total),
         )
         .await;
 
         if let Err(primary_error) = primary_result {
             let _ = tokio::fs::remove_file(&temp_path).await;
-            download_file(
+            download_verified(
                 &client,
-                &mirror_url,
-                &temp_path,
-                &metadata.sha256,
-                metadata.size_bytes,
+                Download {
+                    url: &mirror_url,
+                    temp_path: &temp_path,
+                    expected_sha256: &metadata.sha256,
+                    expected_size: metadata.size_bytes,
+                    read_timeout: READ_TIMEOUT,
+                    error: AppError::Voice,
+                },
                 |downloaded, total| emit_voice_progress(&window, &voice_id, downloaded, total),
             )
             .await
@@ -193,24 +199,32 @@ pub async fn ensure_model_downloaded<R: Runtime>(
     // Download and publish in one fallible unit so the temp file is always
     // cleaned up on any error path (mirror failure, finalize failure, rename).
     let download_and_publish = async {
-        let primary_result = download_file(
+        let primary_result = download_verified(
             &client,
-            &metadata.url,
-            &temp_path,
-            &metadata.sha256,
-            metadata.size_bytes,
+            Download {
+                url: &metadata.url,
+                temp_path: &temp_path,
+                expected_sha256: &metadata.sha256,
+                expected_size: metadata.size_bytes,
+                read_timeout: READ_TIMEOUT,
+                error: AppError::Model,
+            },
             |downloaded, total| emit_model_progress(&window, downloaded, total),
         )
         .await;
 
         if let Err(primary_error) = primary_result {
             let _ = tokio::fs::remove_file(&temp_path).await;
-            download_file(
+            download_verified(
                 &client,
-                &metadata.mirror,
-                &temp_path,
-                &metadata.sha256,
-                metadata.size_bytes,
+                Download {
+                    url: &metadata.mirror,
+                    temp_path: &temp_path,
+                    expected_sha256: &metadata.sha256,
+                    expected_size: metadata.size_bytes,
+                    read_timeout: READ_TIMEOUT,
+                    error: AppError::Model,
+                },
                 |downloaded, total| emit_model_progress(&window, downloaded, total),
             )
             .await
@@ -260,66 +274,6 @@ pub async fn get_model_path(precision: String) -> AppResult<String> {
     }
 
     Ok(path_to_string(&path))
-}
-
-async fn download_file<F>(
-    client: &reqwest::Client,
-    url: &str,
-    temp_path: &Path,
-    expected_sha256: &str,
-    expected_size: u64,
-    mut on_progress: F,
-) -> AppResult<()>
-where
-    F: FnMut(u64, u64) -> AppResult<()>,
-{
-    let response = client.get(url).send().await?.error_for_status()?;
-    let total = response.content_length().unwrap_or(expected_size);
-    let mut downloaded = 0_u64;
-    let mut hasher = Sha256::new();
-    let mut file = tokio::fs::File::create(temp_path).await?;
-    let mut stream = response.bytes_stream();
-
-    on_progress(0, total)?;
-
-    loop {
-        // Abort a stalled download if no chunk arrives within the read timeout.
-        let next = tokio::time::timeout(READ_TIMEOUT, stream.next())
-            .await
-            .map_err(|_| AppError::Model("download stalled: no data received".to_string()))?;
-        let Some(chunk) = next else {
-            break;
-        };
-        let chunk = chunk?;
-        downloaded += chunk.len() as u64;
-        // Stop as soon as the stream exceeds the manifest size instead of
-        // writing past the expected size before the post-download check.
-        if expected_size > 0 && downloaded > expected_size {
-            return Err(AppError::Model(format!(
-                "downloaded model size mismatch: expected {expected_size} bytes, got at least {downloaded}"
-            )));
-        }
-        file.write_all(&chunk).await?;
-        hasher.update(&chunk);
-        on_progress(downloaded, total)?;
-    }
-
-    file.flush().await?;
-
-    if expected_size > 0 && downloaded != expected_size {
-        return Err(AppError::Model(format!(
-            "downloaded model size mismatch: expected {expected_size} bytes, got {downloaded}"
-        )));
-    }
-
-    let actual_sha256 = hex::encode(hasher.finalize());
-    if actual_sha256 != expected_sha256 {
-        return Err(AppError::Model(format!(
-            "downloaded model SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}"
-        )));
-    }
-
-    Ok(())
 }
 
 fn mark_model_downloaded(state: &State<'_, DbPool>, precision: &str) -> AppResult<()> {
