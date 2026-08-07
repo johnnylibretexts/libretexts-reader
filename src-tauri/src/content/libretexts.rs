@@ -17,9 +17,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
-use crate::content::images::{
-    download_images, source_image_from_element, source_images_from_html, SourceImage,
-};
+use crate::content::html_section::{self, normalize_text, SectionSource};
+use crate::content::images::{download_images, source_images_from_html, SourceImage};
 use crate::db::connection::DbPool;
 use crate::db::models::{LibreTextsBook, LibreTextsLibrary, SourceType};
 use crate::error::{AppError, AppResult};
@@ -28,7 +27,6 @@ const DEFAULT_COMMONS_BASE_URL: &str = "https://commons.libretexts.org";
 const MAX_RETRIES: usize = 3;
 
 static BOOK_ID_RE: OnceLock<Regex> = OnceLock::new();
-static WHITESPACE_RE: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct LibreTextsClient {
@@ -511,17 +509,6 @@ impl LibreTextsClient {
         Ok(pages)
     }
 
-    pub async fn download_page_images(
-        &self,
-        library: &str,
-        entry: &LibreTextsTocEntry,
-        page: &LibreTextsPageContent,
-    ) -> AppResult<Vec<crate::content::document::ImageBuilder>> {
-        let base_url = page_base_url(library, entry);
-        let (_, images) = section_content_from_html(&page.html, &base_url);
-        download_images(&self.http, images).await
-    }
-
     async fn fetch_json<T: DeserializeOwned>(
         &self,
         url: &str,
@@ -707,65 +694,6 @@ where
         attribution: book.online_url,
         sections,
     })
-}
-
-pub fn paragraphs_from_html(html: &str) -> Vec<String> {
-    paragraphs_from_document(&Html::parse_document(html))
-}
-
-fn paragraphs_from_document(document: &Html) -> Vec<String> {
-    let block_selector =
-        Selector::parse("h1, h2, h3, h4, h5, h6, p, li").expect("valid LibreTexts block selector");
-    let mut paragraphs = Vec::new();
-
-    for element in document.select(&block_selector) {
-        if let Some(paragraph) = paragraph_from_element(&element) {
-            paragraphs.push(paragraph);
-        }
-    }
-
-    paragraphs
-}
-
-fn section_content_from_html(html: &str, base_url: &str) -> (Vec<String>, Vec<SourceImage>) {
-    let document = Html::parse_document(html);
-    let block_selector = Selector::parse("h1, h2, h3, h4, h5, h6, p, li, img[src], img[data-src]")
-        .expect("valid LibreTexts content selector");
-    let mut paragraphs = Vec::new();
-    let mut images = Vec::new();
-
-    for element in document.select(&block_selector) {
-        if element.value().name() == "img" {
-            if should_skip_element(&element) {
-                continue;
-            }
-            if let Some(mut image) = source_image_from_element(&element, base_url) {
-                image.anchor_paragraph_ordinal = anchor_paragraph_ordinal(paragraphs.len());
-                images.push(image);
-            }
-        } else if let Some(paragraph) = paragraph_from_element(&element) {
-            paragraphs.push(paragraph);
-        }
-    }
-
-    (paragraphs, images)
-}
-
-fn paragraph_from_element(element: &ElementRef<'_>) -> Option<String> {
-    if should_skip_element(element) {
-        return None;
-    }
-
-    let normalized = normalize_text(&element.text().collect::<Vec<_>>().join(" "));
-    if is_readable_paragraph(&normalized) {
-        Some(normalized)
-    } else {
-        None
-    }
-}
-
-fn anchor_paragraph_ordinal(paragraph_count: usize) -> Option<u32> {
-    paragraph_count.checked_sub(1).map(|index| index as u32)
 }
 
 impl From<ApiBook> for LibreTextsBook {
@@ -1059,6 +987,34 @@ async fn sections_from_pages(
     Ok(sections)
 }
 
+/// MindTouch wraps content in a lot of chrome — navigation, category
+/// containers, feedback widgets — and repeats page listings inside the body.
+/// Unlike OpenStax, the same rule applies to images: a listing thumbnail is not
+/// a figure.
+struct LibreTextsSource;
+
+impl SectionSource for LibreTextsSource {
+    fn should_skip_paragraph(&self, element: &ElementRef<'_>) -> bool {
+        should_skip_element(element)
+    }
+
+    fn should_skip_image(&self, element: &ElementRef<'_>) -> bool {
+        should_skip_element(element)
+    }
+
+    fn is_readable(&self, text: &str) -> bool {
+        is_readable_paragraph(text)
+    }
+}
+
+pub fn paragraphs_from_html(html: &str) -> Vec<String> {
+    html_section::paragraphs_from_html(html, &LibreTextsSource)
+}
+
+fn section_content_from_html(html: &str, base_url: &str) -> (Vec<String>, Vec<SourceImage>) {
+    html_section::section_content_from_html(html, base_url, &LibreTextsSource)
+}
+
 fn should_skip_element(element: &ElementRef) -> bool {
     if element_html_contains_navigation_listing(element) {
         return true;
@@ -1106,17 +1062,6 @@ fn element_html_contains_navigation_listing(element: &ElementRef<'_>) -> bool {
     html.contains("mt-topic-hierarchy-listings")
         || html.contains("mt-sortable-listings-container")
         || html.contains("mt-subpage-listings-container")
-}
-
-fn normalize_text(text: &str) -> String {
-    whitespace_re()
-        .replace_all(&text.replace('\u{a0}', " "), " ")
-        .trim()
-        .to_string()
-}
-
-fn whitespace_re() -> &'static Regex {
-    WHITESPACE_RE.get_or_init(|| Regex::new(r"\s+").expect("valid whitespace regex"))
 }
 
 fn is_readable_paragraph(text: &str) -> bool {
