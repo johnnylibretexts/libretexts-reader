@@ -2,6 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FileText, Loader2, Upload } from "lucide-react";
 import { api } from "../../lib/tauri";
+import { displayError } from "../../lib/errors";
 
 type ImportStage = "idle" | "Opening..." | "Extracting..." | "Saving...";
 
@@ -27,7 +28,7 @@ export function PdfDialog({ onImported }: PdfDialogProps) {
         setFilePath(selected);
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     }
   }
 
@@ -48,7 +49,7 @@ export function PdfDialog({ onImported }: PdfDialogProps) {
       onImported(documentId, fileName(filePath));
       setFilePath("");
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       timers.forEach(window.clearTimeout);
       setStage("idle");

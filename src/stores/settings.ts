@@ -6,6 +6,7 @@ import {
   type SupertonicVoiceStyle,
 } from "../lib/supertonic";
 import { api } from "../lib/tauri";
+import { displayError } from "../lib/errors";
 
 export type AppTheme = "light" | "dark" | "system";
 export type ModelPrecision = "fp32" | "q8";
@@ -91,7 +92,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         theme: localTheme() ?? DEFAULT_SETTINGS.theme,
         hydrated: true,
         loading: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: displayError(error),
       });
     }
   },
@@ -110,7 +111,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await api.setSetting("theme", theme);
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : String(error),
+        error: displayError(error),
       });
     }
   },
@@ -121,7 +122,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await api.setSetting("tts_provider", provider);
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : String(error),
+        error: displayError(error),
       });
     }
   },
@@ -157,7 +158,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       ]);
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : String(error),
+        error: displayError(error),
       });
     }
   },

@@ -4,6 +4,7 @@ import { Filter, Loader2 } from "lucide-react";
 import { api } from "../../lib/tauri";
 import type * as Domain from "../../types/domain";
 import { VoiceCard } from "./VoiceCard";
+import { displayError } from "../../lib/errors";
 
 interface VoiceProgress {
   voiceId: string;
@@ -69,7 +70,7 @@ export function VoiceGallery() {
     try {
       setVoices(await api.listVoices());
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       setLoading(false);
     }
@@ -82,7 +83,7 @@ export function VoiceGallery() {
       await api.downloadVoice(voice.id);
       await refreshVoices();
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       setBusyVoiceId(null);
       setProgress((current) => {
@@ -100,7 +101,7 @@ export function VoiceGallery() {
       await api.deleteVoice(voice.id);
       await refreshVoices();
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       setBusyVoiceId(null);
     }
@@ -112,7 +113,7 @@ export function VoiceGallery() {
     try {
       await playPreviewTone();
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       setPreviewingVoiceId(null);
     }

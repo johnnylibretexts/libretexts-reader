@@ -147,7 +147,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       set({
         loading: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: displayError(error),
       });
     }
   },
@@ -671,7 +671,7 @@ async function playGeneratedAudio(
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
-      error: error instanceof Error ? error.message : String(error),
+      error: displayError(error),
     });
   }
 }
@@ -804,7 +804,7 @@ async function moveToPosition(
     set({
       isBuffering: false,
       bufferingMessage: "",
-      error: error instanceof Error ? error.message : String(error),
+      error: displayError(error),
     });
   }
 }

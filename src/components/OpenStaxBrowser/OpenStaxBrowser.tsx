@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { BookOpen, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import { api } from "../../lib/tauri";
 import type * as Domain from "../../types/domain";
+import { displayError } from "../../lib/errors";
 
 interface OpenStaxBrowserProps {
   onImported: (documentId: string, title: string) => void;
@@ -29,7 +30,7 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
       })
       .catch((error) => {
         if (active) {
-          setError(error instanceof Error ? error.message : String(error));
+          setError(displayError(error));
         }
       })
       .finally(() => {
@@ -100,7 +101,7 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
       const documentId = await api.importOpenstax(book.uuid);
       onImported(documentId, book.title);
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       setImportingUuid(null);
       setProgress(null);

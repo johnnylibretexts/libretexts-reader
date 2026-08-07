@@ -83,7 +83,7 @@ export function SettingsPanel() {
       .catch((error) => {
         if (!cancelled) {
           setSupertonicModelError(
-            error instanceof Error ? error.message : String(error),
+            displayError(error),
           );
         }
       });
@@ -116,7 +116,7 @@ export function SettingsPanel() {
       .catch((error) => {
         if (!cancelled) {
           setSupertonicModelError(
-            error instanceof Error ? error.message : String(error),
+            displayError(error),
           );
         }
       });
