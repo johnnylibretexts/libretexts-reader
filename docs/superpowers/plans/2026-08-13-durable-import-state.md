@@ -10,6 +10,15 @@
 
 **Source spec:** `docs/superpowers/specs/2026-08-13-durable-import-state-design.md`
 
+> **Rebased 2026-08-13** onto `main` at `09d97b3`, after the Kokoro removal merged. That
+> change deleted 16 lines from `AppShell.tsx` and one type from `src/lib/tauri.ts`, so every
+> line reference in this plan was re-checked and corrected against the new `main`:
+> `AppShell.tsx` references moved by −4, `tauri.ts` by −1. Line numbers are locators —
+> match on the quoted code, not the number, if they drift again.
+>
+> Nothing else in this plan was affected. The Kokoro work touched `AppShell.tsx` only to
+> remove the `voices` route, and touched none of the import path.
+
 ## Global Constraints
 
 - **Node 22.x required** (last verified 22.20.0 / npm 10.9.3). Node 24 hangs on Vite/Rollup native addons. Do not run `nvm` or change Node versions; the environment is already correct.
@@ -522,7 +531,7 @@ git commit -m "feat: add a source-keyed matcher for already-imported catalog boo
 - Consumes: `useImportsStore`, `attachImportListener` from `src/stores/imports.ts` (Task 1)
 - Produces: `<ImportStatus onOpen={(documentId, title) => void} />`, rendered by `AppShell` immediately above `<MiniPlayer />`
 
-**Background:** `AppShell.tsx:196` renders `<MiniPlayer onClose={resetPlayer} />` outside the route switch — that is the existing pattern for persistent chrome and where the strip belongs. Today `handleLibreTextsImported` / `handleOpenStaxImported` call `openReader`, which yanks the user to the new book. Per the spec, completion must notify instead; the strip's **Open** action becomes the only way a finished catalog import changes the route.
+**Background:** `AppShell.tsx:192` renders `<MiniPlayer onClose={resetPlayer} />` outside the route switch — that is the existing pattern for persistent chrome and where the strip belongs. Today `handleLibreTextsImported` / `handleOpenStaxImported` call `openReader`, which yanks the user to the new book. Per the spec, completion must notify instead; the strip's **Open** action becomes the only way a finished catalog import changes the route.
 
 There is no React Testing Library in this project, so this task has no automated test. It is verified by running the app in Step 5.
 
@@ -658,7 +667,7 @@ Replace the existing line `<MiniPlayer onClose={resetPlayer} />` with:
 
 - [ ] **Step 4: Stop auto-navigating on catalog imports**
 
-Delete the `handleOpenStaxImported` and `handleLibreTextsImported` functions (`AppShell.tsx:106-115`), remove the `onOpenStaxImported` / `onLibreTextsImported` props from the `RoutePlaceholder` call site (`:178-183`), from its destructured parameter list (`:208-209`), and from its props interface (`:219-220`). The browsers are rendered at `:249` and `:252`.
+Delete the `handleOpenStaxImported` and `handleLibreTextsImported` functions (`AppShell.tsx:102-111`), remove the `onOpenStaxImported` / `onLibreTextsImported` props from the `RoutePlaceholder` call site (`:174-179`), from its destructured parameter list (`:204-205`), and from its props interface (`:215-216`). The browsers are rendered at `:245` and `:248`.
 
 Leave `handlePasteImported`, `handleEpubImported`, `handlePdfImported` and `handleUrlImported` alone — those dialogs are fast and out of scope.
 
@@ -802,7 +811,7 @@ If any error banner in this component referenced the deleted `error` state, dele
 - [ ] **Step 5: Do not fetch the library here**
 
 The catalog needs `documents` populated to decide "In library", and `AppShell` already
-supplies it: `refreshLibrary()` runs on mount (`AppShell.tsx:73`) and again on every
+supplies it: `refreshLibrary()` runs on mount (`AppShell.tsx:69`) and again on every
 `library-changed` event (`:79`). Add **no** fetching effect to this component — a second
 fetcher would race the shared store for no benefit. Read `documents` and nothing else.
 
@@ -860,7 +869,7 @@ git commit -m "feat: drive LibreTexts imports from the store and mark imported b
 
 **Background:** this component mirrors the LibreTexts one but keys on a different identifier. Its state variable is `importingUuid` (not `importingBookId`), its listener sits at `:46-61`, its catalog id is `book.uuid`, and its metadata key is `book_uuid`.
 
-**The API method is `api.importOpenstax` — lowercase `s` in "Openstax"** (`src/lib/tauri.ts:107`). It does not match the `OpenStax` casing used everywhere else in the codebase. Copy it exactly or the build fails.
+**The API method is `api.importOpenstax` — lowercase `s` in "Openstax"** (`src/lib/tauri.ts:106`). It does not match the `OpenStax` casing used everywhere else in the codebase. Copy it exactly or the build fails.
 
 - [ ] **Step 1: Replace the component's import state with store state**
 
