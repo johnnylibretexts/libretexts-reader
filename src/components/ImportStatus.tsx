@@ -1,9 +1,19 @@
 import { BookOpen, Download, X } from "lucide-react";
 import { useImportsStore } from "../stores/imports";
+import type * as Domain from "../types/domain";
 
 interface ImportStatusProps {
   onOpen: (documentId: string, title: string) => void;
 }
+
+const STAGE_LABELS: Record<Domain.ImportStage, string> = {
+  fetching: "Fetching chapters",
+  parsing: "Parsing content",
+  tokenizing: "Preparing text",
+  storing: "Saving to library",
+  complete: "Finishing up",
+  failed: "Failed",
+};
 
 export function ImportStatus({ onOpen }: ImportStatusProps) {
   const active = useImportsStore((state) => state.active);
@@ -22,14 +32,18 @@ export function ImportStatus({ onOpen }: ImportStatusProps) {
       : null;
 
   return (
-    <div className="border-t border-neutral-200 bg-white px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900">
+    <div
+      aria-live="polite"
+      className="border-t border-neutral-200 bg-white px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900"
+      role="status"
+    >
       {active ? (
         <div className="flex items-center gap-3">
           <Download className="size-4 shrink-0 animate-pulse text-neutral-500" aria-hidden="true" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">Importing {active.title}</p>
             <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-              {active.stage}
+              {STAGE_LABELS[active.stage] ?? active.stage}
               {active.total > 0 ? ` ${active.current}/${active.total}` : null}
             </p>
           </div>
@@ -76,7 +90,7 @@ export function ImportStatus({ onOpen }: ImportStatusProps) {
         </div>
       ) : null}
 
-      {!active && error ? (
+      {error ? (
         <div className="flex items-center gap-3">
           <p className="min-w-0 flex-1 truncate text-sm text-red-700 dark:text-red-300">{error}</p>
           <button

@@ -51,9 +51,9 @@ export const useImportsStore = create<ImportsState>((set, get) => ({
 
     try {
       const documentId = await run();
-      set({ active: null, completed: { documentId, title } });
+      set({ active: null, completed: { documentId, title }, error: null });
     } catch (error) {
-      set({ active: null, error: displayError(error) });
+      set({ active: null, error: displayError(error), completed: null });
     }
   },
 
