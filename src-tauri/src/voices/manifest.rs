@@ -27,7 +27,7 @@ pub struct VoiceMetadata {
 }
 
 pub fn load_voice_manifest() -> AppResult<VoiceManifest> {
-    if let Some(path) = std::env::var_os("JOHNNY_READER_VOICE_MANIFEST_PATH") {
+    if let Some(path) = std::env::var_os("LIBRETEXTS_READER_VOICE_MANIFEST_PATH") {
         let raw = std::fs::read_to_string(path)?;
         return Ok(serde_json::from_str(&raw)?);
     }

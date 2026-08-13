@@ -22,7 +22,7 @@ To add auto-update later, re-introduce `tauri-plugin-updater` in
 `updater:default` to `src-tauri/capabilities/default.json`, add a
 `plugins.updater` block (endpoints + pubkey) to `src-tauri/tauri.conf.json`, and
 generate a key with `npm run tauri -- signer generate`. The `build.rs` guard will
-then enforce a real pubkey (fatal when `JOHNNY_READER_REQUIRE_UPDATER_KEY=1`).
+then enforce a real pubkey (fatal when `LIBRETEXTS_READER_REQUIRE_UPDATER_KEY=1`).
 
 ## 2. macOS code signing + notarization
 

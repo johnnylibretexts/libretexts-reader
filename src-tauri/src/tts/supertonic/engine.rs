@@ -174,7 +174,7 @@ impl Synthesizer for FakeSynthesizer {
 }
 
 fn fake_audio_enabled() -> bool {
-    std::env::var_os("JOHNNY_READER_SUPERTONIC_FAKE_AUDIO").is_some()
+    std::env::var_os("LIBRETEXTS_READER_SUPERTONIC_FAKE_AUDIO").is_some()
 }
 
 fn fake_samples(text: &str) -> Vec<f32> {

@@ -102,7 +102,7 @@ fn default_export_directory() -> String {
 }
 
 fn documents_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("JOHNNY_READER_DOCUMENTS_DIR") {
+    if let Some(path) = std::env::var_os("LIBRETEXTS_READER_DOCUMENTS_DIR") {
         return PathBuf::from(path);
     }
 

@@ -22,7 +22,7 @@ pub struct ModelMetadata {
 }
 
 pub fn load_model_manifest() -> AppResult<ModelManifest> {
-    if let Some(path) = std::env::var_os("JOHNNY_READER_MODEL_MANIFEST_PATH") {
+    if let Some(path) = std::env::var_os("LIBRETEXTS_READER_MODEL_MANIFEST_PATH") {
         let raw = std::fs::read_to_string(path)?;
         return Ok(serde_json::from_str(&raw)?);
     }

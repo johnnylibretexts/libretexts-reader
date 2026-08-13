@@ -65,20 +65,20 @@ fn main() {
 /// Guard against shipping a public build whose auto-updater is configured with
 /// the placeholder signing key. A real release must replace the `pubkey` in
 /// `tauri.conf.json` (see `RELEASE.md`). This always warns when the placeholder
-/// is present, and hard-fails the build when `JOHNNY_READER_REQUIRE_UPDATER_KEY`
+/// is present, and hard-fails the build when `LIBRETEXTS_READER_REQUIRE_UPDATER_KEY`
 /// is set (intended for release CI), so a misconfigured updater cannot ship.
 fn check_updater_pubkey() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let config_path = manifest_dir.join("tauri.conf.json");
     println!("cargo:rerun-if-changed={}", config_path.display());
-    println!("cargo:rerun-if-env-changed=JOHNNY_READER_REQUIRE_UPDATER_KEY");
+    println!("cargo:rerun-if-env-changed=LIBRETEXTS_READER_REQUIRE_UPDATER_KEY");
 
     let config = fs::read_to_string(&config_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", config_path.display()));
 
     // Treat any set value as enabled unless explicitly "0"/"false" so the gate
     // fails closed rather than being accidentally disabled by a truthy value.
-    let require_key = match env::var("JOHNNY_READER_REQUIRE_UPDATER_KEY") {
+    let require_key = match env::var("LIBRETEXTS_READER_REQUIRE_UPDATER_KEY") {
         Ok(value) => {
             let value = value.trim();
             !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
@@ -120,7 +120,7 @@ fn check_updater_pubkey() {
     println!(
         "cargo:warning=Updater pubkey is not release-ready (missing or placeholder); \
          auto-update will not verify signatures. See RELEASE.md. Set \
-         JOHNNY_READER_REQUIRE_UPDATER_KEY=1 to make this fatal for release builds."
+         LIBRETEXTS_READER_REQUIRE_UPDATER_KEY=1 to make this fatal for release builds."
     );
 }
 

@@ -105,7 +105,7 @@ struct ArchivePage {
 
 impl OpenStaxClient {
     pub fn new(db: DbPool) -> Self {
-        let base_url = std::env::var("JOHNNY_READER_OPENSTAX_BASE_URL")
+        let base_url = std::env::var("LIBRETEXTS_READER_OPENSTAX_BASE_URL")
             .unwrap_or_else(|_| DEFAULT_OPENSTAX_BASE_URL.to_string());
         Self::with_base_url(db, base_url)
     }

@@ -43,7 +43,7 @@ git diff --check                            # whitespace/conflict-marker gate
 
 - **Before a change is done**, the frontend build, `npm test`, and `cargo test -p libretexts-reader` must all pass; re-run the Rust and frontend gates **both** whenever you touch shared DB models or migrations.
 - Live network smoke (opt-in, uses a temp app-data dir): `cargo test -p libretexts-reader live_imports_small_public_book_with_images -- --ignored --nocapture`.
-- **Frontend unit tests run under vitest** with a jsdom environment (`npm test`, or `npx vitest` to watch). Coverage is currently the pure-logic seams — `src/lib/errors.test.ts`, `src/lib/mathContent.test.ts`, `src/stores/player.test.ts` — not components. Rendering and playback behaviour still need verifying by running the debug binary; point runs at a scratch library with `JOHNNY_READER_APP_DATA_DIR=/tmp/jr-test`.
+- **Frontend unit tests run under vitest** with a jsdom environment (`npm test`, or `npx vitest` to watch). Coverage is currently the pure-logic seams — `src/lib/errors.test.ts`, `src/lib/mathContent.test.ts`, `src/stores/player.test.ts` — not components. Rendering and playback behaviour still need verifying by running the debug binary; point runs at a scratch library with `LIBRETEXTS_READER_APP_DATA_DIR=/tmp/jr-test`.
 
 ## Code Style
 

@@ -52,7 +52,7 @@ The app database and downloaded models/images are not stored in the repo. On mac
 ~/Library/Application Support/dev.johnnyrobot.reader
 ```
 
-Copying only the project folder will not copy the local library, downloaded books, TTS models, cover images, or downloaded section images. To preserve a test library across machines, copy that app data directory too. The app can also use `JOHNNY_READER_APP_DATA_DIR` to point tests or local runs at a temporary data directory.
+Copying only the project folder will not copy the local library, downloaded books, TTS models, cover images, or downloaded section images. To preserve a test library across machines, copy that app data directory too. The app can also use `LIBRETEXTS_READER_APP_DATA_DIR` to point tests or local runs at a temporary data directory.
 
 ## Current Work In Progress
 

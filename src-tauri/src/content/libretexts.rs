@@ -195,7 +195,7 @@ enum ContentBodyPart {
 
 impl LibreTextsClient {
     pub fn new(db: DbPool) -> Self {
-        let commons_base_url = std::env::var("JOHNNY_READER_LIBRETEXTS_COMMONS_BASE_URL")
+        let commons_base_url = std::env::var("LIBRETEXTS_READER_COMMONS_BASE_URL")
             .unwrap_or_else(|_| DEFAULT_COMMONS_BASE_URL.to_string());
         Self::with_commons_base_url(db, commons_base_url)
     }
@@ -804,7 +804,7 @@ fn book_id_re() -> &'static Regex {
 }
 
 fn library_base_url(library: &str) -> String {
-    std::env::var("JOHNNY_READER_LIBRETEXTS_LIBRARY_BASE_URL")
+    std::env::var("LIBRETEXTS_READER_LIBRARY_BASE_URL")
         .unwrap_or_else(|_| format!("https://{library}.libretexts.org"))
         .trim_end_matches('/')
         .to_string()
@@ -1192,7 +1192,7 @@ mod tests {
             "libretexts-reader-libretexts-smoke-{}",
             Uuid::new_v4()
         ));
-        std::env::set_var("JOHNNY_READER_APP_DATA_DIR", &app_data_dir);
+        std::env::set_var("LIBRETEXTS_READER_APP_DATA_DIR", &app_data_dir);
         let db_path = app_data_dir.join("library.sqlite");
         let pool = connection::init_pool(&db_path).expect("temporary database should initialize");
 

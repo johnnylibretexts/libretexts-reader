@@ -98,7 +98,7 @@ pub(crate) fn existing_supertonic_model_bytes(
 }
 
 pub(crate) fn supertonic_model_manifest() -> AppResult<SupertonicModelManifest> {
-    if let Some(path) = std::env::var_os("JOHNNY_READER_SUPERTONIC_MODEL_MANIFEST_PATH") {
+    if let Some(path) = std::env::var_os("LIBRETEXTS_READER_SUPERTONIC_MODEL_MANIFEST_PATH") {
         let raw = std::fs::read_to_string(path)?;
         return Ok(serde_json::from_str(&raw)?);
     }

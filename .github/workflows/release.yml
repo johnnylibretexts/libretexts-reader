@@ -91,7 +91,7 @@ jobs:
           source "$HOME/.nvm/nvm.sh"; nvm use 22.20.0
           source "$HOME/.cargo/env"
           export APPLE_SIGNING_IDENTITY
-          export JOHNNY_READER_REQUIRE_UPDATER_KEY=1   # fail-closed safety belt (no-op today)
+          export LIBRETEXTS_READER_REQUIRE_UPDATER_KEY=1   # fail-closed safety belt (no-op today)
           npm run tauri:build
 
       - name: Locate DMG
