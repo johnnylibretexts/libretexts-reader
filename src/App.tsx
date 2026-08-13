@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { AppShell } from "./components/AppShell";
-import { ModelDownload } from "./components/FirstRun/ModelDownload";
 import { useSettingsStore } from "./stores/settings";
 
 function App() {
@@ -26,12 +25,7 @@ function App() {
     return () => media.removeEventListener("change", applyTheme);
   }, [theme]);
 
-  return (
-    <>
-      <AppShell />
-      <ModelDownload />
-    </>
-  );
+  return <AppShell />;
 }
 
 export default App;
