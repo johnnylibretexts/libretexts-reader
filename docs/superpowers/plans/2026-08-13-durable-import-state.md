@@ -645,7 +645,7 @@ import { ImportStatus } from "./ImportStatus";
 import { attachImportListener } from "../stores/imports";
 ```
 
-Then add this effect next to the existing `library-changed` effect (which begins at line 76):
+Then add this effect next to the existing `library-changed` effect (which begins at line 72):
 
 ```tsx
   useEffect(() => attachImportListener(), []);
