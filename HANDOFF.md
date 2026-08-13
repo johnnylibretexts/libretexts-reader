@@ -76,6 +76,90 @@ The current change set adds:
 
 **Status as of 2026-08-13: all of the above is committed and merged to `main`.** The worktree is clean. The list of dirty files that used to appear here is gone because there are none; use `git log` rather than `git status` to see what landed.
 
+## Next Up — TTS direction (decided 2026-08-13, not yet started)
+
+**Decision: drop Kokoro. Supertonic becomes the only bundled engine. Add Fish Audio as an
+optional provider where the user supplies their own API key.** Supertonic stays the default.
+
+Sequence these as **two separate specs**, A before B. A is mostly deletion and it removes a
+broken engine plus its workarounds before anything new is added, so Fish lands in a
+two-case registry instead of a three-case one.
+
+### A. Remove Kokoro
+
+Delete `src/lib/kokoro.ts`, `src/lib/speech/kokoroEngine.ts`, the first-run model download
+(`src/components/FirstRun/ModelDownload.tsx`, rendered at `src/App.tsx:32`), the
+`model_precision` and `model_downloaded` settings, and the `kokoro-js` dependency. Narrow
+`SpeechEngineId` in `src/lib/speech/types.ts` from `"kokoro" | "supertonic"` to
+`"supertonic"`, drop the `kokoro` case in `createSpeechEngine`
+(`src/lib/speech/index.ts`), and extend `migrate_removed_tts_provider`
+(`src-tauri/src/db/settings.rs:88`) so a stored `"kokoro"` migrates to `"supertonic"` —
+it already does this for `"gemini"` and `"fish"`.
+
+Also delete the downloaded models: `~/Library/Application Support/dev.johnnylibretexts.reader/models/`
+holds `kokoro-fp32.onnx` (325MB) and `kokoro-q8.onnx` (92MB), both dead after this.
+
+### B. Add Fish Audio (bring-your-own API key)
+
+Reference docs the user supplied: <https://docs.fish.audio/overview/capabilities>,
+<https://docs.fish.audio/features/text-to-speech>,
+<https://docs.fish.audio/developer-guide/core-features/fine-grained-control>,
+<https://fish.audio/blog/s2-1-pro-free-api/>. **Two skills exist for this** — prefer them
+over reading the docs by hand: `fish-audio-api` (raw REST/WebSocket) and `fish-audio-sdk`
+(official SDKs). Raw HTTP from Rust is likely the right call here; see below.
+
+Three things are known and settled from exploration:
+
+1. **The abstraction is ready.** `SpeechEngine` (`src/lib/speech/types.ts`) needs only `id`,
+   `defaultVoice`, `synthesize()`, `ensureReady()`, `listVoices()`. `createSpeechEngine` is
+   explicitly documented as the single place engines are chosen. Fish maps cleanly:
+   `ensureReady` validates the key, `listVoices` lists the account's voice models.
+2. **There is no secret storage in this app, and this is the central open question.**
+   Settings are plain rows in the SQLite `settings` table. Installed Tauri plugins are only
+   `dialog`, `fs`, `shell` — no keychain, no stronghold, and no `keyring` crate in
+   `src-tauri/Cargo.toml`. Decide deliberately where a user's API key lives before writing
+   any code. Storing it as a plain settings row is the path of least resistance and the
+   least defensible.
+3. **The CSP will block Fish until changed.** `connect-src` in
+   `src-tauri/tauri.conf.json` lists OpenStax, LibreTexts, HuggingFace, GitHub and jsDelivr.
+   `https://api.fish.audio` must be added. Note the app also claims "on-device / offline by
+   design" in `CLAUDE.md` — a cloud TTS provider needs that claim reworded, and needs to
+   degrade sanely with no network.
+
+Open questions for the B spec: where the key is stored; whether the key is validated at
+entry or first use; what the onboarding flow looks like (Fish account → developer account →
+generated key); whether usage/cost is surfaced; what happens mid-playback when the network
+drops.
+
+### Why Kokoro is being dropped — do not re-investigate
+
+Kokoro never produced audio in a bundled build. Two distinct faults were found:
+
+**Fault 1 (root-caused and fixed, then discarded with the rest):** `onnxruntime-web` loads
+its wasm backend with a dynamic module `import()`, and `@huggingface/transformers` defaults
+that path to jsDelivr. The Tauri CSP allows jsDelivr in `connect-src` but **not**
+`script-src`, so the import was blocked: `no available backend found. ERR: [wasm]
+TypeError: Importing a module script failed`. It worked under `tauri:dev` — Vite serves
+`node_modules` as `'self'` — and only failed in a bundled build, which is why it survived
+to release. Fixing it required shipping `ort-wasm-simd-threaded.jsep.{mjs,wasm}` locally,
+aliasing `kokoro-js` to its non-bundled node build (the browser build inlines transformers
+and hardcodes the CDN with no `env` export to override), and setting `wasmPaths`.
+
+**Fault 2 (never solved):** with the backend loading and the 92MB model read from disk,
+`engine.generate()` still hung indefinitely — **0% CPU, zero network sockets, no requests
+beyond the wasm binary** (confirmed by instrumented tracing and repeated sampling). It is
+parked on a promise that never settles. Three hypotheses were tested and **all falsified**:
+
+- voice embeddings fetched from HuggingFace at generate time — refuted, no sockets ever opened
+- a missing `espeakng.worker.data` for the phonemizer — refuted, that data is inlined in
+  `phonemizer.js` as base64 gzip
+- multithreaded wasm starved of `SharedArrayBuffer` (no COOP/COEP, so `crossOriginIsolated`
+  is false) — `numThreads = 1` changed nothing
+
+Do not spend time re-testing those three. The remaining suspect was never confirmed.
+
+All of that work is **discarded, not committed**. The tree was returned to clean.
+
 ## Session Notes — 2026-08-13 (repo migration + rename)
 
 Two things happened, both fully merged to `main` and pushed.
