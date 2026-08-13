@@ -19,6 +19,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0004_section_image_anchors",
         include_str!("../../resources/migrations/0004_section_image_anchors.sql"),
     ),
+    (
+        "0005_rebase_app_dir_paths",
+        include_str!("../../resources/migrations/0005_rebase_app_dir_paths.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
@@ -89,6 +93,89 @@ mod tests {
             .expect("enable foreign keys");
         apply_migrations(&mut conn).expect("apply migrations");
         conn
+    }
+
+    fn migration_sql(name: &str) -> &'static str {
+        super::MIGRATIONS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("migration {name} is registered"))
+            .1
+    }
+
+    #[test]
+    fn rebase_app_dir_paths_rewrites_the_old_identifier() {
+        let conn = migrated_conn();
+        conn.execute_batch(
+            "INSERT INTO documents (id, title, source_type, source_metadata, imported_at, cover_image_path)
+                 VALUES ('doc1', 'D', 'pasted', '{}', 'now',
+                         '/Users/x/Library/Application Support/dev.johnnyrobot.reader/covers/c.png');
+             INSERT INTO sections (id, document_id, ordinal, title)
+                 VALUES ('sec1', 'doc1', 0, 'S');
+             INSERT INTO section_images (id, section_id, ordinal, source_url, local_path)
+                 VALUES ('img1', 'sec1', 0, 'https://e.test/i.png',
+                         '/Users/x/Library/Application Support/dev.johnnyrobot.reader/images/i.png');",
+        )
+        .expect("seed rows carrying the old identifier");
+
+        conn.execute_batch(migration_sql("0005_rebase_app_dir_paths"))
+            .expect("re-apply the rebase migration");
+
+        let cover: String = conn
+            .query_row(
+                "SELECT cover_image_path FROM documents WHERE id = 'doc1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read cover path");
+        let image: String = conn
+            .query_row(
+                "SELECT local_path FROM section_images WHERE id = 'img1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read image path");
+
+        assert!(
+            cover.contains("dev.johnnylibretexts.reader"),
+            "cover not rebased: {cover}"
+        );
+        assert!(
+            !cover.contains("dev.johnnyrobot.reader"),
+            "old prefix survived: {cover}"
+        );
+        assert!(
+            image.contains("dev.johnnylibretexts.reader"),
+            "image not rebased: {image}"
+        );
+        assert!(
+            !image.contains("dev.johnnyrobot.reader"),
+            "old prefix survived: {image}"
+        );
+    }
+
+    #[test]
+    fn rebase_app_dir_paths_is_idempotent_and_leaves_other_paths_alone() {
+        let conn = migrated_conn();
+        conn.execute_batch(
+            "INSERT INTO documents (id, title, source_type, source_metadata, imported_at, cover_image_path)
+                 VALUES ('doc2', 'D', 'pasted', '{}', 'now', '/somewhere/else/c.png');",
+        )
+        .expect("seed an unrelated path");
+
+        conn.execute_batch(migration_sql("0005_rebase_app_dir_paths"))
+            .expect("first run");
+        conn.execute_batch(migration_sql("0005_rebase_app_dir_paths"))
+            .expect("second run");
+
+        let cover: String = conn
+            .query_row(
+                "SELECT cover_image_path FROM documents WHERE id = 'doc2'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read cover path");
+        assert_eq!(cover, "/somewhere/else/c.png");
     }
 
     #[test]

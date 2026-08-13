@@ -24,6 +24,11 @@ jobs:
           scripts/ci/check-error-kinds.test.sh
           scripts/ci/check-error-kinds.sh
 
+      - name: Identifier sync check
+        run: |
+          scripts/ci/check-identifier.test.sh
+          scripts/ci/check-identifier.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22.20.0'

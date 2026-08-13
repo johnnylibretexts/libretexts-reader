@@ -21,7 +21,7 @@ Two halves that talk over Tauri's `invoke` bridge:
 
 **TTS is split across two engines:** Kokoro runs **in the webview** via `kokoro-js` with an app-downloaded model; **Supertonic** playback and chapter-MP3 export run through the **Rust ONNX Runtime** (`ort`) backend with on-demand model downloads. `ffmpeg` (external sidecar bin) + `mp3lame` handle encoding.
 
-**App data** lives outside the repo at `~/Library/Application Support/dev.johnnyrobot.reader` (SQLite DB, downloaded books, TTS models, cover/section images). Point tests/local runs elsewhere with `LIBRETEXTS_READER_APP_DATA_DIR`.
+**App data** lives outside the repo at `~/Library/Application Support/dev.johnnylibretexts.reader` (SQLite DB, downloaded books, TTS models, cover/section images). Point tests/local runs elsewhere with `LIBRETEXTS_READER_APP_DATA_DIR`.
 
 ## Commands
 

@@ -58,7 +58,7 @@ git diff --check                            # whitespace/conflict-marker gate
 
 ## Security & Data
 
-- **On-device / offline by design.** The library, downloaded books, TTS models, and images live in the OS app-data dir (`~/Library/Application Support/dev.johnnyrobot.reader`), never in the repo. Nothing is uploaded.
+- **On-device / offline by design.** The library, downloaded books, TTS models, and images live in the OS app-data dir (`~/Library/Application Support/dev.johnnylibretexts.reader`), never in the repo. Nothing is uploaded.
 - Outbound network is **allowlisted via CSP** in `src-tauri/tauri.conf.json` (`connect-src`/`img-src`: OpenStax, LibreTexts, Hugging Face model hosts, jsDelivr, GitHub). Widen it deliberately when adding a source, and keep the `assetProtocol` scope tight (`$APPDATA/covers/**`, `images/**`).
 - Bundled native binaries/models are gitignored (`src-tauri/binaries/`, `resources/pdfium/`, `resources/voices/`) — never commit them.
 - **Release builds are signed + notarized** (macOS Developer ID). Bundled ffmpeg `.dylib`s and `libpdfium.dylib` must be signed manually with hardened runtime before `tauri:build`, and notarization secrets are stored in a `notarytool` keychain profile — never in the shell or the repo. Full checklist: `RELEASE.md`.

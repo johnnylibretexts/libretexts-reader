@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::error::{AppError, AppResult};
 
-const APP_DIR_NAME: &str = "dev.johnnyrobot.reader";
+const APP_DIR_NAME: &str = "dev.johnnylibretexts.reader";
 
 pub fn app_data_dir() -> AppResult<PathBuf> {
     let dir = match std::env::var_os("LIBRETEXTS_READER_APP_DATA_DIR") {
