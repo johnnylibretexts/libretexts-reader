@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   release:
-    if: github.repository == 'johnnyrobot/johnny-reader'
+    if: github.repository == 'johnnylibretexts/libretexts-reader'
     runs-on: [self-hosted, macos, release]
     timeout-minutes: 60
     env:
