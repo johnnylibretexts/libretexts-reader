@@ -74,7 +74,7 @@ If notarization returns Invalid, read the log:
 
 ```bash
 npm run build
-cargo test -p johnny-reader
+cargo test -p libretexts-reader
 git diff --check
 ```
 

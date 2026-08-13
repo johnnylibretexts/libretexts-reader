@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           source "$HOME/.cargo/env"
-          cargo build --release -p johnny-reader
+          cargo build --release -p libretexts-reader
 
       - name: Developer-ID re-sign native libs
         run: |

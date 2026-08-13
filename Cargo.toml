@@ -8,7 +8,7 @@ edition = "2021"
 rust-version = "1.88"
 authors = ["Johnny Phung"]
 license = "Apache-2.0"
-repository = "https://github.com/johnnyrobot/johnny-reader"
+repository = "https://github.com/johnnylibretexts/libretexts-reader"
 
 [profile.release]
 opt-level = 3

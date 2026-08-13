@@ -1,5 +1,5 @@
 [package]
-name = "johnny-reader"
+name = "libretexts-reader"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 description = "Offline TTS reader for OpenStax, LibreTexts, and arbitrary text"
 
 [lib]
-name = "johnny_reader_lib"
+name = "libretexts_reader_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -4,7 +4,7 @@ Two workflows live in `.github/workflows/`:
 
 - **`ci.yml`** — runs on GitHub-hosted `macos-14` for every pull request and push
   to `main`: `npm run build`, `cargo fmt --all --check`,
-  `cargo clippy --all-targets -- -D warnings`, `cargo test -p johnny-reader`.
+  `cargo clippy --all-targets -- -D warnings`, `cargo test -p libretexts-reader`.
   No secrets, no signing.
 - **`release.yml`** — runs on a **self-hosted** Apple-Silicon runner (label
   `release`), triggered only by pushing a `vX.Y.Z` tag (or a manual dry-run). It
@@ -38,7 +38,7 @@ this repo is **public**, a self-hosted runner is only safe under these rules
    self-hosted runner, macOS/arm64). During `./config.sh`, give it the labels
    `macos` and `release`:
    ```bash
-   ./config.sh --url https://github.com/johnnyrobot/johnny-reader \
+   ./config.sh --url https://github.com/johnnylibretexts/libretexts-reader \
      --token <REG_TOKEN> --labels macos,release --name jr-release-mac --ephemeral
    ```
    `--ephemeral` makes the runner take one job then exit (re-run `./run.sh` per

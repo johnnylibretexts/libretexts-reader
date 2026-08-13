@@ -9,7 +9,7 @@ This repo is an in-progress Tauri desktop app for reading and listening to OpenS
 Work from wherever you cloned the repo, for example:
 
 ```bash
-cd "$HOME/code/johnny-reader"
+cd "$HOME/code/libretexts-reader"
 ```
 
 If this folder is copied to another machine, run setup from the copied repo root.
@@ -25,7 +25,7 @@ If this folder is copied to another machine, run setup from the copied repo root
 
 ```bash
 npm install
-cargo check -p johnny-reader
+cargo check -p libretexts-reader
 npm run build
 ```
 
@@ -33,7 +33,7 @@ For a runnable desktop binary without packaging installers:
 
 ```bash
 npm run tauri -- build --debug --no-bundle
-open target/debug/johnny-reader
+open target/debug/libretexts-reader
 ```
 
 For live development:
@@ -135,13 +135,13 @@ git diff --check
 All passed. The rebuilt app was opened with:
 
 ```bash
-open target/debug/johnny-reader
+open target/debug/libretexts-reader
 ```
 
 At the end of the session the debug app was running as:
 
 ```text
-<repo>/target/debug/johnny-reader
+<repo>/target/debug/libretexts-reader
 ```
 
 ## Key Implementation Details
@@ -233,9 +233,9 @@ These commands were green before handoff:
 
 ```bash
 npm run build
-cargo check -p johnny-reader
-cargo test -p johnny-reader
-cargo test -p johnny-reader live_imports_small_public_book_with_images -- --ignored --nocapture
+cargo check -p libretexts-reader
+cargo test -p libretexts-reader
+cargo test -p libretexts-reader live_imports_small_public_book_with_images -- --ignored --nocapture
 npm run tauri -- build --debug --no-bundle
 git diff --check
 ```
@@ -250,7 +250,7 @@ For the LibreTexts image/layout feature:
 
    ```bash
    npm run tauri -- build --debug --no-bundle
-   open target/debug/johnny-reader
+   open target/debug/libretexts-reader
    ```
 
 2. Import a LibreTexts book with figures, for example General Biology.
@@ -288,4 +288,4 @@ Recommended next work:
 - Use `apply_patch` for edits.
 - Re-run both frontend and Rust checks after touching shared models or migrations.
 - If changing migrations while a local app database already exists, add a new migration instead of mutating an already-applied migration.
-- When testing the running app, quit any old `target/debug/johnny-reader` process before opening a newly built binary so macOS does not focus a stale instance.
+- When testing the running app, quit any old `target/debug/libretexts-reader` process before opening a newly built binary so macOS does not focus a stale instance.

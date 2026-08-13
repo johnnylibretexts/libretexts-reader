@@ -15,7 +15,7 @@ use crate::paths;
 use crate::voices::manifest;
 use crate::voices::models;
 
-const USER_AGENT: &str = "johnny-reader/0.1 model-downloader";
+const USER_AGENT: &str = "libretexts-reader/0.1 model-downloader";
 
 /// Time allowed to establish a connection before the download is aborted.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);

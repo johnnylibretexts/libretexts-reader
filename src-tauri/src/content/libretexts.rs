@@ -521,7 +521,7 @@ impl LibreTextsClient {
                 .http
                 .get(url)
                 .query(params)
-                .header("user-agent", "johnny-reader-libretexts-importer");
+                .header("user-agent", "libretexts-reader-libretexts-importer");
 
             match request.send().await {
                 Ok(response) if response.status().is_success() => {
@@ -560,7 +560,7 @@ impl LibreTextsClient {
             let request = self
                 .http
                 .get(url)
-                .header("user-agent", "johnny-reader-libretexts-importer")
+                .header("user-agent", "libretexts-reader-libretexts-importer")
                 .header("accept", "text/html,application/xhtml+xml");
 
             match request.send().await {
@@ -1188,8 +1188,10 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_imports_small_public_book_with_images() {
-        let app_data_dir =
-            std::env::temp_dir().join(format!("johnny-reader-libretexts-smoke-{}", Uuid::new_v4()));
+        let app_data_dir = std::env::temp_dir().join(format!(
+            "libretexts-reader-libretexts-smoke-{}",
+            Uuid::new_v4()
+        ));
         std::env::set_var("JOHNNY_READER_APP_DATA_DIR", &app_data_dir);
         let db_path = app_data_dir.join("library.sqlite");
         let pool = connection::init_pool(&db_path).expect("temporary database should initialize");

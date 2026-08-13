@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    johnny_reader_lib::run()
+    libretexts_reader_lib::run()
 }

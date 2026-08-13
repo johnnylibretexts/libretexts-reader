@@ -11,7 +11,7 @@ Two halves that talk over Tauri's `invoke` bridge:
 - `stores/` — Zustand: `library.ts`, `player.ts`, `settings.ts`.
 - `lib/` — `tauri.ts` (typed wrappers over every Rust command; **the invoke boundary**), `kokoro.ts` + `supertonic.ts` (TTS engines), `mathContent.ts` (MathML/KaTeX handling), `errors.ts`.
 
-**Backend — `src-tauri/src/`** (Rust; crate `johnny-reader`, lib `johnny_reader_lib`)
+**Backend — `src-tauri/src/`** (Rust; crate `libretexts-reader`, lib `libretexts_reader_lib`)
 - `lib.rs` — Tauri builder: registers all `#[tauri::command]`s in `generate_handler!`, initializes the SQLite pool, and creates app-data subdirs on `setup`. **Adding a command = add the fn + register it here + add a wrapper in `src/lib/tauri.ts`.**
 - `commands/` — `content.rs` (imports + catalog listing), `library.rs`, `playback.rs`, `settings.rs`, `tts.rs`, `supertonic_tts.rs`, `voices.rs`.
 - `content/` — importers/normalizers: `openstax.rs`, `libretexts.rs`, `epub.rs`, `pdf.rs` (PDFium), `article.rs` (readability), `images.rs` (download + persist figures), `normalize.rs`, `tokenize.rs`, `document.rs`.
@@ -30,18 +30,18 @@ npm install                                 # JS deps
 npm run tauri:dev                           # live dev (Vite + Rust, hot reload)
 npm run build                               # frontend typecheck + build: tsc && vite build
 npm test                                    # vitest run — frontend unit tests (jsdom)
-cargo check -p johnny-reader                # Rust typecheck
-cargo test -p johnny-reader                 # Rust tests
+cargo check -p libretexts-reader                # Rust typecheck
+cargo test -p libretexts-reader                 # Rust tests
 npm run tauri:build                         # full signed/bundled release build (dmg/app/msi/nsis)
 
 # fast runnable binary without installers:
-npm run tauri -- build --debug --no-bundle && open target/debug/johnny-reader
+npm run tauri -- build --debug --no-bundle && open target/debug/libretexts-reader
 
 # live network import smoke (ignored by default):
-cargo test -p johnny-reader live_imports_small_public_book_with_images -- --ignored --nocapture
+cargo test -p libretexts-reader live_imports_small_public_book_with_images -- --ignored --nocapture
 ```
 
-Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p johnny-reader`, `git diff --check`.
+Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p libretexts-reader`, `git diff --check`.
 
 ## Conventions
 

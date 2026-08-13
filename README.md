@@ -14,7 +14,7 @@ npm run tauri:dev
 
 ```bash
 npm run build
-cargo check -p johnny-reader
+cargo check -p libretexts-reader
 ```
 
 ## Distribution

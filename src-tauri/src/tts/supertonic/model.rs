@@ -11,7 +11,7 @@ use crate::paths;
 
 pub(crate) const SUPERTONIC_MODEL_ID: &str = "Supertone/supertonic-3";
 pub(crate) const SUPERTONIC_MODEL_VERSION: &str = "supertonic-3";
-pub(crate) const SUPERTONIC_USER_AGENT: &str = "johnny-reader/0.1 supertonic-model-downloader";
+pub(crate) const SUPERTONIC_USER_AGENT: &str = "libretexts-reader/0.1 supertonic-model-downloader";
 /// Abort a stalled model download if no chunk arrives within this window. An
 /// overall request timeout is intentionally avoided so large files can finish.
 pub(crate) const SUPERTONIC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);

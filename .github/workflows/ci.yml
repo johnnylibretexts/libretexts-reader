@@ -47,4 +47,4 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Rust tests
-        run: cargo test -p johnny-reader
+        run: cargo test -p libretexts-reader
