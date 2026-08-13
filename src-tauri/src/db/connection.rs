@@ -35,7 +35,6 @@ pub fn init_pool(db_path: &Path) -> AppResult<DbPool> {
         let mut conn = pool.get()?;
         migrations::apply_migrations(&mut conn)?;
         crate::db::settings::seed_default_settings(&conn)?;
-        crate::voices::manifest::seed_voice_catalog(&mut conn)?;
     }
 
     Ok(pool)
