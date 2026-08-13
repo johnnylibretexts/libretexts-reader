@@ -43,13 +43,13 @@ git diff --check                            # whitespace/conflict-marker gate
 
 - **Before a change is done**, the frontend build, `npm test`, and `cargo test -p libretexts-reader` must all pass; re-run the Rust and frontend gates **both** whenever you touch shared DB models or migrations.
 - Live network smoke (opt-in, uses a temp app-data dir): `cargo test -p libretexts-reader live_imports_small_public_book_with_images -- --ignored --nocapture`.
-- **Frontend unit tests run under vitest** with a jsdom environment (`npm test`, or `npx vitest` to watch). Coverage is currently the pure-logic seams — `src/lib/errors.test.ts`, `src/lib/mathContent.test.ts`, `src/stores/player.test.ts` — not components. Rendering and playback behaviour still need verifying by running the debug binary; point runs at a scratch library with `LIBRETEXTS_READER_APP_DATA_DIR=/tmp/jr-test`.
+- **Frontend unit tests run under vitest** with a jsdom environment (`npm test`, or `npx vitest` to watch). Coverage is currently the pure-logic seams — `src/lib/errors.test.ts`, `src/lib/mathContent.test.ts`, `src/stores/player.test.ts` — not components. Rendering and playback behaviour still need verifying by running the debug binary; point runs at a scratch library with `LIBRETEXTS_READER_APP_DATA_DIR=/tmp/ltr-test`. **Warning:** `app.security.assetProtocol.scope` in `tauri.conf.json` does not follow this env var — it stays hardcoded to the real `$APPDATA` scope — so covers and section-figure images will not render under an overridden app-data dir. Do not use this technique to verify image rendering; use the real app-data dir (or the live-import smoke test) for that.
 
 ## Code Style
 
 - Rust: `cargo fmt` + `cargo clippy`. Commands are `#[tauri::command]` fns in `src-tauri/src/commands/`, registered in `generate_handler!` in `src-tauri/src/lib.rs`. Content importers live in `src-tauri/src/content/`, DB access in `src-tauri/src/db/` (`rusqlite` + `r2d2` pool).
 - TypeScript/React: functional components, **Zustand** stores (`src/stores/`), Tailwind v4. All calls into Rust go through the typed wrappers in `src/lib/tauri.ts`; payload types live in `src/types/domain.ts`. Keep the wrapper list, the `generate_handler!` list, and the type definitions in sync.
-- Database migrations: add a new numbered SQL file in `src-tauri/resources/migrations/` (`0005_*.sql`, …). **Never edit an already-applied migration** — a new one is required so existing local databases upgrade cleanly.
+- Database migrations: add a new numbered SQL file in `src-tauri/resources/migrations/`, numbered one past the highest existing file (currently `0006`, so the next free number is `0007`). The `MIGRATIONS` array in `src-tauri/src/db/migrations.rs` is hand-maintained and is the actual source of truth — always check both it and the directory listing before picking a number; a collision registers under the wrong name and silently applies out of order. **Never edit an already-applied migration** — a new one is required so existing local databases upgrade cleanly.
 
 ## Commit & PR Conventions
 

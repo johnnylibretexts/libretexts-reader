@@ -48,7 +48,7 @@ Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p libret
 - **Toolchains are pinned.** Rust: stable via rustup (`rust-toolchain.toml` adds `clippy`+`rustfmt`; workspace `rust-version = 1.88`). Use `cargo fmt` / `cargo clippy`. Frontend has no separate linter — its gates are TypeScript strictness via `tsc` in `npm run build` plus the vitest suite (`npm test`). CI enforces both.
 - **Node 22.x is required** (last verified 22.20.0 / npm 10.9.3). See gotcha below.
 - Frontend↔Rust contract: keep `src/lib/tauri.ts` and the `generate_handler!` list in `lib.rs` in sync; mirror payload shapes in `src/types/domain.ts`.
-- DB: **add a new numbered migration** in `src-tauri/resources/migrations/` (e.g. `0005_*.sql`) — never mutate an already-applied migration file.
+- DB: **add a new numbered migration** in `src-tauri/resources/migrations/`, numbered one past the highest file already there (currently `0006`, so the next free number is `0007`). The `MIGRATIONS` array in `src-tauri/src/db/migrations.rs` is hand-maintained and is the actual source of truth — check both it and the directory listing before picking a number, since a collision registers under the wrong name and silently applies out of order. Never mutate an already-applied migration file.
 - Commits: Conventional-Commits-ish prefixes (`build:`, `deps:`, `license:`, `fix:`, `chore:`), imperative.
 
 ## Gotchas & Constraints

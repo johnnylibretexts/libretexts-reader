@@ -215,6 +215,10 @@ function asTtsProvider(value: unknown): TtsProvider | undefined {
   return value === "kokoro" || value === "supertonic" ? value : undefined;
 }
 
+// The localStorage key is intentionally still "johnny-reader-theme" from the
+// pre-rename app name. Do NOT rename it to match the LibreTexts Reader
+// rebrand — every existing user's stored key would stop matching and their
+// theme preference would silently reset to "system". Leave this key alone.
 function localTheme(): AppTheme | undefined {
   if (typeof window === "undefined") {
     return undefined;
