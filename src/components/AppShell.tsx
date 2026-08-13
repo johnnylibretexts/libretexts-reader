@@ -234,9 +234,7 @@ function RoutePlaceholder({
       {route.id === "openstax" ? (
         <OpenStaxBrowser onImported={() => {}} />
       ) : null}
-      {route.id === "libretexts" ? (
-        <LibreTextsBrowser onImported={() => {}} />
-      ) : null}
+      {route.id === "libretexts" ? <LibreTextsBrowser /> : null}
       {route.id === "pdf" ? <PdfDialog onImported={onPdfImported} /> : null}
       {route.id === "paste" ? (
         <PasteDialog onImported={onPasteImported} />

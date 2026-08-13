@@ -1,23 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { BookOpen, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import { api } from "../../lib/tauri";
 import type * as Domain from "../../types/domain";
 import { displayError } from "../../lib/errors";
+import { useImportsStore } from "../../stores/imports";
+import { useLibraryStore } from "../../stores/library";
+import { findImportedBook } from "../../lib/importedBooks";
 
-interface LibreTextsBrowserProps {
-  onImported: (documentId: string, title: string) => void;
-}
-
-export function LibreTextsBrowser({ onImported }: LibreTextsBrowserProps) {
+export function LibreTextsBrowser() {
   const [books, setBooks] = useState<Domain.LibreTextsBook[]>([]);
   const [libraries, setLibraries] = useState<Domain.LibreTextsLibrary[]>([]);
   const [query, setQuery] = useState("");
   const [library, setLibrary] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [importingBookId, setImportingBookId] = useState<string | null>(null);
-  const [progress, setProgress] = useState<Domain.ImportProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activeImport = useImportsStore((state) => state.active);
+  const startImport = useImportsStore((state) => state.start);
+  const documents = useLibraryStore((state) => state.documents);
 
   useEffect(() => {
     let active = true;
@@ -70,23 +69,6 @@ export function LibreTextsBrowser({ onImported }: LibreTextsBrowserProps) {
     };
   }, [library, query]);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen<Domain.ImportProgress>("import-progress", (event) => {
-      if (event.payload.documentId === importingBookId) {
-        setProgress(event.payload);
-      }
-    })
-      .then((dispose) => {
-        unlisten = dispose;
-      })
-      .catch(() => undefined);
-
-    return () => {
-      unlisten?.();
-    };
-  }, [importingBookId]);
-
   const sortedLibraries = useMemo(
     () =>
       [...libraries].sort((left, right) =>
@@ -96,29 +78,11 @@ export function LibreTextsBrowser({ onImported }: LibreTextsBrowserProps) {
   );
 
   async function importBook(book: Domain.LibreTextsBook) {
-    if (importingBookId) {
-      return;
-    }
-
-    setError(null);
-    setProgress({
-      documentId: book.bookId,
-      stage: "fetching",
-      current: 0,
-      total: 0,
-      message: null,
+    await startImport({
+      bookId: book.bookId,
+      title: book.title,
+      run: () => api.importLibreTexts(book.bookId),
     });
-    setImportingBookId(book.bookId);
-
-    try {
-      const documentId = await api.importLibreTexts(book.bookId);
-      onImported(documentId, book.title);
-    } catch (error) {
-      setError(displayError(error));
-    } finally {
-      setImportingBookId(null);
-      setProgress(null);
-    }
   }
 
   return (
@@ -175,68 +139,81 @@ export function LibreTextsBrowser({ onImported }: LibreTextsBrowserProps) {
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {books.map((book) => (
-          <article
-            className="flex min-h-52 flex-col justify-between gap-4 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
-            key={book.bookId}
-          >
-            <div className="flex min-w-0 gap-3">
-              <LibreTextsThumbnail thumbnail={book.thumbnail} />
-              <div className="min-w-0">
-                <h2 className="line-clamp-2 text-base font-semibold">
-                  {book.title}
-                </h2>
-                <p className="mt-1 line-clamp-2 text-sm text-neutral-600 dark:text-neutral-400">
-                  {book.author || book.affiliation || "LibreTexts"}
+        {books.map((book) => {
+          const imported = findImportedBook(
+            documents,
+            "libretexts",
+            "book_id",
+            book.bookId,
+          );
+
+          return (
+            <article
+              className="flex min-h-52 flex-col justify-between gap-4 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+              key={book.bookId}
+            >
+              <div className="flex min-w-0 gap-3">
+                <LibreTextsThumbnail thumbnail={book.thumbnail} />
+                <div className="min-w-0">
+                  <h2 className="line-clamp-2 text-base font-semibold">
+                    {book.title}
+                  </h2>
+                  <p className="mt-1 line-clamp-2 text-sm text-neutral-600 dark:text-neutral-400">
+                    {book.author || book.affiliation || "LibreTexts"}
+                  </p>
+                </div>
+              </div>
+
+              {book.summary ? (
+                <p className="line-clamp-3 text-sm text-neutral-600 dark:text-neutral-400">
+                  {book.summary}
                 </p>
-              </div>
-            </div>
+              ) : null}
 
-            {book.summary ? (
-              <p className="line-clamp-3 text-sm text-neutral-600 dark:text-neutral-400">
-                {book.summary}
-              </p>
-            ) : null}
-
-            <div className="flex items-center justify-between gap-3">
-              <p className="min-h-5 min-w-0 truncate text-sm text-neutral-500 dark:text-neutral-400">
-                {importingBookId === book.bookId && progress
-                  ? formatLibreTextsProgress(progress)
-                  : book.subject || book.library.toUpperCase()}
-              </p>
-              <div className="flex shrink-0 items-center gap-2">
-                {book.onlineUrl ? (
-                  <a
-                    aria-label={`Open ${book.title} on LibreTexts`}
-                    className="grid size-9 place-items-center rounded-md border border-neutral-200 text-neutral-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                    href={book.onlineUrl}
-                    rel="noreferrer"
-                    target="_blank"
-                    title="Open source"
-                  >
-                    <ExternalLink className="size-4" aria-hidden="true" />
-                  </a>
-                ) : null}
-                <button
-                  className="inline-flex h-9 items-center gap-2 rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={Boolean(importingBookId)}
-                  onClick={() => void importBook(book)}
-                  type="button"
-                >
-                  {importingBookId === book.bookId ? (
-                    <Loader2
-                      className="size-4 animate-spin"
-                      aria-hidden="true"
-                    />
+              <div className="flex items-center justify-between gap-3">
+                <p className="min-h-5 min-w-0 truncate text-sm text-neutral-500 dark:text-neutral-400">
+                  {activeImport?.bookId === book.bookId
+                    ? formatLibreTextsProgress(activeImport)
+                    : book.subject || book.library.toUpperCase()}
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  {book.onlineUrl ? (
+                    <a
+                      aria-label={`Open ${book.title} on LibreTexts`}
+                      className="grid size-9 place-items-center rounded-md border border-neutral-200 text-neutral-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      href={book.onlineUrl}
+                      rel="noreferrer"
+                      target="_blank"
+                      title="Open source"
+                    >
+                      <ExternalLink className="size-4" aria-hidden="true" />
+                    </a>
+                  ) : null}
+                  {imported ? (
+                    <span className="inline-flex h-9 items-center gap-2 rounded-md border border-neutral-200 px-3 text-sm font-medium text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
+                      <BookOpen className="size-4" aria-hidden="true" />
+                      In library
+                    </span>
                   ) : (
-                    <Plus className="size-4" aria-hidden="true" />
+                    <button
+                      className="inline-flex h-9 items-center gap-2 rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={Boolean(activeImport)}
+                      onClick={() => void importBook(book)}
+                      type="button"
+                    >
+                      {activeImport?.bookId === book.bookId ? (
+                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Plus className="size-4" aria-hidden="true" />
+                      )}
+                      Add
+                    </button>
                   )}
-                  Add
-                </button>
+                </div>
               </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -267,7 +244,7 @@ function LibreTextsThumbnail({ thumbnail }: { thumbnail: string | null }) {
   );
 }
 
-function formatLibreTextsProgress(progress: Domain.ImportProgress) {
+function formatLibreTextsProgress(progress: { current: number; total: number }) {
   if (progress.total > 0) {
     return `Chapter ${progress.current}/${progress.total}`;
   }
