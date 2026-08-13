@@ -1,3 +1,4 @@
+mod cleanup;
 pub mod commands;
 pub mod content;
 pub mod db;
@@ -50,6 +51,7 @@ pub fn run() {
             paths::images_dir()?;
             paths::cache_dir()?;
             paths::temp_dir()?;
+            cleanup::reclaim_kokoro_artifacts();
             let pool = init_pool(&db_path)?;
             app.manage(pool);
             Ok(())
