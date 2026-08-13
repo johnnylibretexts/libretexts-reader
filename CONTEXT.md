@@ -1,6 +1,6 @@
-# Johnny Reader
+# LibreTexts Reader
 
-Johnny Reader turns written works — textbooks, EPUBs, PDFs, articles, pasted text — into something you can listen to, entirely on your own machine.
+LibreTexts Reader turns written works — textbooks, EPUBs, PDFs, articles, pasted text — into something you can listen to, entirely on your own machine.
 
 ## Language
 

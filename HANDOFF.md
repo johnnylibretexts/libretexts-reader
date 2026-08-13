@@ -1,4 +1,4 @@
-# Johnny Reader Handoff
+# LibreTexts Reader Handoff
 
 Last updated: 2026-05-20
 

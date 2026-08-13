@@ -159,11 +159,40 @@ mod tests {
     }
 
     #[test]
-    fn rebase_app_dir_paths_is_idempotent_and_leaves_other_paths_alone() {
+    fn rebase_app_dir_paths_is_idempotent_on_a_matching_path() {
         let conn = migrated_conn();
         conn.execute_batch(
             "INSERT INTO documents (id, title, source_type, source_metadata, imported_at, cover_image_path)
-                 VALUES ('doc2', 'D', 'pasted', '{}', 'now', '/somewhere/else/c.png');",
+                 VALUES ('doc2', 'D', 'pasted', '{}', 'now',
+                         '/Users/x/Library/Application Support/dev.johnnyrobot.reader/covers/c.png');",
+        )
+        .expect("seed a path carrying the old identifier");
+
+        conn.execute_batch(migration_sql("0005_rebase_app_dir_paths"))
+            .expect("first run");
+        conn.execute_batch(migration_sql("0005_rebase_app_dir_paths"))
+            .expect("second run");
+
+        let cover: String = conn
+            .query_row(
+                "SELECT cover_image_path FROM documents WHERE id = 'doc2'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read cover path");
+
+        assert_eq!(
+            cover, "/Users/x/Library/Application Support/dev.johnnylibretexts.reader/covers/c.png",
+            "running the migration twice must not double-rewrite the path"
+        );
+    }
+
+    #[test]
+    fn rebase_app_dir_paths_leaves_other_paths_alone() {
+        let conn = migrated_conn();
+        conn.execute_batch(
+            "INSERT INTO documents (id, title, source_type, source_metadata, imported_at, cover_image_path)
+                 VALUES ('doc3', 'D', 'pasted', '{}', 'now', '/somewhere/else/c.png');",
         )
         .expect("seed an unrelated path");
 
@@ -174,7 +203,7 @@ mod tests {
 
         let cover: String = conn
             .query_row(
-                "SELECT cover_image_path FROM documents WHERE id = 'doc2'",
+                "SELECT cover_image_path FROM documents WHERE id = 'doc3'",
                 [],
                 |r| r.get(0),
             )
@@ -216,6 +245,34 @@ mod tests {
             .expect("read export directory");
 
         assert_eq!(value, "\"/Users/x/Documents/LibreTexts Reader\"");
+    }
+
+    #[test]
+    fn rebase_export_directory_is_idempotent_on_a_matching_path() {
+        let conn = migrated_conn();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('export_directory', ?1)",
+            rusqlite::params!["\"/Users/x/Documents/Johnny Reader\""],
+        )
+        .expect("seed the old export directory");
+
+        conn.execute_batch(migration_sql("0006_rebase_export_directory"))
+            .expect("run once");
+        conn.execute_batch(migration_sql("0006_rebase_export_directory"))
+            .expect("run twice");
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'export_directory'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read export directory");
+
+        assert_eq!(
+            value, "\"/Users/x/Documents/LibreTexts Reader\"",
+            "running the migration twice must not double-rewrite the path"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-# Releasing Johnny Reader
+# Releasing LibreTexts Reader
 
 Checklist for producing a signed, notarized macOS build.
 
@@ -60,10 +60,10 @@ codesign --force --options runtime --timestamp --sign "$ID" \
 export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
 npm run tauri:build
 
-DMG="target/release/bundle/dmg/Johnny Reader_0.1.0_aarch64.dmg"
+DMG="target/release/bundle/dmg/LibreTexts Reader_0.1.0_aarch64.dmg"
 xcrun notarytool submit "$DMG" --keychain-profile jr-notary --wait
 xcrun stapler staple "$DMG"
-xcrun stapler staple "target/release/bundle/macos/Johnny Reader.app"
+xcrun stapler staple "target/release/bundle/macos/LibreTexts Reader.app"
 spctl -a -t open --context context:primary-signature -vvv "$DMG"   # expect: accepted, Notarized Developer ID
 ```
 

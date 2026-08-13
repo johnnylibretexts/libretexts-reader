@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Johnny Reader is a **Tauri 2 desktop app** for listening to OpenStax/LibreTexts textbooks, EPUBs, PDFs, pasted text, and article URLs with **on-device neural TTS**. React 19 + Vite 6 + TypeScript webview frontend; Rust backend does content import, persistence, and part of TTS. Everything runs locally; no app server. Apache-2.0.
+LibreTexts Reader is a **Tauri 2 desktop app** for listening to OpenStax/LibreTexts textbooks, EPUBs, PDFs, pasted text, and article URLs with **on-device neural TTS**. React 19 + Vite 6 + TypeScript webview frontend; Rust backend does content import, persistence, and part of TTS. Everything runs locally; no app server. Apache-2.0.
 
 ## Architecture
 

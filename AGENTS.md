@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Johnny Reader is a free, open-source **Tauri 2 desktop app** that reads OpenStax/LibreTexts textbooks, EPUBs, PDFs, pasted text, and article URLs aloud with on-device neural TTS. Stack: **React 19 + Vite 6 + TypeScript + Tailwind v4** in the webview (`src/`); **Rust** for content import, SQLite persistence, and part of TTS (`src-tauri/`). No backend server — everything runs locally. Apache-2.0.
+LibreTexts Reader is a free, open-source **Tauri 2 desktop app** that reads OpenStax/LibreTexts textbooks, EPUBs, PDFs, pasted text, and article URLs aloud with on-device neural TTS. Stack: **React 19 + Vite 6 + TypeScript + Tailwind v4** in the webview (`src/`); **Rust** for content import, SQLite persistence, and part of TTS (`src-tauri/`). No backend server — everything runs locally. Apache-2.0.
 
 ## Setup
 
