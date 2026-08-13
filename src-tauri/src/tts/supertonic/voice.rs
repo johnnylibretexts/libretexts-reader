@@ -103,8 +103,10 @@ mod tests {
 
     #[test]
     fn playback_falls_back_instead_of_failing() {
-        // The player carries one voice id across engines, so this can be handed
-        // a Kokoro id. Reading the chapter in another voice beats silence.
+        // A stored voice id can predate the current engine — an install that
+        // used Kokoro still has one of its ids in default_voice_id until the
+        // settings migration rewrites it. Reading the chapter in another voice
+        // beats silence.
         assert_eq!(
             playback_voice_style(Some("af_heart"), DEFAULT_VOICE_STYLE),
             "M1"

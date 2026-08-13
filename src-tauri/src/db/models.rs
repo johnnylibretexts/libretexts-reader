@@ -85,19 +85,6 @@ pub struct PlaybackState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Voice {
-    pub id: String,
-    pub display_name: String,
-    pub language: String,
-    pub gender: String,
-    pub is_bundled: bool,
-    pub is_downloaded: bool,
-    pub size_bytes: u64,
-    pub preview_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct OpenStaxBook {
     pub uuid: String,
     pub slug: String,

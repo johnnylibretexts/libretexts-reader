@@ -258,9 +258,9 @@ pub async fn export_supertonic_chapter_mp3(
 ///
 /// Deliberately lenient about voice and language rather than erroring the way
 /// the preview and export commands do: the player carries one voice id across
-/// engines, so a reader who switches from Kokoro to Supertonic mid-session can
-/// briefly hold an id this engine does not know. Falling back beats cutting the
-/// audio off. User-initiated commands still reject unknown values outright.
+/// engines, so a reader who switches engines mid-session can briefly hold an
+/// id this engine does not know. Falling back beats cutting the audio off.
+/// User-initiated commands still reject unknown values outright.
 pub async fn synthesize_supertonic_text(
     text: &str,
     voice_id: Option<&str>,

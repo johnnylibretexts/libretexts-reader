@@ -24,10 +24,6 @@ pub fn models_dir() -> AppResult<PathBuf> {
     app_subdir("models")
 }
 
-pub fn voices_dir() -> AppResult<PathBuf> {
-    app_subdir("voices")
-}
-
 pub fn covers_dir() -> AppResult<PathBuf> {
     app_subdir("covers")
 }
