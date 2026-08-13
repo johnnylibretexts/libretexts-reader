@@ -175,6 +175,16 @@ Not in this spec, recorded so the sequence is clear:
    `Uuid::new_v4()` at `content/images.rs:143`). This is the pivot: it makes re-import
    idempotent, enables resume, and would have made the duplicate cost ~0 MB rather than
    308 MB.
+
+   **It also breaks deletion, and that must be fixed in the same change.**
+   `db::library::delete_document` (`db/library.rs:131`) collects every `local_path` for a
+   document and unlinks each file after the cascade. That is safe today *only because*
+   random UUIDs guarantee no two documents ever name the same file. Once filenames are
+   derived from the source URL, two documents that cite the same figure share one file, and
+   deleting either would unlink an image the other still renders — with no error, since
+   `remove_file_if_present` swallows `NotFound`. Deterministic naming therefore requires
+   reference-aware deletion: unlink a file only when no surviving `section_images` row
+   references it.
 2. **Resume / checkpointing.** Blocked today because `import_book` builds a whole
    `DocumentBuilder` in memory and `persist()` writes it in one transaction with a
    `document_id` minted at write time (`content/document.rs:52`) — an interrupted import
