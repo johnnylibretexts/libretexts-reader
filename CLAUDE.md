@@ -34,8 +34,8 @@ cargo check -p libretexts-reader                # Rust typecheck
 cargo test -p libretexts-reader                 # Rust tests
 npm run tauri:build                         # full signed/bundled release build (dmg/app/msi/nsis)
 
-# fast runnable binary without installers:
-npm run tauri -- build --debug --no-bundle && open target/debug/libretexts-reader
+# fast runnable binary without installers (run it directly — NOT via `open`, see Gotchas):
+npm run tauri -- build --debug --no-bundle && ./target/debug/libretexts-reader
 
 # live network import smoke (ignored by default):
 cargo test -p libretexts-reader live_imports_small_public_book_with_images -- --ignored --nocapture
@@ -53,6 +53,9 @@ Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p libret
 
 ## Gotchas & Constraints
 
+- **`open target/debug/libretexts-reader` does not launch the app.** `--no-bundle` produces a bare Mach-O with no `.app`, and `open` on it can exit 0 while starting nothing — no window, no process, no error, so it reads as "the app is broken". Run the binary directly: `./target/debug/libretexts-reader`.
+- **Three declarations name the app-data directory and nothing in the code links them:** `identifier` in `tauri.conf.json`, `APP_DIR_NAME` in `src-tauri/src/paths.rs`, and the `assetProtocol` `$APPDATA/**` scope. Tauri derives `$APPDATA` from the identifier. If they drift the build stays green and every cover and figure silently stops rendering. `scripts/ci/check-identifier.sh` gates all three — keep it passing, and never change one of them alone.
+- **`paths.rs` creates every directory it resolves** (`create_dir_all`). Merely *asking* for the app-data path materialises the whole tree, so a test that forgets `LIBRETEXTS_READER_APP_DATA_DIR` writes into the real `~/Library/Application Support/dev.johnnylibretexts.reader` and is indistinguishable from real usage on disk. Always set the override in tests that touch paths.
 - **Node 24 hangs on Vite/Rollup native addons.** The fix in place is a dev-dependency alias `"rollup": "npm:@rollup/wasm-node@^4.60.2"` (this intentionally alters `package.json`/`package-lock.json` and drops native Rollup optional entries). **Do not revert it** unless native Rollup loading is fixed another way; prefer running on Node 22.
 - **Tauri asset protocol must stay enabled** for downloaded local images to render (`convertFileSrc` → `asset:`). It's wired in `tauri.conf.json` (`app.security.assetProtocol` scoped to `$APPDATA/covers/**` + `images/**`, and the CSP `img-src`) and the `protocol-asset` Tauri feature in `Cargo.toml`. If local images don't show, check CSP + asset protocol first.
 - **Content import is paragraph-flow, not a layout clone.** Figures are anchored to a nearby paragraph (`anchor_paragraph_ordinal`); tables/sidebars/exercises are flattened or skipped. Imports made before migration `0004` have null anchors — reimport to test placement.

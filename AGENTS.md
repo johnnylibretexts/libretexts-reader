@@ -24,10 +24,12 @@ npm run tauri:dev          # live development (Vite + Rust, hot reload)
 
 # fast runnable binary without packaging installers:
 npm run tauri -- build --debug --no-bundle
-open target/debug/libretexts-reader             # quit any stale instance first
+./target/debug/libretexts-reader           # run it directly; quit any stale instance first
 
 npm run tauri:build        # full release bundle → target/release/bundle/{dmg,macos}/...
 ```
+
+Run the debug binary **directly**, not via `open`. `--no-bundle` produces a bare Mach-O with no `.app`, and `open` on it can report success while starting nothing at all — no window, no process, no error.
 
 Frontend-only build/typecheck: `npm run build` (`tsc && vite build`). Vite dev server is pinned to port 1420 (`strictPort`).
 
