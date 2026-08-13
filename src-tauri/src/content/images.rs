@@ -8,6 +8,7 @@ use scraper::{ElementRef, Html, Selector};
 use uuid::Uuid;
 
 use crate::content::document::ImageBuilder;
+use crate::content::html_section::normalize_text;
 use crate::error::AppResult;
 use crate::paths;
 
@@ -249,13 +250,6 @@ fn normalized_element_text(element: &ElementRef<'_>) -> Option<String> {
     } else {
         Some(text)
     }
-}
-
-fn normalize_text(text: &str) -> String {
-    text.replace('\u{a0}', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn media_type(value: &str) -> String {

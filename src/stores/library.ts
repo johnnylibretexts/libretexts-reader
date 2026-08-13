@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api } from "../lib/tauri";
 import type * as Domain from "../types/domain";
+import { displayError } from "../lib/errors";
 
 interface LibraryState {
   documents: Domain.Document[];
@@ -35,7 +36,7 @@ export const useLibraryStore = create<LibraryState>((set) => ({
       set({
         documents: [],
         loading: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: displayError(error),
       });
     }
   },
@@ -56,7 +57,7 @@ export const useLibraryStore = create<LibraryState>((set) => ({
     } catch (error) {
       set({
         loading: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: displayError(error),
       });
     }
   },
@@ -77,7 +78,7 @@ export const useLibraryStore = create<LibraryState>((set) => ({
       }
       set({
         loading: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: displayError(error),
       });
     }
   },

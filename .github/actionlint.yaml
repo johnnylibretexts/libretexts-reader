@@ -1,0 +1,5 @@
+self-hosted-runner:
+  # Custom label for the release runner provisioned in Task 5
+  # (self-hosted, macos, and arm64/x64/linux/windows are already recognized by actionlint).
+  labels:
+    - release

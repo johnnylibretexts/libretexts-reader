@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { api, isTauriRuntime } from "../../lib/tauri";
 import { type ModelPrecision, useSettingsStore } from "../../stores/settings";
+import { displayError } from "../../lib/errors";
 
 interface ModelProgress {
   downloaded: number;
@@ -103,7 +104,7 @@ export function ModelDownload() {
       await api.ensureModelDownloaded(precision);
       markModelDownloaded(precision);
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       setDownloading(false);
     }

@@ -45,8 +45,15 @@ pub struct Paragraph {
     pub id: String,
     pub section_id: String,
     pub ordinal: u32,
+    /// Display text: mathematics is preserved as `[[mathml:…]]` tokens and
+    /// LaTeX for the reader to render.
     pub text: String,
+    /// Byte offsets into `text`, one pair per sentence.
     pub sentence_offsets: Vec<(usize, usize)>,
+    /// Speech text, one entry per `sentence_offsets` pair and in the same
+    /// order: the same sentence with notation written out in words. Derived on
+    /// read rather than stored, so no import is ever stale.
+    pub sentence_speech: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -73,6 +73,17 @@ export async function synthesizeKokoroSpeech({
   return audio.toBlob();
 }
 
+/**
+ * Load and cache the engine without synthesizing anything, so a caller can pay
+ * the model-load cost up front and report progress while it happens.
+ */
+export async function ensureKokoroReady(
+  precision: ModelPrecision,
+  onStatus?: (status: string) => void,
+) {
+  await loadKokoroEngine(precision, onStatus);
+}
+
 async function loadKokoroEngine(
   precision: ModelPrecision,
   onStatus?: (status: string) => void,

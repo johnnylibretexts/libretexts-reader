@@ -1,6 +1,7 @@
 pub mod article;
 pub mod document;
 pub mod epub;
+pub mod html_section;
 pub mod images;
 pub mod libretexts;
 pub mod normalize;

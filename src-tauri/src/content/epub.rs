@@ -4,12 +4,13 @@ use std::path::Path;
 
 use chrono::Utc;
 use epub::doc::EpubDoc;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde_json::json;
 use uuid::Uuid;
 use zip::ZipArchive;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
+use crate::content::html_section::{self, SectionSource};
 use crate::content::split_paragraphs;
 use crate::db::models::SourceType;
 use crate::error::{AppError, AppResult};
@@ -102,27 +103,32 @@ fn save_cover<R: Read + std::io::Seek>(doc: &mut EpubDoc<R>) -> AppResult<Option
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
+/// EPUB carries no source-specific chrome the way a MindTouch or OpenStax page
+/// does, so it keeps everything the reader finds. Adopting the shared reader is
+/// what gives EPUB imports MathML tokens, which its own parser never produced.
+struct EpubSource;
+
+impl SectionSource for EpubSource {
+    fn should_skip_paragraph(&self, _element: &ElementRef<'_>) -> bool {
+        false
+    }
+}
+
 fn section_from_html(html: &str, index: usize) -> Option<SectionBuilder> {
     let document = Html::parse_document(html);
-    let block_selector =
-        Selector::parse("h1, h2, h3, h4, h5, h6, p, li").expect("valid EPUB block selector");
     let heading_selector = Selector::parse("h1, h2, h3").expect("valid heading selector");
-
     let title = document
         .select(&heading_selector)
         .find_map(|element| normalized_text(element.text()))
         .unwrap_or_else(|| format!("Section {}", index + 1));
 
-    let mut paragraphs = Vec::new();
-    for element in document.select(&block_selector) {
-        let Some(text) = normalized_text(element.text()) else {
-            continue;
-        };
-        if text == title {
-            continue;
-        }
-        paragraphs.extend(split_paragraphs(&text));
-    }
+    // Images are deliberately dropped here: an EPUB's are zip entries, not
+    // URLs, so the shared downloader has nothing to fetch.
+    let paragraphs: Vec<String> = html_section::paragraphs_from_html(html, &EpubSource)
+        .into_iter()
+        .filter(|text| *text != title)
+        .flat_map(|text| split_paragraphs(&text))
+        .collect();
 
     if paragraphs.is_empty() {
         None
@@ -138,5 +144,44 @@ fn normalized_text<'a>(text: impl Iterator<Item = &'a str>) -> Option<String> {
         None
     } else {
         Some(normalized)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_chapter_into_paragraphs() {
+        let section = section_from_html(
+            "<h1>Chapter One</h1><p>First paragraph.</p><p>Second paragraph.</p>",
+            0,
+        )
+        .expect("a section");
+
+        assert_eq!(section.title, "Chapter One");
+        assert_eq!(section.paragraphs.len(), 2);
+    }
+
+    #[test]
+    fn now_preserves_mathml_the_way_the_other_importers_do() {
+        // EPUB's own parser dropped math into bare glyphs. Adopting the shared
+        // reader is what gives it tokens the reader can render with KaTeX.
+        let section = section_from_html(
+            "<h1>Maths</h1><p>Given <math><mi>x</mi></math> we continue.</p>",
+            0,
+        )
+        .expect("a section");
+
+        assert!(
+            section.paragraphs.iter().any(|p| p.contains("[[mathml:")),
+            "{:?}",
+            section.paragraphs
+        );
+    }
+
+    #[test]
+    fn a_section_with_no_readable_text_is_dropped() {
+        assert!(section_from_html("<div></div>", 0).is_none());
     }
 }

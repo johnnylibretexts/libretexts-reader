@@ -2,6 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, Loader2, Upload } from "lucide-react";
 import { api } from "../../lib/tauri";
+import { displayError } from "../../lib/errors";
 
 type ImportStage = "idle" | "Parsing..." | "Saving...";
 
@@ -27,7 +28,7 @@ export function EpubDialog({ onImported }: EpubDialogProps) {
         setFilePath(selected);
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     }
   }
 
@@ -45,7 +46,7 @@ export function EpubDialog({ onImported }: EpubDialogProps) {
       onImported(documentId, fileName(filePath));
       setFilePath("");
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       window.clearTimeout(timer);
       setStage("idle");

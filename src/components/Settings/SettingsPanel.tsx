@@ -8,15 +8,14 @@ import {
   isTauriRuntime,
 } from "../../lib/tauri";
 import { displayError } from "../../lib/errors";
+import { createSpeechEngine } from "../../lib/speech";
 import {
   SUPERTONIC_LANGUAGES,
   SUPERTONIC_VOICES,
   type SupertonicLanguage,
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
-import { synthesizeKokoroSpeech } from "../../lib/kokoro";
 import {
-  type SelectableTtsProvider,
   type TtsProvider,
   useSettingsStore,
 } from "../../stores/settings";
@@ -38,8 +37,8 @@ export function SettingsPanel() {
   const modelPrecision = useSettingsStore((state) => state.modelPrecision);
   const saveTtsSettings = useSettingsStore((state) => state.saveTtsSettings);
 
-  const [provider, setProvider] = useState<SelectableTtsProvider>(
-    selectableProvider(ttsProvider),
+  const [provider, setProvider] = useState<TtsProvider>(
+    ttsProvider,
   );
   const [voiceStyle, setVoiceStyle] =
     useState<SupertonicVoiceStyle>(supertonicVoiceStyle);
@@ -48,7 +47,7 @@ export function SettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [testing, setTesting] = useState<SelectableTtsProvider | null>(null);
+  const [testing, setTesting] = useState<TtsProvider | null>(null);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [supertonicModelStatus, setSupertonicModelStatus] =
@@ -62,7 +61,7 @@ export function SettingsPanel() {
   >(null);
 
   useEffect(() => {
-    setProvider(selectableProvider(ttsProvider));
+    setProvider(ttsProvider);
     setVoiceStyle(supertonicVoiceStyle);
     setLanguage(supertonicLanguage);
   }, [supertonicLanguage, supertonicVoiceStyle, ttsProvider]);
@@ -83,7 +82,7 @@ export function SettingsPanel() {
       .catch((error) => {
         if (!cancelled) {
           setSupertonicModelError(
-            error instanceof Error ? error.message : String(error),
+            displayError(error),
           );
         }
       });
@@ -116,7 +115,7 @@ export function SettingsPanel() {
       .catch((error) => {
         if (!cancelled) {
           setSupertonicModelError(
-            error instanceof Error ? error.message : String(error),
+            displayError(error),
           );
         }
       });
@@ -151,49 +150,35 @@ export function SettingsPanel() {
     });
   }
 
-  async function testProvider(providerToTest: SelectableTtsProvider) {
+  async function testProvider(providerToTest: TtsProvider) {
+    const label = providerToTest === "supertonic" ? "Supertonic" : "Kokoro";
     setTesting(providerToTest);
     setProvider(providerToTest);
-    setTestStatus(
-      providerToTest === "supertonic"
-        ? "Loading Supertonic..."
-        : "Loading Kokoro...",
-    );
+    setTestStatus(`Loading ${label}...`);
     setTestError(null);
 
     try {
       // Testing only changes the in-memory draft (setProvider above); it must
       // not persist the provider until the user explicitly clicks Save.
-      if (providerToTest === "kokoro") {
-        setTestStatus("Generating Kokoro sample...");
-        const blob = await synthesizeKokoroSpeech({
-          text: SAMPLE_TEXT,
-          speed: 1,
-          voiceId: "af_heart",
-          precision: modelPrecision,
-          onStatus: setTestStatus,
-        });
-        setTestStatus("Playing Kokoro sample...");
-        await playBlob(blob);
-      } else {
-        setTestStatus("Generating Supertonic sample...");
-        const speech = await api.previewSupertonicTts({
-          text: SAMPLE_TEXT,
-          voiceStyle,
-          language,
-          documentTitle: "Johnny Reader",
-          sectionTitle: "Voice test",
-        });
-        setTestStatus("Playing Supertonic sample...");
-        await playBlob(
-          new Blob([new Uint8Array(speech.audio)], {
-            type: speech.mimeType || "audio/wav",
-          }),
-        );
-      }
-      setTestStatus(
-        `${providerToTest === "supertonic" ? "Supertonic" : "Kokoro"} test complete.`,
-      );
+      const engine = createSpeechEngine({
+        ttsProvider: providerToTest,
+        modelPrecision,
+        supertonicLanguage: language,
+      });
+      await engine.ensureReady(setTestStatus);
+
+      setTestStatus(`Generating ${label} sample...`);
+      const blob = await engine.synthesize({
+        text: SAMPLE_TEXT,
+        // The panel edits a Supertonic voice style specifically; Kokoro has no
+        // draft voice here, so it tests with its own default.
+        voice: providerToTest === "supertonic" ? voiceStyle : engine.defaultVoice,
+        speed: 1,
+      });
+
+      setTestStatus(`Playing ${label} sample...`);
+      await playBlob(blob);
+      setTestStatus(`${label} test complete.`);
     } catch (error) {
       setTestError(displayError(error));
       setTestStatus(null);
@@ -270,7 +255,7 @@ export function SettingsPanel() {
             <select
               className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
               onChange={(event) =>
-                setProvider(event.target.value as SelectableTtsProvider)
+                setProvider(event.target.value as TtsProvider)
               }
               value={provider}
             >
@@ -458,10 +443,6 @@ export function SettingsPanel() {
 
 let testAudio: HTMLAudioElement | null = null;
 let testAudioUrl: string | null = null;
-
-function selectableProvider(provider: TtsProvider): SelectableTtsProvider {
-  return provider === "supertonic" ? "supertonic" : "kokoro";
-}
 
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {

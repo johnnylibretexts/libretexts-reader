@@ -89,14 +89,18 @@ fn check_updater_pubkey() {
     // Inspect the actual configured key, not just the presence of the
     // placeholder string, so a missing/empty pubkey cannot bypass the gate.
     let config_json = serde_json::from_str::<serde_json::Value>(&config).ok();
-    let updater = config_json
-        .as_ref()
-        .and_then(|value| value.get("plugins").and_then(|plugins| plugins.get("updater")));
+    let updater = config_json.as_ref().and_then(|value| {
+        value
+            .get("plugins")
+            .and_then(|plugins| plugins.get("updater"))
+    });
     // No updater plugin configured -> nothing to guard.
     if updater.is_none() {
         return;
     }
-    let pubkey = updater.and_then(|u| u.get("pubkey")).and_then(|k| k.as_str());
+    let pubkey = updater
+        .and_then(|u| u.get("pubkey"))
+        .and_then(|k| k.as_str());
     let pubkey_is_real =
         pubkey.is_some_and(|key| !key.trim().is_empty() && key != UPDATER_PUBKEY_PLACEHOLDER);
 

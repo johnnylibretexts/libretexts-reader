@@ -1,31 +1,27 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::OnceLock;
 use std::time::Duration;
 
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::Utc;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use regex::Regex;
 use reqwest::StatusCode;
 use rusqlite::{params, OptionalExtension};
-use scraper::{ElementRef, Html, Selector};
+use scraper::{ElementRef, Html};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
-use crate::content::images::{download_images, source_image_from_element, SourceImage};
+use crate::content::html_section::{self, normalize_text, SectionSource};
+use crate::content::images::{download_images, SourceImage};
 use crate::db::connection::DbPool;
 use crate::db::models::{OpenStaxBook, SourceType};
 use crate::error::{AppError, AppResult};
 
 const DEFAULT_OPENSTAX_BASE_URL: &str = "https://openstax.org";
 const MAX_RETRIES: usize = 3;
-
-static MATH_RE: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct OpenStaxClient {
@@ -197,16 +193,6 @@ impl OpenStaxClient {
         }
 
         Ok(pages)
-    }
-
-    pub async fn download_page_images(
-        &self,
-        book_uuid: &str,
-        page: &PageContent,
-    ) -> AppResult<Vec<crate::content::document::ImageBuilder>> {
-        let base_url = self.page_url(book_uuid, &page.page_uuid).await?;
-        let (_, images) = section_content_from_html(&page.html, &base_url);
-        download_images(&self.http, images).await
     }
 
     async fn release(&self) -> AppResult<&ReleaseManifest> {
@@ -384,21 +370,6 @@ where
     })
 }
 
-pub fn paragraphs_from_html(html: &str) -> Vec<String> {
-    let document = Html::parse_document(html);
-    let block_selector =
-        Selector::parse("h1, h2, h3, h4, h5, h6, p, li").expect("valid OpenStax block selector");
-    let mut paragraphs = Vec::new();
-
-    for element in document.select(&block_selector) {
-        if let Some(paragraph) = paragraph_from_element(&element) {
-            paragraphs.push(paragraph);
-        }
-    }
-
-    paragraphs
-}
-
 async fn sections_from_pages(
     client: &OpenStaxClient,
     book_uuid: &str,
@@ -423,44 +394,6 @@ async fn sections_from_pages(
     }
 
     Ok(sections)
-}
-
-fn section_content_from_html(html: &str, base_url: &str) -> (Vec<String>, Vec<SourceImage>) {
-    let document = Html::parse_document(html);
-    let block_selector = Selector::parse("h1, h2, h3, h4, h5, h6, p, li, img[src], img[data-src]")
-        .expect("valid OpenStax content selector");
-    let mut paragraphs = Vec::new();
-    let mut images = Vec::new();
-
-    for element in document.select(&block_selector) {
-        if element.value().name() == "img" {
-            if let Some(mut image) = source_image_from_element(&element, base_url) {
-                image.anchor_paragraph_ordinal = anchor_paragraph_ordinal(paragraphs.len());
-                images.push(image);
-            }
-        } else if let Some(paragraph) = paragraph_from_element(&element) {
-            paragraphs.push(paragraph);
-        }
-    }
-
-    (paragraphs, images)
-}
-
-fn paragraph_from_element(element: &ElementRef<'_>) -> Option<String> {
-    if should_skip_element(element) {
-        return None;
-    }
-
-    let normalized = text_with_math_replacements(element);
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn anchor_paragraph_ordinal(paragraph_count: usize) -> Option<u32> {
-    paragraph_count.checked_sub(1).map(|index| index as u32)
 }
 
 fn section_title_for_page(toc: &BookToc, page: &PageContent) -> String {
@@ -498,6 +431,25 @@ fn should_retry_status(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
 }
 
+/// OpenStax marks structure with `data-type` attributes. Figure captions,
+/// tables, worked examples and exercises are dropped from the reading flow —
+/// but a figure's *image* is kept, which is why only the paragraph rule applies.
+struct OpenStaxSource;
+
+impl SectionSource for OpenStaxSource {
+    fn should_skip_paragraph(&self, element: &ElementRef<'_>) -> bool {
+        should_skip_element(element)
+    }
+}
+
+pub fn paragraphs_from_html(html: &str) -> Vec<String> {
+    html_section::paragraphs_from_html(html, &OpenStaxSource)
+}
+
+fn section_content_from_html(html: &str, base_url: &str) -> (Vec<String>, Vec<SourceImage>) {
+    html_section::section_content_from_html(html, base_url, &OpenStaxSource)
+}
+
 fn should_skip_element(element: &ElementRef<'_>) -> bool {
     element
         .ancestors()
@@ -514,29 +466,6 @@ fn should_skip_element(element: &ElementRef<'_>) -> bool {
 fn html_fragment_to_text(html: &str) -> String {
     let fragment = Html::parse_fragment(html);
     normalize_text(&fragment.root_element().text().collect::<Vec<_>>().join(" "))
-}
-
-fn text_with_math_replacements(element: &ElementRef<'_>) -> String {
-    let html = element.html();
-    let replaced = math_re().replace_all(&html, |captures: &regex::Captures<'_>| {
-        format!(" {} ", mathml_token(&captures[0]))
-    });
-    let fragment = Html::parse_fragment(&replaced);
-    normalize_text(&fragment.root_element().text().collect::<Vec<_>>().join(" "))
-}
-
-fn mathml_token(markup: &str) -> String {
-    format!("[[mathml:{}]]", BASE64_STANDARD.encode(markup.as_bytes()))
-}
-
-fn math_re() -> &'static Regex {
-    MATH_RE.get_or_init(|| {
-        Regex::new(r"(?is)<(?:m:)?math\b.*?</(?:m:)?math>").expect("valid MathML regex")
-    })
-}
-
-fn normalize_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]

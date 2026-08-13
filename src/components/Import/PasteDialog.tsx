@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { Clipboard, Loader2 } from "lucide-react";
 import { api } from "../../lib/tauri";
+import { displayError } from "../../lib/errors";
 
 interface PasteDialogProps {
   onImported: (documentId: string, title: string) => void;
@@ -30,7 +31,7 @@ export function PasteDialog({ onImported }: PasteDialogProps) {
       setTitle("");
       setText("");
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(displayError(error));
     } finally {
       setSubmitting(false);
     }

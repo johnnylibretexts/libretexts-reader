@@ -10,6 +10,7 @@ static MATHML_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_MATH_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_FRAC_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_SQRT_RE: OnceLock<Regex> = OnceLock::new();
+static LATEX_ACCENT_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_LABEL_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_COMMAND_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_BRACED_SUBSCRIPT_RE: OnceLock<Regex> = OnceLock::new();
@@ -113,6 +114,25 @@ fn latex_to_speech(source: &str) -> String {
         let replaced = latex_sqrt_re()
             .replace_all(&text, |captures: &Captures<'_>| {
                 format!(" square root of, {} ", latex_to_speech(&captures[1]))
+            })
+            .into_owned();
+        if replaced == text {
+            break;
+        }
+        text = replaced;
+    }
+
+    // Accents read after the thing they sit on, the way they are said aloud:
+    // \vec{v} is "vector v", but \bar{x} is "x bar".
+    loop {
+        let replaced = latex_accent_re()
+            .replace_all(&text, |captures: &Captures<'_>| {
+                let inner = latex_to_speech(&captures[2]);
+                match &captures[1] {
+                    "vec" => format!(" vector {inner} "),
+                    "bar" => format!(" {inner} bar "),
+                    _ => format!(" {inner} hat "),
+                }
             })
             .into_owned();
         if replaced == text {
@@ -273,10 +293,19 @@ fn latex_command_to_speech(command: &str) -> &str {
         "sigma" => "sigma",
         "phi" => "phi",
         "omega" => "omega",
+        // Lowercase Greek names already read correctly through the fallback
+        // below; the capitals do not, so they are spelled out here.
         "Delta" => "capital delta",
         "Gamma" => "capital gamma",
         "Theta" => "capital theta",
+        "Lambda" => "capital lambda",
+        "Xi" => "capital xi",
+        "Pi" => "capital pi",
+        "Sigma" => "capital sigma",
+        "Phi" => "capital phi",
+        "Psi" => "capital psi",
         "Omega" => "capital omega",
+        "circ" => "circle",
         "cdot" | "times" => ", times,",
         "div" => "divided by",
         "ge" | "geq" => ", greater than or equal to,",
@@ -552,6 +581,11 @@ fn latex_sqrt_re() -> &'static Regex {
     LATEX_SQRT_RE.get_or_init(|| Regex::new(r"\\sqrt\s*\{([^{}]+)\}").expect("valid sqrt regex"))
 }
 
+fn latex_accent_re() -> &'static Regex {
+    LATEX_ACCENT_RE
+        .get_or_init(|| Regex::new(r"\\(vec|bar|hat)\s*\{([^{}]+)\}").expect("valid accent regex"))
+}
+
 fn latex_label_re() -> &'static Regex {
     LATEX_LABEL_RE.get_or_init(|| Regex::new(r"\\label\s*\{[^{}]*\}").expect("valid label regex"))
 }
@@ -588,11 +622,9 @@ fn tag_re() -> &'static Regex {
 }
 
 fn currency_re() -> &'static Regex {
-    CURRENCY_RE
-        .get_or_init(|| {
-            Regex::new(r"\$(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?")
-                .expect("valid currency regex")
-        })
+    CURRENCY_RE.get_or_init(|| {
+        Regex::new(r"\$(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?").expect("valid currency regex")
+    })
 }
 
 fn percent_re() -> &'static Regex {
@@ -604,9 +636,8 @@ fn decimal_re() -> &'static Regex {
 }
 
 fn integer_re() -> &'static Regex {
-    INTEGER_RE.get_or_init(|| {
-        Regex::new(r"\b\d{1,3}(?:,\d{3})+\b|\b\d+\b").expect("valid integer regex")
-    })
+    INTEGER_RE
+        .get_or_init(|| Regex::new(r"\b\d{1,3}(?:,\d{3})+\b|\b\d+\b").expect("valid integer regex"))
 }
 
 #[cfg(test)]
@@ -639,6 +670,59 @@ mod tests {
 
         assert!(normalized.contains("Given, x, equals, two"), "{normalized}");
         assert!(!normalized.contains("[[mathml:"), "{normalized}");
+    }
+
+    #[test]
+    fn sentence_offsets_are_computed_against_display_text() {
+        // The ordering here is load-bearing and easy to break by tidying:
+        // sentence offsets are computed on display text, before any speech
+        // normalization. Normalizing first would change the string's length and
+        // silently invalidate every persisted offset.
+        let text = "Given [[mathml:PG1hdGg+PG1yb3c+PG1pPng8L21pPjxtbz49PC9tbz48bW4+MjwvbW4+PC9tcm93PjwvbWF0aD4=]] we continue. A second sentence.";
+
+        let offsets = crate::content::tokenize::sentence_boundaries(text);
+
+        assert_eq!(offsets.len(), 2, "{offsets:?}");
+        let first = &text[offsets[0].0..offsets[0].1];
+        assert!(first.contains("[[mathml:"), "{first}");
+        // The base64 alphabet contains no sentence terminator, so a token can
+        // never be mistaken for the end of a sentence.
+        assert!(first.ends_with("we continue."), "{first}");
+
+        let spoken = normalize_for_tts(first);
+        assert!(spoken.contains("x, equals, two"), "{spoken}");
+        assert!(!spoken.contains("[[mathml:"), "{spoken}");
+    }
+
+    #[test]
+    fn reads_accents_the_way_they_are_said_aloud() {
+        // Ported from the TypeScript speech tables, which knew these and the
+        // Rust side did not — so the same notation spoke differently depending
+        // on which path produced the audio.
+        assert!(
+            normalize_for_tts(r"\(\vec{v}\)").contains("vector v"),
+            "{}",
+            normalize_for_tts(r"\(\vec{v}\)")
+        );
+        assert!(
+            normalize_for_tts(r"\(\bar{x}\)").contains("x bar"),
+            "{}",
+            normalize_for_tts(r"\(\bar{x}\)")
+        );
+        assert!(
+            normalize_for_tts(r"\(\hat{y}\)").contains("y hat"),
+            "{}",
+            normalize_for_tts(r"\(\hat{y}\)")
+        );
+    }
+
+    #[test]
+    fn spells_out_capital_greek_letters() {
+        let normalized = normalize_for_tts(r"\(\Sigma\) and \(\sigma\)");
+
+        assert!(normalized.contains("capital sigma"), "{normalized}");
+        // The lowercase form reads through the passthrough fallback.
+        assert!(normalized.contains("sigma"), "{normalized}");
     }
 
     #[test]

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cheap, needs no toolchain -- run it before anything that takes minutes.
+      - name: Error kind sync check
+        run: |
+          scripts/ci/check-error-kinds.test.sh
+          scripts/ci/check-error-kinds.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Rust format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test -p johnny-reader

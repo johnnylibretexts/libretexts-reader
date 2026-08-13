@@ -53,10 +53,11 @@ pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
             // Validate referential integrity before recording the migration as
             // applied. Foreign keys are disabled during the batch, so a bad
             // migration could otherwise leave dangling references behind.
-            let violations: i64 =
-                tx.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check()", [], |row| {
-                    row.get(0)
-                })?;
+            let violations: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_check()",
+                [],
+                |row| row.get(0),
+            )?;
             if violations > 0 {
                 return Err(AppError::Migration(format!(
                     "migration {name} left {violations} foreign key violation(s)"
@@ -94,9 +95,11 @@ mod tests {
     fn migrations_apply_with_no_foreign_key_violations() {
         let conn = migrated_conn();
         let violations: i64 = conn
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check()", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_check()",
+                [],
+                |row| row.get(0),
+            )
             .expect("foreign key check");
         assert_eq!(violations, 0);
     }

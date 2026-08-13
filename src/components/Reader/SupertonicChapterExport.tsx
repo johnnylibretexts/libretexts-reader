@@ -8,7 +8,7 @@ import {
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
 import { displayError } from "../../lib/errors";
-import { mathContentToSpeech } from "../../lib/mathContent";
+import { speechAudioToBlob } from "../../lib/speech";
 import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
@@ -118,19 +118,13 @@ export function SupertonicChapterExport() {
     try {
       await persistSupertonicDefaults();
       const speech = await api.previewSupertonicTts({
-        text: mathContentToSpeech(
-          supertonicPreviewText(activeSection.title, sampleText),
-        ),
+        // Sent as display text: preview_supertonic_tts normalizes it with the
+        // same code the chapter export uses, so preview and export agree.
+        text: supertonicPreviewText(activeSection.title, sampleText),
         voiceStyle,
         language,
-        documentTitle: activeDocument.title,
-        sectionTitle: activeSection.title,
       });
-      await playBlob(
-        new Blob([new Uint8Array(speech.audio)], {
-          type: speech.mimeType || "audio/wav",
-        }),
-      );
+      await playBlob(speechAudioToBlob(speech));
     } catch (error) {
       setError(displayError(error));
     } finally {
