@@ -289,11 +289,7 @@ async function speakCurrentSentence(
  */
 function activeEngine(set: (partial: Partial<PlayerState>) => void) {
   const settings = useSettingsStore.getState();
-  const key = [
-    settings.ttsProvider,
-    settings.modelPrecision,
-    settings.supertonicLanguage,
-  ].join(":");
+  const key = [settings.ttsProvider, settings.supertonicLanguage].join(":");
 
   if (cachedEngine?.key !== key) {
     const previous = cachedEngine?.engine;
@@ -316,7 +312,7 @@ async function speakWithBufferedSpeech(
   get: () => PlayerState,
   requireInitialBuffer: boolean,
 ) {
-  const label = engine.id === "kokoro" ? "Kokoro" : "Supertonic";
+  const label = "Supertonic";
   const lookaheadPositions = speechPositionsFromCurrent(
     get(),
     SPEECH_LOOKAHEAD_SENTENCES,
@@ -501,7 +497,6 @@ function speechCacheKey(
     text,
     voice: state.voice,
     speed: state.speed,
-    precision: settings.modelPrecision,
     supertonicLanguage: settings.supertonicLanguage,
   });
 }

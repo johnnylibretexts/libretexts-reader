@@ -30,7 +30,6 @@ export function SettingsPanel() {
   const supertonicLanguage = useSettingsStore(
     (state) => state.supertonicLanguage,
   );
-  const modelPrecision = useSettingsStore((state) => state.modelPrecision);
   const saveTtsSettings = useSettingsStore((state) => state.saveTtsSettings);
 
   const [voiceStyle, setVoiceStyle] =
@@ -149,7 +148,6 @@ export function SettingsPanel() {
     try {
       const engine = createSpeechEngine({
         ttsProvider: "supertonic",
-        modelPrecision,
         supertonicLanguage: language,
       });
       await engine.ensureReady(setTestStatus);

@@ -4,7 +4,7 @@ import type { AppError } from "../types/domain";
  * Narrow an unknown rejection to the structured error the Rust backend sends
  * across the invoke boundary.
  *
- * Returns null for anything else — Kokoro's in-webview failures, the
+ * Returns null for anything else — webview-side failures, the
  * desktop-runtime guard in `tauri.ts`, and plain JS exceptions all reach
  * callers unchanged. Never throws.
  *

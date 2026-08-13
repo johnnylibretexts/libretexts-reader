@@ -13,8 +13,6 @@ export type SectionImage = { id: string, sectionId: string, ordinal: number, sou
 
 export type PlaybackState = { documentId: string, sectionId: string, paragraphId: string, sentenceIndex: number, sentenceOffsetMs: number, voiceId: string, speed: number, updatedAt: string, };
 
-export type Voice = { id: string, displayName: string, language: string, gender: string, isBundled: boolean, isDownloaded: boolean, sizeBytes: number, previewPath: string | null, };
-
 export type OpenStaxBook = { uuid: string, slug: string, title: string, subject: string, edition: string, coverUrl: string | null, license: string, language: string, };
 
 export type LibreTextsBook = { bookId: string, title: string, author: string, affiliation: string, library: string, subject: string, license: string, summary: string, thumbnail: string | null, onlineUrl: string | null, lastUpdated: string | null, location: string, program: string, };

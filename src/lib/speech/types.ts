@@ -1,4 +1,4 @@
-export type SpeechEngineId = "kokoro" | "supertonic";
+export type SpeechEngineId = "supertonic";
 
 export interface SpeechVoice {
   id: string;
@@ -26,9 +26,8 @@ export interface SynthesisRequest {
  *
  * On cancellation: `signal` is honoured where it is cheap — work not yet
  * started is skipped, and a result that arrives after abort is discarded.
- * Neither engine can abort synthesis already in flight (kokoro-js has no abort,
- * and the Rust command has no cancellation channel), so the signal shortens
- * nothing that has already begun.
+ * Synthesis already in flight cannot be aborted: the Rust command has no
+ * cancellation channel, so the signal shortens nothing that has begun.
  */
 export interface SpeechEngine {
   readonly id: SpeechEngineId;
