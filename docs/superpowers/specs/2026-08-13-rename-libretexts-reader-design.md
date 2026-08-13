@@ -93,8 +93,8 @@ All 10 variables across 15 sites, in **one** commit:
 | `APP_DATA_DIR` | `paths.rs:8`, `content/libretexts.rs:1193` |
 | `DOCUMENTS_DIR` | `db/settings.rs:105` |
 | `OPENSTAX_BASE_URL` | `content/openstax.rs:108` |
-| `LIBRETEXTS_COMMONS_BASE_URL` | `content/libretexts.rs:198` |
-| `LIBRETEXTS_LIBRARY_BASE_URL` | `content/libretexts.rs:807` |
+| `COMMONS_BASE_URL` | `content/libretexts.rs:198` |
+| `LIBRARY_BASE_URL` | `content/libretexts.rs:807` |
 | `MODEL_MANIFEST_PATH` | `voices/models.rs:25` |
 | `VOICE_MANIFEST_PATH` | `voices/manifest.rs:30` |
 | `SUPERTONIC_MODEL_MANIFEST_PATH` | `tts/supertonic/model.rs:101` |
@@ -104,9 +104,16 @@ Atomicity is load-bearing: `content/libretexts.rs:1193` **sets** `…_APP_DATA_D
 while `paths.rs:8` **reads** it. Renaming only one side leaves the test silently writing to
 the real app-data directory instead of its temp dir.
 
-Note the resulting `LIBRETEXTS_READER_LIBRETEXTS_*` doubling on two vars. It is ugly but
-correct — the second `LIBRETEXTS` names the content source, not the app. Left as-is
-rather than inventing an inconsistent shortening.
+Two vars drop their now-redundant source segment rather than doubling:
+
+| Before | After |
+|---|---|
+| `JOHNNY_READER_LIBRETEXTS_COMMONS_BASE_URL` | `LIBRETEXTS_READER_COMMONS_BASE_URL` |
+| `JOHNNY_READER_LIBRETEXTS_LIBRARY_BASE_URL` | `LIBRETEXTS_READER_LIBRARY_BASE_URL` |
+
+`LIBRARY` is slightly overloaded — this app also calls the user's local book collection a
+library (`db/library.rs`, `library.sqlite`). The var is unambiguous in context because the
+local library has no base URL, but keep the distinction in mind when naming future vars.
 
 **Verify:** `cargo test -p libretexts-reader`, then
 `grep -rn "JOHNNY_READER_" --include="*.rs" --include="*.yml" .` returns nothing.
@@ -176,6 +183,8 @@ automated suite cannot cover this: the failure mode is a valid path that points 
 | `src/components/FirstRun/ModelDownload.tsx:134` | first-run copy |
 | `src-tauri/build.rs:597` | LGPL notice text |
 | `.github/workflows/release.yml:101,112` | DMG and `.app` bundle paths |
+| `src-tauri/resources/migrations/0006_rebase_export_directory.sql` | new — see below |
+| `README.md` + About/Settings screen | non-affiliation note |
 
 **Export-directory dedupe.** Two independent implementations build
 `~/Documents/Johnny Reader`:
@@ -188,9 +197,30 @@ which respects the override) and have `cache.rs` call it, then rename to
 `LibreTexts Reader`. Renaming both copies separately would preserve a bug this rename is
 already touching.
 
-The default export directory is **persisted in the settings row**, so an existing install
-keeps its old configured path after the rename. On the author's machine this is a one-line
-manual update or a re-pick in Settings; it is not worth migration code for one user.
+**Migration `0006_rebase_export_directory.sql`.** The export directory is persisted in
+`settings` (key/value, key `export_directory`, value stored as JSON), so changing the
+default leaves an existing install pointing at the old path:
+
+```sql
+UPDATE settings
+   SET value = replace(value, '/Johnny Reader', '/LibreTexts Reader')
+ WHERE key = 'export_directory'
+   AND value LIKE '%/Johnny Reader%';
+```
+
+This is a **separate migration from `0005`, and it belongs to this tier**. `0005` lands in
+tier 4 and rebases the identifier prefix; the `LibreTexts Reader` string does not exist
+until tier 5. Putting both rewrites in `0005` would make tier 4 depend on a rename that has
+not happened yet, and reverting tier 5 would leave the data rewritten — breaking the
+per-tier revertibility the whole sequence is built on. One migration per tier, each
+rewriting only strings its own tier introduces.
+
+The migration repoints the setting; it does not move files. Existing exported audio stays
+in `~/Documents/Johnny Reader`. Bring it along with a one-off move alongside the tier 4 one:
+
+```sh
+mv ~/Documents/"Johnny Reader" ~/Documents/"LibreTexts Reader"
+```
 
 **Non-affiliation note** in `README.md` and the About/Settings screen: LibreTexts Reader is
 an independent project, not affiliated with or endorsed by LibreTexts.
@@ -201,9 +231,15 @@ along with everything else, since it is user-facing text naming the application.
 
 ## Rollback
 
-Each tier is independently revertible. Tier 4 is the only one with state outside the repo:
-reverse the `mv` and `git revert` the tier. Migration `0005` is a no-op in that direction
-because its `WHERE` clause no longer matches once the rows carry the new prefix.
+Each tier is independently revertible. Tiers 4 and 5 are the two with state outside the
+repo — reverse the corresponding `mv` and `git revert` the tier.
+
+Both migrations are one-way by construction: `0005` and `0006` are `replace()` calls
+guarded by a `WHERE … LIKE` on the *old* string, so once the rows carry the new value the
+`WHERE` no longer matches and re-running is a no-op. Reverting a tier therefore does not
+undo its data rewrite. On this repo's single-machine scope that is acceptable — the fix is
+a one-line `UPDATE` in the other direction — but it is the reason each tier rewrites only
+its own strings: a revert that spans tiers would leave data and code disagreeing.
 
 ## Testing summary
 
