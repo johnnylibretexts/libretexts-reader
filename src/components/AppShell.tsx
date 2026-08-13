@@ -8,6 +8,7 @@ import {
   Search,
   SlidersHorizontal,
 } from "lucide-react";
+import { ImportStatus } from "./ImportStatus";
 import { MiniPlayer } from "./MiniPlayer";
 import { Sidebar } from "./Sidebar";
 import { EpubDialog } from "./Import/EpubDialog";
@@ -19,6 +20,7 @@ import { LibreTextsBrowser } from "./LibreTextsBrowser/LibreTextsBrowser";
 import { OpenStaxBrowser } from "./OpenStaxBrowser/OpenStaxBrowser";
 import { Reader } from "./Reader/Reader";
 import { SettingsPanel } from "./Settings/SettingsPanel";
+import { attachImportListener } from "../stores/imports";
 import { useLibraryStore } from "../stores/library";
 import { usePlayerStore } from "../stores/player";
 
@@ -84,6 +86,8 @@ export function AppShell() {
     };
   }, [refreshLibrary]);
 
+  useEffect(() => attachImportListener(), []);
+
   function openReader(document: ReaderDocument) {
     setReaderDocument(document);
     setRoute(ROUTES.reader);
@@ -95,16 +99,6 @@ export function AppShell() {
   }
 
   async function handleEpubImported(documentId: string, title: string) {
-    await refreshLibrary();
-    openReader({ id: documentId, title });
-  }
-
-  async function handleOpenStaxImported(documentId: string, title: string) {
-    await refreshLibrary();
-    openReader({ id: documentId, title });
-  }
-
-  async function handleLibreTextsImported(documentId: string, title: string) {
     await refreshLibrary();
     openReader({ id: documentId, title });
   }
@@ -171,12 +165,6 @@ export function AppShell() {
             onEpubImported={(documentId, title) =>
               void handleEpubImported(documentId, title)
             }
-            onOpenStaxImported={(documentId, title) =>
-              void handleOpenStaxImported(documentId, title)
-            }
-            onLibreTextsImported={(documentId, title) =>
-              void handleLibreTextsImported(documentId, title)
-            }
             onPasteImported={(documentId, title) =>
               void handlePasteImported(documentId, title)
             }
@@ -189,6 +177,12 @@ export function AppShell() {
           />
         </main>
 
+        <ImportStatus
+          onOpen={(documentId, title) => {
+            void refreshLibrary();
+            openReader({ id: documentId, title });
+          }}
+        />
         <MiniPlayer onClose={resetPlayer} />
       </div>
     </div>
@@ -201,8 +195,6 @@ function RoutePlaceholder({
   readerDocument,
   onOpenDocument,
   onEpubImported,
-  onOpenStaxImported,
-  onLibreTextsImported,
   onPasteImported,
   onPdfImported,
   onUrlImported,
@@ -212,8 +204,6 @@ function RoutePlaceholder({
   readerDocument: ReaderDocument | null;
   onOpenDocument: (document: ReaderDocument) => void;
   onEpubImported: (documentId: string, title: string) => void;
-  onOpenStaxImported: (documentId: string, title: string) => void;
-  onLibreTextsImported: (documentId: string, title: string) => void;
   onPasteImported: (documentId: string, title: string) => void;
   onPdfImported: (documentId: string, title: string) => void;
   onUrlImported: (documentId: string, title: string) => void;
@@ -241,12 +231,8 @@ function RoutePlaceholder({
       </div>
 
       {route.id === "epub" ? <EpubDialog onImported={onEpubImported} /> : null}
-      {route.id === "openstax" ? (
-        <OpenStaxBrowser onImported={onOpenStaxImported} />
-      ) : null}
-      {route.id === "libretexts" ? (
-        <LibreTextsBrowser onImported={onLibreTextsImported} />
-      ) : null}
+      {route.id === "openstax" ? <OpenStaxBrowser /> : null}
+      {route.id === "libretexts" ? <LibreTextsBrowser /> : null}
       {route.id === "pdf" ? <PdfDialog onImported={onPdfImported} /> : null}
       {route.id === "paste" ? (
         <PasteDialog onImported={onPasteImported} />
