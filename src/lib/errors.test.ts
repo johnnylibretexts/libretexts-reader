@@ -21,7 +21,7 @@ describe("asAppError", () => {
   });
 
   it.each([
-    ["a plain Error", new Error("kokoro failed to load")],
+    ["a plain Error", new Error("supertonic failed to load")],
     ["a string", "DESKTOP_RUNTIME_ERROR"],
     ["null", null],
     ["a partial shape", { kind: "io", message: "no retryable field" }],
@@ -37,7 +37,7 @@ describe("displayError", () => {
   });
 
   it("falls back to the message of a non-backend Error", () => {
-    expect(displayError(new Error("kokoro failed to load"))).toBe("kokoro failed to load");
+    expect(displayError(new Error("supertonic failed to load"))).toBe("supertonic failed to load");
   });
 
   it("stringifies anything else", () => {

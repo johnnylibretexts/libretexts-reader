@@ -15,10 +15,7 @@ import {
   type SupertonicLanguage,
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
-import {
-  type TtsProvider,
-  useSettingsStore,
-} from "../../stores/settings";
+import { useSettingsStore } from "../../stores/settings";
 
 const SAMPLE_TEXT = "LibreTexts Reader voice test.";
 const TEST_PLAYBACK_TIMEOUT_MS = 30_000;
@@ -27,19 +24,14 @@ export function SettingsPanel() {
   const hydrated = useSettingsStore((state) => state.hydrated);
   const loading = useSettingsStore((state) => state.loading);
   const error = useSettingsStore((state) => state.error);
-  const ttsProvider = useSettingsStore((state) => state.ttsProvider);
   const supertonicVoiceStyle = useSettingsStore(
     (state) => state.supertonicVoiceStyle,
   );
   const supertonicLanguage = useSettingsStore(
     (state) => state.supertonicLanguage,
   );
-  const modelPrecision = useSettingsStore((state) => state.modelPrecision);
   const saveTtsSettings = useSettingsStore((state) => state.saveTtsSettings);
 
-  const [provider, setProvider] = useState<TtsProvider>(
-    ttsProvider,
-  );
   const [voiceStyle, setVoiceStyle] =
     useState<SupertonicVoiceStyle>(supertonicVoiceStyle);
   const [language, setLanguage] =
@@ -47,7 +39,7 @@ export function SettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [testing, setTesting] = useState<TtsProvider | null>(null);
+  const [testing, setTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [supertonicModelStatus, setSupertonicModelStatus] =
@@ -61,10 +53,9 @@ export function SettingsPanel() {
   >(null);
 
   useEffect(() => {
-    setProvider(ttsProvider);
     setVoiceStyle(supertonicVoiceStyle);
     setLanguage(supertonicLanguage);
-  }, [supertonicLanguage, supertonicVoiceStyle, ttsProvider]);
+  }, [supertonicLanguage, supertonicVoiceStyle]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -142,48 +133,40 @@ export function SettingsPanel() {
     }
   }
 
-  async function persistDraft(providerOverride = provider) {
+  async function persistDraft() {
     await saveTtsSettings({
-      ttsProvider: providerOverride,
       supertonicVoiceStyle: voiceStyle,
       supertonicLanguage: language,
     });
   }
 
-  async function testProvider(providerToTest: TtsProvider) {
-    const label = providerToTest === "supertonic" ? "Supertonic" : "Kokoro";
-    setTesting(providerToTest);
-    setProvider(providerToTest);
-    setTestStatus(`Loading ${label}...`);
+  async function testProvider() {
+    setTesting(true);
+    setTestStatus("Loading Supertonic...");
     setTestError(null);
 
     try {
-      // Testing only changes the in-memory draft (setProvider above); it must
-      // not persist the provider until the user explicitly clicks Save.
       const engine = createSpeechEngine({
-        ttsProvider: providerToTest,
-        modelPrecision,
+        ttsProvider: "supertonic",
         supertonicLanguage: language,
       });
       await engine.ensureReady(setTestStatus);
 
-      setTestStatus(`Generating ${label} sample...`);
+      setTestStatus("Generating Supertonic sample...");
       const blob = await engine.synthesize({
         text: SAMPLE_TEXT,
-        // The panel edits a Supertonic voice style specifically; Kokoro has no
-        // draft voice here, so it tests with its own default.
-        voice: providerToTest === "supertonic" ? voiceStyle : engine.defaultVoice,
+        voice: voiceStyle,
         speed: 1,
       });
 
-      setTestStatus(`Playing ${label} sample...`);
+      setTestStatus("Playing Supertonic sample...");
       await playBlob(blob);
-      setTestStatus(`${label} test complete.`);
+      setTestStatus("Supertonic test complete.");
     } catch (error) {
       setTestError(displayError(error));
       setTestStatus(null);
     } finally {
-      setTesting(null);
+      setTesting(false);
     }
   }
 
@@ -205,9 +188,6 @@ export function SettingsPanel() {
         downloaded: status.downloadedBytes,
         total: status.totalBytes,
       });
-      // Only update the in-memory draft selection; the user persists it via
-      // the Save button rather than the download side-effect doing it silently.
-      setProvider("supertonic");
       if (directory) {
         setSupertonicModelStatus({ ...status, directory });
       }
@@ -249,119 +229,95 @@ export function SettingsPanel() {
   return (
     <section className="flex flex-col gap-4">
       <div className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-        <div className="grid gap-4 lg:grid-cols-[minmax(12rem,0.55fr)_minmax(18rem,1fr)]">
-          <label className="flex max-w-sm flex-col gap-2 text-sm font-medium">
-            Narration engine
-            <select
-              className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-              onChange={(event) =>
-                setProvider(event.target.value as TtsProvider)
-              }
-              value={provider}
-            >
-              <option value="kokoro">Kokoro</option>
-              <option value="supertonic">Supertonic</option>
-            </select>
-          </label>
-
-          <div className="flex items-end">
-            <div className="rounded-md border border-neutral-200 bg-stone-50 px-3 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-950">
-              <span className="font-medium">
-                {provider === "supertonic" ? "Supertonic" : "Kokoro"}
-              </span>
-              <span className="ml-2 text-neutral-500 dark:text-neutral-400">
-                {provider === "supertonic"
-                  ? "Local multilingual model"
-                  : "Built-in offline voice"}
-              </span>
-            </div>
-          </div>
+        <div className="rounded-md border border-neutral-200 bg-stone-50 px-3 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-950">
+          <span className="font-medium">Supertonic</span>
+          <span className="ml-2 text-neutral-500 dark:text-neutral-400">
+            Local multilingual model
+          </span>
         </div>
 
-        {provider === "supertonic" ? (
-          <div className="mt-5 rounded-md border border-neutral-200 bg-stone-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <label className="flex flex-col gap-2 text-sm font-medium">
-                Voice style
-                <select
-                  className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-                  onChange={(event) =>
-                    setVoiceStyle(event.target.value as SupertonicVoiceStyle)
-                  }
-                  value={voiceStyle}
-                >
-                  {SUPERTONIC_VOICES.map((voice) => (
-                    <option key={voice.id} value={voice.id}>
-                      {voice.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="flex flex-col gap-2 text-sm font-medium">
-                Language
-                <select
-                  className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-                  onChange={(event) =>
-                    setLanguage(event.target.value as SupertonicLanguage)
-                  }
-                  value={language}
-                >
-                  {SUPERTONIC_LANGUAGES.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-              <div>
-                <h3 className="text-sm font-semibold">Supertonic model</h3>
-                <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-                  {supertonicStatusText}
-                  {supertonicTotal > 0
-                    ? ` - ${formatBytes(supertonicDownloaded)} / ${formatBytes(supertonicTotal)}`
-                    : ""}
-                </p>
-              </div>
-              <button
-                className="inline-flex h-10 items-center gap-2 rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                disabled={
-                  downloadingSupertonicModel ||
-                  supertonicModelStatus?.downloaded
+        <div className="mt-5 rounded-md border border-neutral-200 bg-stone-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Voice style
+              <select
+                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                onChange={(event) =>
+                  setVoiceStyle(event.target.value as SupertonicVoiceStyle)
                 }
-                onClick={() => void downloadSupertonicModel()}
-                type="button"
+                value={voiceStyle}
               >
-                {downloadingSupertonicModel ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                ) : supertonicModelStatus?.downloaded ? (
-                  <Check className="size-4" aria-hidden="true" />
-                ) : (
-                  <Download className="size-4" aria-hidden="true" />
-                )}
-                {supertonicModelStatus?.downloaded
-                  ? "Downloaded"
-                  : "Download model"}
-              </button>
-            </div>
+                {SUPERTONIC_VOICES.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.name}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
-              <div
-                className="h-full rounded-full bg-brand-700 transition-[width]"
-                style={{ width: `${supertonicProgressPercent}%` }}
-              />
-            </div>
-
-            {supertonicModelProgress?.file ? (
-              <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                {supertonicModelProgress.file}
-              </p>
-            ) : null}
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Language
+              <select
+                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                onChange={(event) =>
+                  setLanguage(event.target.value as SupertonicLanguage)
+                }
+                value={language}
+              >
+                {SUPERTONIC_LANGUAGES.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-        ) : null}
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+            <div>
+              <h3 className="text-sm font-semibold">Supertonic model</h3>
+              <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                {supertonicStatusText}
+                {supertonicTotal > 0
+                  ? ` - ${formatBytes(supertonicDownloaded)} / ${formatBytes(supertonicTotal)}`
+                  : ""}
+              </p>
+            </div>
+            <button
+              className="inline-flex h-10 items-center gap-2 rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              disabled={
+                downloadingSupertonicModel ||
+                supertonicModelStatus?.downloaded
+              }
+              onClick={() => void downloadSupertonicModel()}
+              type="button"
+            >
+              {downloadingSupertonicModel ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : supertonicModelStatus?.downloaded ? (
+                <Check className="size-4" aria-hidden="true" />
+              ) : (
+                <Download className="size-4" aria-hidden="true" />
+              )}
+              {supertonicModelStatus?.downloaded
+                ? "Downloaded"
+                : "Download model"}
+            </button>
+          </div>
+
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
+            <div
+              className="h-full rounded-full bg-brand-700 transition-[width]"
+              style={{ width: `${supertonicProgressPercent}%` }}
+            />
+          </div>
+
+          {supertonicModelProgress?.file ? (
+            <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+              {supertonicModelProgress.file}
+            </p>
+          ) : null}
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
@@ -381,24 +337,11 @@ export function SettingsPanel() {
           </button>
           <button
             className="inline-flex h-10 items-center gap-2 rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            disabled={Boolean(testing)}
-            onClick={() => void testProvider("kokoro")}
+            disabled={testing}
+            onClick={() => void testProvider()}
             type="button"
           >
-            {testing === "kokoro" ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Play className="size-4" aria-hidden="true" />
-            )}
-            Test Kokoro
-          </button>
-          <button
-            className="inline-flex h-10 items-center gap-2 rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            disabled={Boolean(testing)}
-            onClick={() => void testProvider("supertonic")}
-            type="button"
-          >
-            {testing === "supertonic" ? (
+            {testing ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : (
               <Play className="size-4" aria-hidden="true" />

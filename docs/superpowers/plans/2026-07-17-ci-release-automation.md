@@ -46,7 +46,7 @@ Expected: `Now using node v22.20.0`.
 - [ ] **Step 2: Frontend build (baseline)**
 
 Run: `npm ci && npm run build`
-Expected: PASS (tsc + vite build with no errors). Large-chunk warnings for `kokoro.web` are pre-existing and acceptable.
+Expected: PASS (tsc + vite build with no errors).
 
 - [ ] **Step 3: Format check (observe current state)**
 

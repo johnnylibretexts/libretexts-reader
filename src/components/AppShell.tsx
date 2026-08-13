@@ -4,7 +4,6 @@ import {
   BookOpen,
   FileText,
   ListMusic,
-  Mic2,
   PanelLeft,
   Search,
   SlidersHorizontal,
@@ -20,7 +19,6 @@ import { LibreTextsBrowser } from "./LibreTextsBrowser/LibreTextsBrowser";
 import { OpenStaxBrowser } from "./OpenStaxBrowser/OpenStaxBrowser";
 import { Reader } from "./Reader/Reader";
 import { SettingsPanel } from "./Settings/SettingsPanel";
-import { VoiceGallery } from "./VoiceGallery/Gallery";
 import { useLibraryStore } from "../stores/library";
 import { usePlayerStore } from "../stores/player";
 
@@ -33,7 +31,6 @@ export type RouteId =
   | "paste"
   | "url"
   | "reader"
-  | "voices"
   | "settings";
 
 export interface Route {
@@ -55,7 +52,6 @@ const ROUTES: Record<RouteId, Route> = {
   paste: { id: "paste", label: "Pasted Text" },
   url: { id: "url", label: "Article URL" },
   reader: { id: "reader", label: "Reader" },
-  voices: { id: "voices", label: "Voices" },
   settings: { id: "settings", label: "Settings" },
 };
 
@@ -263,12 +259,10 @@ function RoutePlaceholder({
       {route.id === "reader" ? (
         <Reader documentId={readerDocument?.id ?? null} />
       ) : null}
-      {route.id === "voices" ? <VoiceGallery /> : null}
       {route.id === "settings" ? <SettingsPanel /> : null}
 
       {route.id !== "library" &&
       route.id !== "settings" &&
-      route.id !== "voices" &&
       route.id !== "reader" ? (
         <StatusTable rows={statusRows} />
       ) : null}
@@ -321,8 +315,6 @@ function routeIcon(route: RouteId) {
       return <FileText className={className} aria-hidden="true" />;
     case "reader":
       return <BookOpen className={className} aria-hidden="true" />;
-    case "voices":
-      return <Mic2 className={className} aria-hidden="true" />;
     case "settings":
       return <SlidersHorizontal className={className} aria-hidden="true" />;
   }
@@ -346,8 +338,6 @@ function routeSubtitle(route: RouteId): string {
       return "Article source.";
     case "reader":
       return "No active document.";
-    case "voices":
-      return "Voice catalog.";
     case "settings":
       return "Preferences.";
   }
@@ -377,12 +367,6 @@ function routeStatusRows(
           detail: readerDocument ? readerDocument.id : "No document loaded",
         },
         { area: "Player", state: "Idle", detail: "Mini-player hidden" },
-        ...shared,
-      ];
-    case "voices":
-      return [
-        { area: "Catalog", state: "Seeded", detail: "55 voices" },
-        { area: "Model", state: "Pinned", detail: "fp32 and q8" },
         ...shared,
       ];
     case "settings":

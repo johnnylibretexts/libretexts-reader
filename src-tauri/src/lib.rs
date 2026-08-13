@@ -1,3 +1,4 @@
+mod cleanup;
 pub mod commands;
 pub mod content;
 pub mod db;
@@ -5,7 +6,6 @@ pub mod error;
 pub mod net;
 mod paths;
 pub mod tts;
-mod voices;
 
 use db::connection::init_pool;
 use tauri::Manager;
@@ -34,11 +34,6 @@ pub fn run() {
             commands::content::list_libretexts_catalog,
             commands::content::list_libretexts_libraries,
             commands::playback::save_playback_state,
-            commands::voices::list_voices,
-            commands::voices::download_voice,
-            commands::voices::delete_voice,
-            commands::voices::ensure_model_downloaded,
-            commands::voices::get_model_path,
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_all_settings,
@@ -52,11 +47,11 @@ pub fn run() {
         .setup(|app| {
             let db_path = paths::database_path()?;
             paths::models_dir()?;
-            paths::voices_dir()?;
             paths::covers_dir()?;
             paths::images_dir()?;
             paths::cache_dir()?;
             paths::temp_dir()?;
+            cleanup::reclaim_kokoro_artifacts();
             let pool = init_pool(&db_path)?;
             app.manage(pool);
             Ok(())

@@ -4,7 +4,6 @@ import {
   FileText,
   Library,
   Link,
-  Mic2,
   Monitor,
   Moon,
   Settings,
@@ -27,7 +26,6 @@ const primaryRoutes: Array<{
 }> = [
   { id: "library", label: "Library", icon: Library },
   { id: "reader", label: "Reader", icon: BookOpen },
-  { id: "voices", label: "Voices", icon: Mic2 },
 ];
 
 const importRoutes: Array<{

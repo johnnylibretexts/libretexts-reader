@@ -1,10 +1,7 @@
 import type { SupertonicLanguage } from "../supertonic";
-import type { ModelPrecision } from "../../stores/settings";
-import { createKokoroEngine } from "./kokoroEngine";
 import { createSupertonicEngine } from "./supertonicEngine";
 import type { SpeechEngine, SpeechEngineId } from "./types";
 
-export { createKokoroEngine } from "./kokoroEngine";
 export { createSupertonicEngine, speechAudioToBlob } from "./supertonicEngine";
 export { createFakeEngine, type FakeEngine } from "./fakeEngine";
 export {
@@ -18,7 +15,6 @@ export {
 
 export interface SpeechEngineSettings {
   ttsProvider: SpeechEngineId;
-  modelPrecision: ModelPrecision;
   supertonicLanguage: SupertonicLanguage;
 }
 
@@ -32,7 +28,5 @@ export function createSpeechEngine(settings: SpeechEngineSettings): SpeechEngine
   switch (settings.ttsProvider) {
     case "supertonic":
       return createSupertonicEngine({ language: settings.supertonicLanguage });
-    case "kokoro":
-      return createKokoroEngine({ precision: settings.modelPrecision });
   }
 }

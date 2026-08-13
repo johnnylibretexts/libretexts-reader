@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type * as Domain from "../types/domain";
 
-export type ModelPrecision = "fp32" | "q8";
 type InvokeArgs = Record<string, unknown>;
 
 export interface SynthesizeSpeechRequest {
@@ -137,17 +136,6 @@ export const api = {
 
   savePlaybackState: (playback: Domain.PlaybackState) =>
     invokeDesktop<void>("save_playback_state", { playback }),
-
-  listVoices: () =>
-    invokeWithBrowserFallback<Domain.Voice[]>([], "list_voices"),
-  downloadVoice: (voiceId: string) =>
-    invokeDesktop<void>("download_voice", { voiceId }),
-  deleteVoice: (voiceId: string) =>
-    invokeDesktop<void>("delete_voice", { voiceId }),
-  ensureModelDownloaded: (precision: ModelPrecision) =>
-    invokeDesktop<string>("ensure_model_downloaded", { precision }),
-  getModelPath: (precision: ModelPrecision) =>
-    invokeDesktop<string>("get_model_path", { precision }),
 
   synthesizeSpeech: (request: SynthesizeSpeechRequest) =>
     invokeDesktop<SpeechAudio>("synthesize_speech", { request }),

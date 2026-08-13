@@ -22,7 +22,7 @@ export interface FakeEngine extends SpeechEngine {
 export function createFakeEngine(
   options: { id?: SpeechEngineId; voices?: string[] } = {},
 ): FakeEngine {
-  const id = options.id ?? "kokoro";
+  const id = options.id ?? "supertonic";
   const voiceIds = options.voices ?? ["fake-voice-1", "fake-voice-2"];
   const calls: SynthesisRequest[] = [];
 

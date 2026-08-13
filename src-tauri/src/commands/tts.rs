@@ -26,7 +26,9 @@ pub struct SpeechAudio {
 /// the SpeechEngine adapter's decision in the webview, and making it a second
 /// time here — from a different source, with no ordering guarantee between the
 /// two — is what this replaced. It also meant the command failed by default,
-/// since settings seed `tts_provider` to `kokoro`.
+/// because the seeded provider was not the one this command serves. Keeping
+/// the decision in one place is what lets a second provider be added without
+/// this command learning about it.
 #[tauri::command]
 pub async fn synthesize_speech(request: SynthesizeSpeechRequest) -> AppResult<SpeechAudio> {
     let text = request.text.trim();

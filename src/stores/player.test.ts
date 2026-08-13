@@ -161,23 +161,26 @@ describe("engine selection", () => {
     expect(createSpeechEngine).toHaveBeenCalledTimes(1);
   });
 
-  it("rebuilds the engine and resets the voice when the provider changes", async () => {
-    const kokoro = await createFake({ id: "kokoro", voices: ["af_heart"] });
-    const supertonic = await createFake({ id: "supertonic", voices: ["M1"] });
-    const { usePlayerStore, createSpeechEngine } = await loadPlayer([kokoro, supertonic]);
+  it("rebuilds the engine when the Supertonic language changes", async () => {
+    const english = await createFake({ voices: ["M1"] });
+    const korean = await createFake({ voices: ["M1"] });
+    const { usePlayerStore, createSpeechEngine } = await loadPlayer([
+      english,
+      korean,
+    ]);
     const { useSettingsStore } = await import("./settings");
 
     await usePlayerStore.getState().loadDocument("doc-1");
     await usePlayerStore.getState().play();
-    expect(usePlayerStore.getState().voice).toBe("af_heart");
+    expect(createSpeechEngine).toHaveBeenCalledTimes(1);
 
-    useSettingsStore.setState({ ttsProvider: "supertonic" });
+    useSettingsStore.setState({ supertonicLanguage: "ko" });
     await usePlayerStore.getState().play();
 
+    // The engine cache is keyed on language, so a language change must not
+    // keep speaking through the engine built for the previous one.
     expect(createSpeechEngine).toHaveBeenCalledTimes(2);
-    // A voice id means nothing to an engine that did not offer it.
-    expect(usePlayerStore.getState().voice).toBe("M1");
-    expect(supertonic.calls.length).toBeGreaterThan(0);
+    expect(korean.calls.length).toBeGreaterThan(0);
   });
 });
 

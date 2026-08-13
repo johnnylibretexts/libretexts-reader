@@ -23,6 +23,12 @@ pub(crate) fn is_valid_supertonic_language(language: &str) -> bool {
     SUPERTONIC_LANGUAGES.contains(&language)
 }
 
+pub(crate) fn is_valid_supertonic_voice_style(voice_style: &str) -> bool {
+    SUPERTONIC_VOICE_STYLES
+        .iter()
+        .any(|style| style.eq_ignore_ascii_case(voice_style))
+}
+
 pub(crate) fn resolve_language(value: Option<&str>, fallback: &str) -> AppResult<String> {
     let candidate = value
         .map(str::trim)
@@ -103,8 +109,10 @@ mod tests {
 
     #[test]
     fn playback_falls_back_instead_of_failing() {
-        // The player carries one voice id across engines, so this can be handed
-        // a Kokoro id. Reading the chapter in another voice beats silence.
+        // A stored voice id can predate the current engine — an install that
+        // used Kokoro still has one of its ids in default_voice_id until the
+        // settings migration rewrites it. Reading the chapter in another voice
+        // beats silence.
         assert_eq!(
             playback_voice_style(Some("af_heart"), DEFAULT_VOICE_STYLE),
             "M1"

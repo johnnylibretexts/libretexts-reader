@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { usePlayerStore } from "../../stores/player";
-import { type TtsProvider, useSettingsStore } from "../../stores/settings";
 
 export function PlaybackControls() {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
@@ -23,14 +22,6 @@ export function PlaybackControls() {
   );
   const speed = usePlayerStore((state) => state.speed);
   const setSpeed = usePlayerStore((state) => state.setSpeed);
-  const ttsProvider = useSettingsStore((state) => state.ttsProvider);
-  const setTtsProvider = useSettingsStore((state) => state.setTtsProvider);
-  async function changeProvider(provider: TtsProvider) {
-    if (isPlaying) {
-      pause();
-    }
-    await setTtsProvider(provider);
-  }
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -90,21 +81,6 @@ export function PlaybackControls() {
           value={speed}
         />
         <span className="w-9 tabular-nums">{speed.toFixed(1)}x</span>
-      </label>
-
-      <label className="ml-0 flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 md:ml-3">
-        Engine
-        <select
-          className="h-9 rounded-md border border-neutral-200 bg-white px-2 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900"
-          disabled={isBuffering}
-          onChange={(event) =>
-            void changeProvider(event.target.value as TtsProvider)
-          }
-          value={ttsProvider}
-        >
-          <option value="kokoro">Kokoro</option>
-          <option value="supertonic">Supertonic</option>
-        </select>
       </label>
     </div>
   );

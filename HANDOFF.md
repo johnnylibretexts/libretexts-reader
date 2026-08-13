@@ -64,7 +64,7 @@ The current change set adds:
 
 - KaTeX-based math rendering in the reader.
 - MathML token preservation for imported textbook math.
-- More math-aware TTS normalization for system/Kokoro/Supertonic paths.
+- More math-aware TTS normalization for the Supertonic path.
 - LibreTexts import support and browser improvements.
 - Downloaded textbook figures for LibreTexts and OpenStax.
 - SQLite persistence for section images.
@@ -85,19 +85,10 @@ Sequence these as **two separate specs**, A before B. A is mostly deletion and i
 broken engine plus its workarounds before anything new is added, so Fish lands in a
 two-case registry instead of a three-case one.
 
-### A. Remove Kokoro
+### A. Remove Kokoro — DONE (2026-08-13)
 
-Delete `src/lib/kokoro.ts`, `src/lib/speech/kokoroEngine.ts`, the first-run model download
-(`src/components/FirstRun/ModelDownload.tsx`, rendered at `src/App.tsx:32`), the
-`model_precision` and `model_downloaded` settings, and the `kokoro-js` dependency. Narrow
-`SpeechEngineId` in `src/lib/speech/types.ts` from `"kokoro" | "supertonic"` to
-`"supertonic"`, drop the `kokoro` case in `createSpeechEngine`
-(`src/lib/speech/index.ts`), and extend `migrate_removed_tts_provider`
-(`src-tauri/src/db/settings.rs:88`) so a stored `"kokoro"` migrates to `"supertonic"` —
-it already does this for `"gemini"` and `"fish"`.
-
-Also delete the downloaded models: `~/Library/Application Support/dev.johnnylibretexts.reader/models/`
-holds `kokoro-fp32.onnx` (325MB) and `kokoro-q8.onnx` (92MB), both dead after this.
+Spec: `docs/superpowers/specs/2026-08-13-remove-kokoro-design.md`.
+Plan: `docs/superpowers/plans/2026-08-13-remove-kokoro.md`. See ADR-0003.
 
 ### B. Add Fish Audio (bring-your-own API key)
 
@@ -371,8 +362,7 @@ Important: any LibreTexts book imported before the image-anchor change should be
 - Existing imported documents before migration `0004` lack anchors and should be reimported.
 - Chapter/section images are currently loaded for the active section only.
 - If a page starts with an image before any readable paragraph, that image has a null anchor and renders before the first paragraph.
-- Supertonic/Kokoro math speech normalization is heuristic. It handles common LaTeX/MathML patterns, not a full accessibility-grade math speech system.
-- Frontend bundle warnings remain for large chunks, especially `kokoro.web`. This was pre-existing and not addressed.
+- Supertonic math speech normalization is heuristic. It handles common LaTeX/MathML patterns, not a full accessibility-grade math speech system.
 
 Recommended next work:
 

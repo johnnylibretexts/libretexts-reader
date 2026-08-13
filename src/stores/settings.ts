@@ -9,9 +9,8 @@ import { api } from "../lib/tauri";
 import { displayError } from "../lib/errors";
 
 export type AppTheme = "light" | "dark" | "system";
-export type ModelPrecision = "fp32" | "q8";
 /** Mirrors `SpeechEngineId` — every provider here is one a reader can pick. */
-export type TtsProvider = "kokoro" | "supertonic";
+export type TtsProvider = "supertonic";
 
 export interface TtsSettingsPatch {
   ttsProvider?: TtsProvider;
@@ -23,11 +22,9 @@ export interface SettingsState {
   defaultVoiceId: string;
   defaultSpeed: number;
   exportDirectory: string;
-  modelPrecision: ModelPrecision;
   theme: AppTheme;
   telemetryOptIn: boolean;
   autoCheckUpdates: boolean;
-  modelDownloaded: boolean;
   ttsProvider: TtsProvider;
   supertonicVoiceStyle: SupertonicVoiceStyle;
   supertonicLanguage: SupertonicLanguage;
@@ -38,22 +35,19 @@ interface SettingsStore extends SettingsState {
   loading: boolean;
   error: string | null;
   hydrate: () => Promise<void>;
-  markModelDownloaded: (precision: ModelPrecision) => void;
   setTheme: (theme: AppTheme) => Promise<void>;
   setTtsProvider: (provider: TtsProvider) => Promise<void>;
   saveTtsSettings: (settings: TtsSettingsPatch) => Promise<void>;
 }
 
 const DEFAULT_SETTINGS: SettingsState = {
-  defaultVoiceId: "af_heart",
+  defaultVoiceId: "M1",
   defaultSpeed: 1,
   exportDirectory: "",
-  modelPrecision: "q8",
   theme: "system",
   telemetryOptIn: false,
   autoCheckUpdates: true,
-  modelDownloaded: false,
-  ttsProvider: "kokoro",
+  ttsProvider: "supertonic",
   supertonicVoiceStyle: "M1",
   supertonicLanguage: "en",
 };
@@ -90,13 +84,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       });
     }
   },
-  markModelDownloaded: (precision: ModelPrecision) => {
-    set({
-      modelDownloaded: true,
-      modelPrecision: precision,
-      error: null,
-    });
-  },
   setTheme: async (theme: AppTheme) => {
     set({ theme, error: null });
     persistLocalTheme(theme);
@@ -109,6 +96,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       });
     }
   },
+  /**
+   * Intentionally retained with no caller today — its only caller (a
+   * provider `<select>`) was removed earlier in this branch. It is part of
+   * the seam a follow-on spec extends to add a second, cloud-based TTS
+   * provider; do not delete it as dead code.
+   */
   setTtsProvider: async (provider: TtsProvider) => {
     set({ ttsProvider: provider, error: null });
 
@@ -160,11 +153,9 @@ export async function loadSettings(): Promise<Partial<SettingsState>> {
     defaultVoiceId: asString(settings.default_voice_id),
     defaultSpeed: asNumber(settings.default_speed),
     exportDirectory: asString(settings.export_directory),
-    modelPrecision: asModelPrecision(settings.model_precision),
     theme: asTheme(settings.theme),
     telemetryOptIn: asBoolean(settings.telemetry_opt_in),
     autoCheckUpdates: asBoolean(settings.auto_check_updates),
-    modelDownloaded: asBoolean(settings.model_downloaded),
     ttsProvider: asTtsProvider(settings.tts_provider),
     supertonicVoiceStyle: asSupertonicVoiceStyle(
       settings.supertonic_voice_style,
@@ -197,22 +188,19 @@ function asTheme(value: unknown): AppTheme | undefined {
     : undefined;
 }
 
-function asModelPrecision(value: unknown): ModelPrecision | undefined {
-  return value === "fp32" || value === "q8" ? value : undefined;
-}
-
 /**
  * The single place stored provider values are interpreted, including retired
  * ones. `system` was the Web Speech path, removed once every engine sat behind
- * SpeechEngine; `gemini` and `fish` predate Supertonic. All fall back to the
- * default rather than being written back — the next settings save overwrites
- * the stale row anyway.
+ * SpeechEngine; `gemini` and `fish` predate Supertonic; `kokoro` was removed
+ * once it proved it could not produce audio in a bundled build. All fall back
+ * to the default rather than being written back — the next settings save
+ * overwrites the stale row anyway.
  */
 function asTtsProvider(value: unknown): TtsProvider | undefined {
-  if (value === "gemini" || value === "fish") {
+  if (value === "gemini" || value === "fish" || value === "kokoro") {
     return "supertonic";
   }
-  return value === "kokoro" || value === "supertonic" ? value : undefined;
+  return value === "supertonic" ? value : undefined;
 }
 
 // The localStorage key is intentionally still "johnny-reader-theme" from the

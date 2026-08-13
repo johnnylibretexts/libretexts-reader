@@ -27,6 +27,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0006_rebase_export_directory",
         include_str!("../../resources/migrations/0006_rebase_export_directory.sql"),
     ),
+    (
+        "0007_drop_kokoro_voices",
+        include_str!("../../resources/migrations/0007_drop_kokoro_voices.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
@@ -331,5 +335,122 @@ mod tests {
             [],
         );
         assert!(result.is_err(), "cross-document cursor must be rejected");
+    }
+
+    #[test]
+    fn drop_kokoro_voices_removes_the_voices_table() {
+        let conn = migrated_conn();
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'voices')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query sqlite_master");
+        assert!(!exists, "the voices table must not survive migration 0007");
+    }
+
+    #[test]
+    fn drop_kokoro_voices_rewrites_a_stored_kokoro_provider() {
+        let conn = migrated_conn();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('tts_provider', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params!["\"kokoro\""],
+        )
+        .expect("seed a stored kokoro provider");
+
+        conn.execute_batch(migration_sql("0007_drop_kokoro_voices"))
+            .expect("re-apply the migration");
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'tts_provider'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read tts_provider");
+        assert_eq!(value, "\"supertonic\"");
+    }
+
+    #[test]
+    fn drop_kokoro_voices_rewrites_a_stored_kokoro_voice_id() {
+        let conn = migrated_conn();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('default_voice_id', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params!["\"af_heart\""],
+        )
+        .expect("seed a stored kokoro voice id");
+
+        conn.execute_batch(migration_sql("0007_drop_kokoro_voices"))
+            .expect("re-apply the migration");
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'default_voice_id'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read default_voice_id");
+        assert_eq!(
+            value, "\"M1\"",
+            "a Kokoro voice id would otherwise be swapped for M1 on every sentence forever"
+        );
+    }
+
+    #[test]
+    fn drop_kokoro_voices_leaves_a_supertonic_voice_id_alone() {
+        let conn = migrated_conn();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('default_voice_id', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params!["\"F3\""],
+        )
+        .expect("seed a chosen Supertonic voice");
+
+        conn.execute_batch(migration_sql("0007_drop_kokoro_voices"))
+            .expect("run once");
+        conn.execute_batch(migration_sql("0007_drop_kokoro_voices"))
+            .expect("run twice");
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'default_voice_id'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read default_voice_id");
+        assert_eq!(
+            value, "\"F3\"",
+            "the migration must not flatten a voice the reader deliberately chose"
+        );
+    }
+
+    #[test]
+    fn drop_kokoro_voices_drops_the_dead_model_settings() {
+        let conn = migrated_conn();
+        conn.execute_batch(
+            "INSERT INTO settings (key, value) VALUES ('model_precision', '\"q8\"')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+             INSERT INTO settings (key, value) VALUES ('model_downloaded', 'true')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+        )
+        .expect("seed the dead model settings");
+
+        conn.execute_batch(migration_sql("0007_drop_kokoro_voices"))
+            .expect("run once");
+        conn.execute_batch(migration_sql("0007_drop_kokoro_voices"))
+            .expect("run twice");
+
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings
+                     WHERE key IN ('model_precision', 'model_downloaded')",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count dead settings");
+        assert_eq!(remaining, 0);
     }
 }

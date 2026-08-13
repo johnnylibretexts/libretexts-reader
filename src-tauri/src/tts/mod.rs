@@ -1,5 +1,6 @@
 //! Text-to-speech engines that run in the Rust process.
 //!
-//! Kokoro is deliberately absent — it runs in the webview. See ADR-0001.
+//! Supertonic is the only speech engine. See ADR-0003 for why Kokoro, which
+//! ran in the webview, was removed.
 
 pub mod supertonic;
