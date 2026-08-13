@@ -96,6 +96,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       });
     }
   },
+  /**
+   * Intentionally retained with no caller today — its only caller (a
+   * provider `<select>`) was removed earlier in this branch. It is part of
+   * the seam a follow-on spec extends to add a second, cloud-based TTS
+   * provider; do not delete it as dead code.
+   */
   setTtsProvider: async (provider: TtsProvider) => {
     set({ ttsProvider: provider, error: null });
 

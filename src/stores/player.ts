@@ -94,7 +94,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   sectionImages: [],
   currentParagraphIndex: 0,
   currentSentenceIndex: 0,
-  voice: "af_heart",
+  voice: "M1",
   speed: 1,
   isPlaying: false,
   isBuffering: false,

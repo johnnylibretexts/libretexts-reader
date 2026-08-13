@@ -7,16 +7,15 @@ LibreTexts Reader is a **Tauri 2 desktop app** for listening to OpenStax/LibreTe
 Two halves that talk over Tauri's `invoke` bridge:
 
 **Frontend — `src/`** (React 19 + Zustand + Tailwind v4, Vite dev server on fixed port 1420)
-- `components/` — `AppShell`, `Sidebar`, `MiniPlayer`, and feature dirs: `Reader/` (`Reader.tsx`, `ParagraphView.tsx`, `MathText.tsx`), `Import/`, `Library/`, `OpenStaxBrowser/`, `LibreTextsBrowser/`, `VoiceGallery/`, `Settings/`, `FirstRun/`.
+- `components/` — `AppShell`, `Sidebar`, `MiniPlayer`, and feature dirs: `Reader/` (`Reader.tsx`, `ParagraphView.tsx`, `MathText.tsx`), `Import/`, `Library/`, `OpenStaxBrowser/`, `LibreTextsBrowser/`, `Settings/`.
 - `stores/` — Zustand: `library.ts`, `player.ts`, `settings.ts`.
 - `lib/` — `tauri.ts` (typed wrappers over every Rust command; **the invoke boundary**), `supertonic.ts` (the TTS engine), `mathContent.ts` (MathML/KaTeX handling), `errors.ts`.
 
 **Backend — `src-tauri/src/`** (Rust; crate `libretexts-reader`, lib `libretexts_reader_lib`)
 - `lib.rs` — Tauri builder: registers all `#[tauri::command]`s in `generate_handler!`, initializes the SQLite pool, and creates app-data subdirs on `setup`. **Adding a command = add the fn + register it here + add a wrapper in `src/lib/tauri.ts`.**
-- `commands/` — `content.rs` (imports + catalog listing), `library.rs`, `playback.rs`, `settings.rs`, `tts.rs`, `supertonic_tts.rs`, `voices.rs`.
+- `commands/` — `content.rs` (imports + catalog listing), `library.rs`, `playback.rs`, `settings.rs`, `tts.rs`, `supertonic_tts.rs`.
 - `content/` — importers/normalizers: `openstax.rs`, `libretexts.rs`, `epub.rs`, `pdf.rs` (PDFium), `article.rs` (readability), `images.rs` (download + persist figures), `normalize.rs`, `tokenize.rs`, `document.rs`.
 - `db/` — `rusqlite` + `r2d2` pool (`connection.rs`), `migrations.rs` applies SQL files from `resources/migrations/`, `models.rs`, `library.rs`, `settings.rs`.
-- `voices/` — TTS voice/model manifest + download bookkeeping.
 - `build.rs` — downloads/prepares bundled **PDFium** and **ffmpeg** assets on first build (needs network); `paths.rs` resolves the app-data dir.
 
 **TTS runs in Rust.** **Supertonic** playback and chapter-MP3 export go through the **Rust ONNX Runtime** (`ort`) backend with on-demand model downloads. `ffmpeg` (external sidecar bin) + `mp3lame` handle encoding. Engine choice lives in one place, `createSpeechEngine` in `src/lib/speech/index.ts`; Kokoro was removed in favour of Supertonic (ADR-0003).
@@ -48,7 +47,7 @@ Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p libret
 - **Toolchains are pinned.** Rust: stable via rustup (`rust-toolchain.toml` adds `clippy`+`rustfmt`; workspace `rust-version = 1.88`). Use `cargo fmt` / `cargo clippy`. Frontend has no separate linter — its gates are TypeScript strictness via `tsc` in `npm run build` plus the vitest suite (`npm test`). CI enforces both.
 - **Node 22.x is required** (last verified 22.20.0 / npm 10.9.3). See gotcha below.
 - Frontend↔Rust contract: keep `src/lib/tauri.ts` and the `generate_handler!` list in `lib.rs` in sync; mirror payload shapes in `src/types/domain.ts`.
-- DB: **add a new numbered migration** in `src-tauri/resources/migrations/`, numbered one past the highest file already there (currently `0006`, so the next free number is `0007`). The `MIGRATIONS` array in `src-tauri/src/db/migrations.rs` is hand-maintained and is the actual source of truth — check both it and the directory listing before picking a number, since a collision registers under the wrong name and silently applies out of order. Never mutate an already-applied migration file.
+- DB: **add a new numbered migration** in `src-tauri/resources/migrations/`, numbered one past the highest file already there (currently `0007`, so the next free number is `0008`). The `MIGRATIONS` array in `src-tauri/src/db/migrations.rs` is hand-maintained and is the actual source of truth — check both it and the directory listing before picking a number, since a collision registers under the wrong name and silently applies out of order. Never mutate an already-applied migration file.
 - Commits: Conventional-Commits-ish prefixes (`build:`, `deps:`, `license:`, `fix:`, `chore:`), imperative.
 
 ## Gotchas & Constraints
@@ -61,7 +60,7 @@ Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p libret
 - **Content import is paragraph-flow, not a layout clone.** Figures are anchored to a nearby paragraph (`anchor_paragraph_ordinal`); tables/sidebars/exercises are flattened or skipped. Imports made before migration `0004` have null anchors — reimport to test placement.
 - **Math** is encoded as `[[mathml:<base64>]]` tokens at import, rendered with KaTeX in the reader, and normalized heuristically for TTS on the Supertonic path — it is not accessibility-grade math speech.
 - **Release signing is manual for bundled natives.** Tauri does not sign the bundled ffmpeg `.dylib`s or `libpdfium.dylib`; sign the source libs with Developer ID + hardened runtime **before** `tauri:build`, or notarization fails. Full runbook: `RELEASE.md`. The auto-updater is disabled in v0.1.0.
-- `build.rs` needs **network on first build** to fetch PDFium/ffmpeg. Bundled binaries/models live in gitignored paths (`src-tauri/binaries/`, `resources/pdfium/`, `resources/voices/`).
+- `build.rs` needs **network on first build** to fetch PDFium/ffmpeg. Bundled binaries/models live in gitignored paths (`src-tauri/binaries/`, `resources/pdfium/`).
 - The working tree is often intentionally dirty with uncommitted feature work — **do not `git reset --hard`/checkout to "clean up" unless asked.** See `HANDOFF.md` for current WIP and full context.
 
 ## Agent skills
