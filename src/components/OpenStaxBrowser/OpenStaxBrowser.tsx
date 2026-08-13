@@ -1,23 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { BookOpen, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import { api } from "../../lib/tauri";
 import type * as Domain from "../../types/domain";
 import { displayError } from "../../lib/errors";
+import { useImportsStore } from "../../stores/imports";
+import { useLibraryStore } from "../../stores/library";
+import { findImportedBook } from "../../lib/importedBooks";
 
-interface OpenStaxBrowserProps {
-  onImported: (documentId: string, title: string) => void;
-}
-
-export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
+export function OpenStaxBrowser() {
   const [books, setBooks] = useState<Domain.OpenStaxBook[]>([]);
   const [query, setQuery] = useState("");
   const [subject, setSubject] = useState("all");
   const [language, setLanguage] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [importingUuid, setImportingUuid] = useState<string | null>(null);
-  const [progress, setProgress] = useState<Domain.ImportProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activeImport = useImportsStore((state) => state.active);
+  const startImport = useImportsStore((state) => state.start);
+  const documents = useLibraryStore((state) => state.documents);
 
   useEffect(() => {
     let active = true;
@@ -44,23 +43,6 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
     };
   }, []);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen<Domain.ImportProgress>("import-progress", (event) => {
-      if (event.payload.documentId === importingUuid) {
-        setProgress(event.payload);
-      }
-    })
-      .then((dispose) => {
-        unlisten = dispose;
-      })
-      .catch(() => undefined);
-
-    return () => {
-      unlisten?.();
-    };
-  }, [importingUuid]);
-
   const subjects = useMemo(
     () => uniqueOptions(books.map((book) => book.subject)),
     [books],
@@ -83,29 +65,11 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
   }, [books, language, query, subject]);
 
   async function importBook(book: Domain.OpenStaxBook) {
-    if (importingUuid) {
-      return;
-    }
-
-    setError(null);
-    setProgress({
-      documentId: book.uuid,
-      stage: "fetching",
-      current: 0,
-      total: 0,
-      message: null,
+    await startImport({
+      bookId: book.uuid,
+      title: book.title,
+      run: () => api.importOpenstax(book.uuid),
     });
-    setImportingUuid(book.uuid);
-
-    try {
-      const documentId = await api.importOpenstax(book.uuid);
-      onImported(documentId, book.title);
-    } catch (error) {
-      setError(displayError(error));
-    } finally {
-      setImportingUuid(null);
-      setProgress(null);
-    }
   }
 
   return (
@@ -177,61 +141,77 @@ export function OpenStaxBrowser({ onImported }: OpenStaxBrowserProps) {
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {filteredBooks.map((book) => (
-          <article
-            className="flex min-h-52 flex-col justify-between gap-4 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
-            key={book.uuid}
-          >
-            <div className="flex min-w-0 gap-3">
-              <OpenStaxThumbnail coverUrl={book.coverUrl} />
-              <div className="min-w-0">
-                <h2 className="line-clamp-2 text-base font-semibold">
-                  {book.title}
-                </h2>
-                <p className="mt-1 line-clamp-2 text-sm text-neutral-600 dark:text-neutral-400">
-                  {book.subject} · {book.language.toUpperCase()}
-                </p>
+        {filteredBooks.map((book) => {
+          const imported = findImportedBook(
+            documents,
+            "openstax",
+            "book_uuid",
+            book.uuid,
+          );
+
+          return (
+            <article
+              className="flex min-h-52 flex-col justify-between gap-4 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+              key={book.uuid}
+            >
+              <div className="flex min-w-0 gap-3">
+                <OpenStaxThumbnail coverUrl={book.coverUrl} />
+                <div className="min-w-0">
+                  <h2 className="line-clamp-2 text-base font-semibold">
+                    {book.title}
+                  </h2>
+                  <p className="mt-1 line-clamp-2 text-sm text-neutral-600 dark:text-neutral-400">
+                    {book.subject} · {book.language.toUpperCase()}
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <p className="line-clamp-3 text-sm text-neutral-600 dark:text-neutral-400">
-              {book.license}
-            </p>
-
-            <div className="flex items-center justify-between gap-3">
-              <p className="min-h-5 min-w-0 truncate text-sm text-neutral-500 dark:text-neutral-400">
-                {importingUuid === book.uuid && progress
-                  ? formatOpenStaxProgress(progress)
-                  : `Edition ${book.edition}`}
+              <p className="line-clamp-3 text-sm text-neutral-600 dark:text-neutral-400">
+                {book.license}
               </p>
-              <div className="flex shrink-0 items-center gap-2">
-                <a
-                  aria-label={`Open ${book.title} on OpenStax`}
-                  className="grid size-9 place-items-center rounded-md border border-neutral-200 text-neutral-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                  href={openStaxBookUrl(book)}
-                  rel="noreferrer"
-                  target="_blank"
-                  title="Open source"
-                >
-                  <ExternalLink className="size-4" aria-hidden="true" />
-                </a>
-                <button
-                  className="inline-flex h-9 items-center gap-2 rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={Boolean(importingUuid)}
-                  onClick={() => void importBook(book)}
-                  type="button"
-                >
-                  {importingUuid === book.uuid ? (
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+
+              <div className="flex items-center justify-between gap-3">
+                <p className="min-h-5 min-w-0 truncate text-sm text-neutral-500 dark:text-neutral-400">
+                  {activeImport?.bookId === book.uuid
+                    ? formatOpenStaxProgress(activeImport)
+                    : `Edition ${book.edition}`}
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <a
+                    aria-label={`Open ${book.title} on OpenStax`}
+                    className="grid size-9 place-items-center rounded-md border border-neutral-200 text-neutral-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                    href={openStaxBookUrl(book)}
+                    rel="noreferrer"
+                    target="_blank"
+                    title="Open source"
+                  >
+                    <ExternalLink className="size-4" aria-hidden="true" />
+                  </a>
+                  {imported ? (
+                    <span className="inline-flex h-9 items-center gap-2 rounded-md border border-neutral-200 px-3 text-sm font-medium text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
+                      <BookOpen className="size-4" aria-hidden="true" />
+                      In library
+                    </span>
                   ) : (
-                    <Plus className="size-4" aria-hidden="true" />
+                    <button
+                      className="inline-flex h-9 items-center gap-2 rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={Boolean(activeImport)}
+                      onClick={() => void importBook(book)}
+                      type="button"
+                    >
+                      {activeImport?.bookId === book.uuid ? (
+                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Plus className="size-4" aria-hidden="true" />
+                      )}
+                      Add
+                    </button>
                   )}
-                  Add
-                </button>
+                </div>
               </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -268,7 +248,7 @@ function uniqueOptions(values: string[]) {
   );
 }
 
-function formatOpenStaxProgress(progress: Domain.ImportProgress) {
+function formatOpenStaxProgress(progress: { current: number; total: number }) {
   if (progress.total > 0) {
     return `Page ${progress.current}/${progress.total}`;
   }

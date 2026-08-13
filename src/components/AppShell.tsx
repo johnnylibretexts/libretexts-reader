@@ -231,9 +231,7 @@ function RoutePlaceholder({
       </div>
 
       {route.id === "epub" ? <EpubDialog onImported={onEpubImported} /> : null}
-      {route.id === "openstax" ? (
-        <OpenStaxBrowser onImported={() => {}} />
-      ) : null}
+      {route.id === "openstax" ? <OpenStaxBrowser /> : null}
       {route.id === "libretexts" ? <LibreTextsBrowser /> : null}
       {route.id === "pdf" ? <PdfDialog onImported={onPdfImported} /> : null}
       {route.id === "paste" ? (
