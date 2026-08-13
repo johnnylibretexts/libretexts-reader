@@ -98,7 +98,7 @@ jobs:
         id: dmg
         run: |
           set -euo pipefail
-          DMG="target/release/bundle/dmg/Johnny Reader_${{ steps.meta.outputs.version }}_aarch64.dmg"
+          DMG="target/release/bundle/dmg/LibreTexts Reader_${{ steps.meta.outputs.version }}_aarch64.dmg"
           test -f "$DMG"
           echo "path=$DMG" >> "$GITHUB_OUTPUT"
 
@@ -109,7 +109,7 @@ jobs:
           DMG="${{ steps.dmg.outputs.path }}"
           xcrun notarytool submit "$DMG" --keychain-profile jr-notary --wait
           xcrun stapler staple "$DMG"
-          xcrun stapler staple "target/release/bundle/macos/Johnny Reader.app"
+          xcrun stapler staple "target/release/bundle/macos/LibreTexts Reader.app"
           spctl -a -t open --context context:primary-signature -vvv "$DMG"
 
       - name: Publish GitHub Release
@@ -128,5 +128,5 @@ jobs:
           PRERELEASE=""
           if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then PRERELEASE="--prerelease"; fi
           gh release create "${{ steps.meta.outputs.tag }}" "$DMG" \
-            --title "Johnny Reader ${{ steps.meta.outputs.tag }}" \
+            --title "LibreTexts Reader ${{ steps.meta.outputs.tag }}" \
             --notes-file notes.md $PRERELEASE

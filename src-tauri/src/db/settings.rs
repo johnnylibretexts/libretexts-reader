@@ -94,9 +94,9 @@ fn migrate_removed_tts_provider(value: &mut Value) -> bool {
     }
 }
 
-fn default_export_directory() -> String {
+pub(crate) fn default_export_directory() -> String {
     documents_dir()
-        .join("Johnny Reader")
+        .join("LibreTexts Reader")
         .to_string_lossy()
         .to_string()
 }

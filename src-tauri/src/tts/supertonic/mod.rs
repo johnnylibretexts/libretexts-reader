@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::db::models::{Document, Section};
+use crate::db::settings::default_export_directory;
 use crate::error::AppResult;
-use crate::tts::supertonic::cache::default_export_directory;
 use crate::tts::supertonic::voice::{
     normalize_language, normalize_voice_style, DEFAULT_LANGUAGE, DEFAULT_VOICE_STYLE,
 };

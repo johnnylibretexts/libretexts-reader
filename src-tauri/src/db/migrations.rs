@@ -23,6 +23,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0005_rebase_app_dir_paths",
         include_str!("../../resources/migrations/0005_rebase_app_dir_paths.sql"),
     ),
+    (
+        "0006_rebase_export_directory",
+        include_str!("../../resources/migrations/0006_rebase_export_directory.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
@@ -189,6 +193,54 @@ mod tests {
             )
             .expect("foreign key check");
         assert_eq!(violations, 0);
+    }
+
+    #[test]
+    fn rebase_export_directory_rewrites_the_old_product_name() {
+        let conn = migrated_conn();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('export_directory', ?1)",
+            rusqlite::params!["\"/Users/x/Documents/Johnny Reader\""],
+        )
+        .expect("seed the old export directory");
+
+        conn.execute_batch(migration_sql("0006_rebase_export_directory"))
+            .expect("re-apply the rebase migration");
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'export_directory'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read export directory");
+
+        assert_eq!(value, "\"/Users/x/Documents/LibreTexts Reader\"");
+    }
+
+    #[test]
+    fn rebase_export_directory_leaves_a_custom_path_alone() {
+        let conn = migrated_conn();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('export_directory', ?1)",
+            rusqlite::params!["\"/Users/x/Music/Exports\""],
+        )
+        .expect("seed a custom export directory");
+
+        conn.execute_batch(migration_sql("0006_rebase_export_directory"))
+            .expect("run once");
+        conn.execute_batch(migration_sql("0006_rebase_export_directory"))
+            .expect("run twice");
+
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'export_directory'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read export directory");
+
+        assert_eq!(value, "\"/Users/x/Music/Exports\"");
     }
 
     #[test]

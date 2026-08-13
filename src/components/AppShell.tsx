@@ -138,7 +138,7 @@ export function AppShell() {
             </div>
             <div className="min-w-0">
               <p className="truncate text-sm text-neutral-500 dark:text-neutral-400">
-                Johnny Reader
+                LibreTexts Reader
               </p>
               <p className="truncate text-base font-semibold">{route.label}</p>
             </div>

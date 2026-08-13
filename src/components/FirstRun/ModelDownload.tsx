@@ -131,7 +131,7 @@ export function ModelDownload() {
               Download Speech Model
             </h2>
             <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-              Johnny Reader stores the model locally for offline playback.
+              LibreTexts Reader stores the model locally for offline playback.
             </p>
           </div>
         </div>

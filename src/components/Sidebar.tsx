@@ -64,7 +64,7 @@ export function Sidebar({ activeRoute, onNavigate }: SidebarProps) {
           <BookOpen className="size-5" aria-hidden="true" />
         </div>
         <div className="hidden min-w-0 md:block">
-          <p className="truncate text-sm font-semibold">Johnny Reader</p>
+          <p className="truncate text-sm font-semibold">LibreTexts Reader</p>
           <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
             Offline narration
           </p>

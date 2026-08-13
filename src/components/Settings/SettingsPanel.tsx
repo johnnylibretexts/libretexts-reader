@@ -20,7 +20,7 @@ import {
   useSettingsStore,
 } from "../../stores/settings";
 
-const SAMPLE_TEXT = "Johnny Reader voice test.";
+const SAMPLE_TEXT = "LibreTexts Reader voice test.";
 const TEST_PLAYBACK_TIMEOUT_MS = 30_000;
 
 export function SettingsPanel() {
@@ -437,6 +437,11 @@ export function SettingsPanel() {
           {supertonicModelError}
         </p>
       ) : null}
+
+      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        LibreTexts Reader is an independent open-source project. It is not affiliated
+        with, endorsed by, or sponsored by LibreTexts or OpenStax.
+      </p>
     </section>
   );
 }

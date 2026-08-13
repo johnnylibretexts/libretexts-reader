@@ -594,7 +594,7 @@ fn write_ffmpeg_license(manifest_dir: &Path) {
     fs::write(
         licenses_dir.join("ffmpeg.txt"),
         "FFmpeg is distributed under the GNU Lesser General Public License \
-         version 2.1 or later, depending on build configuration. Johnny Reader \
+         version 2.1 or later, depending on build configuration. LibreTexts Reader \
          uses LGPL shared builds for the bundled sidecar.\n\n\
          Sources:\n\
          - https://github.com/BtbN/FFmpeg-Builds\n\
