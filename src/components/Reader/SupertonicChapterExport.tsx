@@ -9,11 +9,7 @@ import {
 } from "../../lib/supertonic";
 import { displayError } from "../../lib/errors";
 import { speechAudioToBlob } from "../../lib/speech";
-import {
-  api,
-  type FishKeyStatus,
-  type SupertonicChapterEstimate,
-} from "../../lib/tauri";
+import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
 
@@ -56,8 +52,12 @@ export function SupertonicChapterExport() {
   const [pendingExport, setPendingExport] = useState<{
     force: boolean;
   } | null>(null);
-  const [fishCreditStatus, setFishCreditStatus] =
-    useState<FishKeyStatus | null>(null);
+  const [checkingExport, setCheckingExport] = useState(false);
+  // The live balance, fetched fresh (over the network) each time the gate
+  // opens -- never the value get_fish_key_status returns, which is
+  // deliberately stale/network-free so Settings can render on mount without
+  // waiting on Fish. See getFishCredit / get_fish_credit.
+  const [fishCredit, setFishCredit] = useState<number | null>(null);
   const [fishCreditLoading, setFishCreditLoading] = useState(false);
   const [fishCreditError, setFishCreditError] = useState<string | null>(null);
 
@@ -208,14 +208,44 @@ export function SupertonicChapterExport() {
     }
   }
 
-  // The gate: a billed export (`billableCharacters > 0`, which is only ever
-  // true for an uncached Fish chapter -- see `billable_characters` in
-  // src-tauri/src/commands/chapter_tts.rs) stops here and waits for an
-  // explicit confirmation naming the provider and the character count,
-  // instead of calling the export command immediately.
-  function requestExport(force: boolean) {
+  // The gate: a billed export (`billableCharacters > 0`) stops here and
+  // waits for an explicit confirmation naming the provider and the
+  // character count, instead of calling the export command immediately.
+  //
+  // A forced export (Regenerate) re-synthesises even an already-cached
+  // chapter -- a real, billed Fish request -- so the stale `estimate` state
+  // (computed with `force: false` by the effect above) cannot be trusted to
+  // decide this: for an already-exported Fish chapter it reads
+  // `billableCharacters: 0` because the chapter is cached, which would skip
+  // the gate for a request that is very much not free. Recompute the
+  // estimate with the real `force` flag first, and gate on that. See
+  // `billable_characters` in src-tauri/src/commands/chapter_tts.rs, which
+  // takes the same `force` flag for the same reason.
+  async function requestExport(force: boolean) {
     setError(null);
-    if ((estimate?.billableCharacters ?? 0) > 0) {
+
+    let relevantEstimate = estimate;
+    if (force && isFish) {
+      setCheckingExport(true);
+      try {
+        relevantEstimate = await api.estimateSupertonicChapter({
+          documentId: activeDocument.id,
+          sectionId: activeSection.id,
+          provider: ttsProvider,
+          voiceStyle: fishVoiceId,
+          language: null,
+          force: true,
+        });
+        setEstimate(relevantEstimate);
+      } catch (error) {
+        setError(displayError(error));
+        return;
+      } finally {
+        setCheckingExport(false);
+      }
+    }
+
+    if ((relevantEstimate?.billableCharacters ?? 0) > 0) {
       setPendingExport({ force });
       void refreshFishCredit();
       return;
@@ -226,11 +256,16 @@ export function SupertonicChapterExport() {
   async function refreshFishCredit() {
     setFishCreditLoading(true);
     setFishCreditError(null);
+    setFishCredit(null);
     try {
-      // No network call -- getFishKeyStatus reads what was last learned
-      // about the key, so this is safe to call every time the gate opens.
-      const status = await api.getFishKeyStatus();
-      setFishCreditStatus(status);
+      // Unlike getFishKeyStatus, this DOES call the network -- Fish's own
+      // wallet endpoint, via get_fish_credit -- because the gate needs the
+      // live balance, not the value cached from the last key validation. A
+      // failed fetch must not block an export the reader wants to make, so
+      // this only records an error for display: the gate still shows the
+      // character count and Confirm still works with no balance shown.
+      const credit = await api.getFishCredit();
+      setFishCredit(credit);
     } catch (error) {
       setFishCreditError(displayError(error));
     } finally {
@@ -345,8 +380,8 @@ export function SupertonicChapterExport() {
 
         <button
           className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-brand-700 px-4 text-sm font-medium text-white hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={exporting || !fishVoiceReady}
-          onClick={() => requestExport(false)}
+          disabled={exporting || checkingExport || !fishVoiceReady}
+          onClick={() => void requestExport(false)}
           type="button"
         >
           {exporting ? (
@@ -361,11 +396,15 @@ export function SupertonicChapterExport() {
 
         <button
           className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          disabled={exporting || !fishVoiceReady}
-          onClick={() => requestExport(true)}
+          disabled={exporting || checkingExport || !fishVoiceReady}
+          onClick={() => void requestExport(true)}
           type="button"
         >
-          <RefreshCw className="size-4" aria-hidden="true" />
+          {checkingExport ? (
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <RefreshCw className="size-4" aria-hidden="true" />
+          )}
           Regenerate
         </button>
       </div>
@@ -389,16 +428,19 @@ export function SupertonicChapterExport() {
             <strong>
               {estimate.billableCharacters.toLocaleString()} characters
             </strong>{" "}
-            to {providerLabel} and bill your account. This chapter is not
-            cached, so this request is not free.
+            to {providerLabel} and bill your account. This request is not
+            served from the cache, so it is not free.
           </p>
           <p className="mt-1 text-amber-800 dark:text-amber-300">
             {fishCreditLoading
               ? "Checking Fish Audio credit balance..."
               : fishCreditError
-                ? `Could not check credit balance: ${fishCreditError}`
-                : fishCreditStatus?.credit != null
-                  ? `Current Fish Audio credit balance: ${fishCreditStatus.credit.toLocaleString()}`
+                ? // A failed balance check never blocks the export -- the
+                  // character count above is still shown and Confirm still
+                  // works.
+                  `Could not check credit balance: ${fishCreditError}`
+                : fishCredit != null
+                  ? `Current Fish Audio credit balance: ${fishCredit.toLocaleString()}`
                   : "Fish Audio credit balance is unavailable."}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">

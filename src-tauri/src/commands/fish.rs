@@ -58,6 +58,22 @@ pub async fn get_fish_key_status() -> AppResult<FishKeyStatus> {
     key_status_from(&KeyringSecretStore::new(FISH_KEY_ACCOUNT))
 }
 
+/// The live wallet balance, fetched fresh over the network.
+///
+/// Deliberately a separate command from `get_fish_key_status`, which must
+/// stay network-free so Settings can render on mount without waiting on
+/// Fish. This one exists for the chapter-export confirmation gate
+/// (`SupertonicChapterExport.tsx`), which needs the real balance at the
+/// moment it asks the reader to approve spending, not whatever was learned
+/// the last time the key was entered or validated.
+#[tauri::command]
+pub async fn get_fish_credit() -> AppResult<f64> {
+    let key = KeyringSecretStore::new(FISH_KEY_ACCOUNT)
+        .get()?
+        .ok_or_else(|| crate::error::AppError::Auth("Add a Fish Audio API key first.".into()))?;
+    FishClient::new(key)?.credit().await
+}
+
 /// Validate before storing, so an invalid key is never persisted.
 ///
 /// Validation is a wallet read, not a test synthesis: both prove the key

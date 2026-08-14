@@ -45,6 +45,7 @@ pub fn run() {
             commands::chapter_tts::estimate_supertonic_chapter,
             commands::chapter_tts::export_supertonic_chapter_mp3,
             commands::fish::get_fish_key_status,
+            commands::fish::get_fish_credit,
             commands::fish::set_fish_api_key,
             commands::fish::clear_fish_api_key,
             commands::fish::list_fish_voices,

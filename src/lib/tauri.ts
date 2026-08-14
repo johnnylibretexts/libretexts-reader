@@ -186,6 +186,14 @@ export const api = {
     }),
 
   getFishKeyStatus: () => invokeDesktop<FishKeyStatus>("get_fish_key_status"),
+  /**
+   * The live wallet balance, fetched over the network. Unlike
+   * `getFishKeyStatus` -- deliberately network-free so Settings can render
+   * on mount -- this one calls Fish's wallet endpoint, for the chapter
+   * export confirmation gate, which needs the real balance at the moment it
+   * asks the reader to approve spending.
+   */
+  getFishCredit: () => invokeDesktop<number>("get_fish_credit"),
   setFishApiKey: (key: string) =>
     invokeDesktop<FishKeyStatus>("set_fish_api_key", { key }),
   clearFishApiKey: () => invokeDesktop<void>("clear_fish_api_key"),

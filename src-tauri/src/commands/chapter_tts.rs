@@ -278,10 +278,16 @@ fn resolve_voice_and_language(
 
 /// How many characters this export will actually be billed for.
 ///
-/// Zero for a cached chapter and zero for any local provider, so the gate
-/// never asks the user to approve spending that will not happen.
-pub fn billable_characters(text: &str, provider: &str, cached: bool) -> u32 {
-    if cached || provider != "fish" {
+/// Zero for a local provider, always. For Fish: zero when the chapter is
+/// cached AND the caller is not forcing a re-synthesis, because a plain
+/// (non-forced) export of a cached chapter is served from the cache file and
+/// never reaches the network. But `export_supertonic_chapter_mp3` honours
+/// `force` by skipping the cache and re-synthesising regardless of whether a
+/// cached copy exists -- a real, billed request -- so `cached` alone is not
+/// enough to decide this. A forced Fish export of an already-cached chapter
+/// bills its full character count, exactly like an uncached one.
+pub fn billable_characters(text: &str, provider: &str, cached: bool, force: bool) -> u32 {
+    if provider != "fish" || (cached && !force) {
         return 0;
     }
     text.chars().count() as u32
@@ -305,8 +311,12 @@ fn resolve_chapter_job(
         cache_path.exists(),
         &request.provider,
     );
-    estimate.billable_characters =
-        billable_characters(&material.text, &request.provider, estimate.cached);
+    estimate.billable_characters = billable_characters(
+        &material.text,
+        &request.provider,
+        estimate.cached,
+        request.force.unwrap_or(false),
+    );
 
     Ok(ChapterJob {
         material,
@@ -572,19 +582,50 @@ mod billable_tests {
     #[test]
     fn a_cached_chapter_bills_nothing() {
         // The gate must not ask the user to approve spending on audio that
-        // already exists on disk.
-        assert_eq!(billable_characters("Some text here.", "fish", true), 0);
+        // already exists on disk -- as long as the caller is not about to
+        // force a re-synthesis of it (see the forced case below).
+        assert_eq!(
+            billable_characters("Some text here.", "fish", true, false),
+            0
+        );
     }
 
     #[test]
     fn an_uncached_fish_chapter_bills_its_characters() {
-        assert_eq!(billable_characters("Some text here.", "fish", false), 15);
+        assert_eq!(
+            billable_characters("Some text here.", "fish", false, false),
+            15
+        );
+    }
+
+    #[test]
+    fn a_forced_export_of_a_cached_fish_chapter_bills_its_full_count() {
+        // The regression guard for the billing bypass: `export_supertonic_
+        // chapter_mp3` honours `force` by re-synthesising even a chapter
+        // that is already cached -- a real, billed Fish request. If this
+        // function looked at `cached` alone, a forced "Regenerate" of an
+        // already-exported Fish chapter would report 0 billable characters
+        // and skip the frontend's confirmation gate entirely.
+        assert_eq!(
+            billable_characters("Some text here.", "fish", true, true),
+            15
+        );
+    }
+
+    #[test]
+    fn a_forced_supertonic_regeneration_still_bills_nothing() {
+        // Force never matters for a local provider: there is no network
+        // request to gate in the first place.
+        assert_eq!(
+            billable_characters("Some text here.", "supertonic", true, true),
+            0
+        );
     }
 
     #[test]
     fn supertonic_never_bills() {
         assert_eq!(
-            billable_characters("Some text here.", "supertonic", false),
+            billable_characters("Some text here.", "supertonic", false, false),
             0
         );
     }
@@ -593,7 +634,7 @@ mod billable_tests {
     fn counts_characters_not_bytes() {
         // Fish bills text, and a multi-byte character is one character. Using
         // len() here would overstate an accented or CJK chapter by 2-3x.
-        assert_eq!(billable_characters("héllo", "fish", false), 5);
+        assert_eq!(billable_characters("héllo", "fish", false, false), 5);
     }
 }
 
