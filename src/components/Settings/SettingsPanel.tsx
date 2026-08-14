@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Check, Download, Loader2, Play, Save } from "lucide-react";
 import {
   api,
+  type FishKeyStatus,
   type SupertonicModelProgress,
   type SupertonicModelStatus,
   isTauriRuntime,
@@ -15,7 +16,13 @@ import {
   type SupertonicLanguage,
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
-import { useSettingsStore } from "../../stores/settings";
+import { useSettingsStore, type TtsProvider } from "../../stores/settings";
+import { FishAudioSettings } from "./FishAudioSettings";
+
+const TTS_PROVIDERS: { id: TtsProvider; label: string; hint: string }[] = [
+  { id: "supertonic", label: "Supertonic", hint: "Local, on-device" },
+  { id: "fish", label: "Fish Audio", hint: "Cloud, voice cloning" },
+];
 
 const SAMPLE_TEXT = "LibreTexts Reader voice test.";
 const TEST_PLAYBACK_TIMEOUT_MS = 30_000;
@@ -24,6 +31,9 @@ export function SettingsPanel() {
   const hydrated = useSettingsStore((state) => state.hydrated);
   const loading = useSettingsStore((state) => state.loading);
   const error = useSettingsStore((state) => state.error);
+  const ttsProvider = useSettingsStore((state) => state.ttsProvider);
+  const setTtsProvider = useSettingsStore((state) => state.setTtsProvider);
+  const fishVoiceId = useSettingsStore((state) => state.fishVoiceId);
   const supertonicVoiceStyle = useSettingsStore(
     (state) => state.supertonicVoiceStyle,
   );
@@ -31,6 +41,10 @@ export function SettingsPanel() {
     (state) => state.supertonicLanguage,
   );
   const saveTtsSettings = useSettingsStore((state) => state.saveTtsSettings);
+
+  // Reported by <FishAudioSettings> so the provider picker can warn about a
+  // missing key without fetching key status a second time here.
+  const [fishKeyPresent, setFishKeyPresent] = useState<boolean | null>(null);
 
   const [voiceStyle, setVoiceStyle] =
     useState<SupertonicVoiceStyle>(supertonicVoiceStyle);
@@ -141,31 +155,32 @@ export function SettingsPanel() {
   }
 
   async function testProvider() {
+    const providerLabel =
+      TTS_PROVIDERS.find((provider) => provider.id === ttsProvider)?.label ??
+      ttsProvider;
+
     setTesting(true);
-    setTestStatus("Loading Supertonic...");
+    setTestStatus(`Loading ${providerLabel}...`);
     setTestError(null);
 
     try {
       const engine = createSpeechEngine({
-        ttsProvider: "supertonic",
+        ttsProvider,
         supertonicLanguage: language,
-        // The Fish arm of SpeechEngineSettings is unused here: this button
-        // still only tests Supertonic. A later task makes it test whichever
-        // provider is selected and gains a real fishVoiceId to pass.
-        fishVoiceId: null,
+        fishVoiceId,
       });
       await engine.ensureReady(setTestStatus);
 
-      setTestStatus("Generating Supertonic sample...");
+      setTestStatus(`Generating ${providerLabel} sample...`);
       const blob = await engine.synthesize({
         text: SAMPLE_TEXT,
-        voice: voiceStyle,
+        voice: ttsProvider === "supertonic" ? voiceStyle : (fishVoiceId ?? ""),
         speed: 1,
       });
 
-      setTestStatus("Playing Supertonic sample...");
+      setTestStatus(`Playing ${providerLabel} sample...`);
       await playBlob(blob);
-      setTestStatus("Supertonic test complete.");
+      setTestStatus(`${providerLabel} test complete.`);
     } catch (error) {
       setTestError(displayError(error));
       setTestStatus(null);
@@ -232,6 +247,37 @@ export function SettingsPanel() {
 
   return (
     <section className="flex flex-col gap-4">
+      <div className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+        <h3 className="text-sm font-semibold">Voice engine</h3>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {TTS_PROVIDERS.map((provider) => (
+            <button
+              aria-pressed={ttsProvider === provider.id}
+              className={`rounded-md border px-4 py-3 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 ${
+                ttsProvider === provider.id
+                  ? "border-brand-500 bg-brand-50 dark:border-brand-500 dark:bg-neutral-800"
+                  : "border-neutral-200 hover:bg-stone-100 dark:border-neutral-800 dark:hover:bg-neutral-800"
+              }`}
+              key={provider.id}
+              onClick={() => void setTtsProvider(provider.id)}
+              type="button"
+            >
+              <span className="block font-medium">{provider.label}</span>
+              <span className="block text-xs text-neutral-500 dark:text-neutral-400">
+                {provider.hint}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {ttsProvider === "fish" && fishKeyPresent === false ? (
+          <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-300">
+            Fish Audio is selected but no API key is saved yet. Add one below
+            to use it.
+          </p>
+        ) : null}
+      </div>
+
       <div className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
         <div className="rounded-md border border-neutral-200 bg-stone-50 px-3 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-950">
           <span className="font-medium">Supertonic</span>
@@ -350,10 +396,19 @@ export function SettingsPanel() {
             ) : (
               <Play className="size-4" aria-hidden="true" />
             )}
-            Test Supertonic
+            Test{" "}
+            {TTS_PROVIDERS.find((provider) => provider.id === ttsProvider)
+              ?.label ?? ttsProvider}{" "}
+            voice
           </button>
         </div>
       </div>
+
+      <FishAudioSettings
+        onKeyStatusChange={(status: FishKeyStatus) =>
+          setFishKeyPresent(status.present)
+        }
+      />
 
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">

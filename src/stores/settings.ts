@@ -23,6 +23,7 @@ export interface TtsSettingsPatch {
   ttsProvider?: TtsProvider;
   supertonicVoiceStyle?: SupertonicVoiceStyle;
   supertonicLanguage?: SupertonicLanguage;
+  fishVoiceId?: string | null;
 }
 
 export interface SettingsState {
@@ -141,10 +142,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       ttsSettings.ttsProvider ??
       get().ttsProvider ??
       DEFAULT_SETTINGS.ttsProvider;
+    const fishVoiceId =
+      ttsSettings.fishVoiceId !== undefined
+        ? ttsSettings.fishVoiceId
+        : get().fishVoiceId;
     set({
       ttsProvider,
       supertonicVoiceStyle,
       supertonicLanguage,
+      fishVoiceId,
       error: null,
     });
 
@@ -153,6 +159,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         api.setSetting("tts_provider", ttsProvider),
         api.setSetting("supertonic_voice_style", supertonicVoiceStyle),
         api.setSetting("supertonic_language", supertonicLanguage),
+        api.setSetting("fish_voice_id", fishVoiceId),
       ]);
     } catch (error) {
       set({

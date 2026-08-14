@@ -31,6 +31,11 @@ export function createFishEngine(options: { voiceId: string | null }): SpeechEng
       if (!status.present) {
         throw new Error("Add a Fish Audio API key in Settings to use this voice.");
       }
+      if (!options.voiceId) {
+        // Without this check, synthesize() sends voiceId: "" and the failure
+        // surfaces as an opaque Rust-side error instead of this actionable one.
+        throw new Error("Choose a Fish Audio voice in Settings to use this voice.");
+      }
     },
 
     async listVoices() {

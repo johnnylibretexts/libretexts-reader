@@ -289,7 +289,16 @@ async function speakCurrentSentence(
  */
 function activeEngine(set: (partial: Partial<PlayerState>) => void) {
   const settings = useSettingsStore.getState();
-  const key = [settings.ttsProvider, settings.supertonicLanguage].join(":");
+  // Every setting an engine captures at construction time (not just per-call)
+  // must be in this key, or changing it silently has no effect until the
+  // reader switches providers and back. Supertonic only captures `language`
+  // (its voice is passed per-synthesize call, see supertonicEngine.ts); Fish
+  // captures `fishVoiceId` (see fishEngine.ts).
+  const key = [
+    settings.ttsProvider,
+    settings.supertonicLanguage,
+    settings.fishVoiceId,
+  ].join(":");
 
   if (cachedEngine?.key !== key) {
     const previous = cachedEngine?.engine;
