@@ -21,6 +21,7 @@ pub mod cache;
 pub mod chunk;
 pub mod engine;
 pub mod model;
+pub mod provider;
 pub mod text;
 pub mod voice;
 

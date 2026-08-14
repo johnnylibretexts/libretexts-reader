@@ -13,7 +13,7 @@ pub(crate) const SUPERTONIC_LANGUAGES: &[&str] = &[
     "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi", "na",
 ];
 
-const SUPERTONIC_VOICE_STYLES: &[&str] =
+pub(crate) const SUPERTONIC_VOICE_STYLES: &[&str] =
     &["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"];
 
 pub(crate) const DEFAULT_VOICE_STYLE: &str = "M1";

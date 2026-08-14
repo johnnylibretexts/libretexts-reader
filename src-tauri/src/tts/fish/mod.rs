@@ -4,6 +4,7 @@
 //! and because chapter export already lives here.
 
 pub mod client;
+pub mod provider;
 
 /// The model Fish should use, as one constant.
 ///

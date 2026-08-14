@@ -331,7 +331,7 @@ async fn synthesize_supertonic_audio(
     })
 }
 
-async fn synthesize_supertonic_mp3(
+pub(crate) async fn synthesize_supertonic_mp3(
     text: String,
     voice_style: String,
     language: String,
