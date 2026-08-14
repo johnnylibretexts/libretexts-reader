@@ -3,6 +3,7 @@ import { api } from "../lib/tauri";
 import { asAppError, displayError } from "../lib/errors";
 import {
   createSpeechEngine,
+  SPEECH_ENGINE_LABELS,
   SpeechAbortedError,
   type SpeechEngine,
 } from "../lib/speech";
@@ -363,7 +364,7 @@ async function speakWithBufferedSpeech(
   get: () => PlayerState,
   requireInitialBuffer: boolean,
 ) {
-  const label = "Supertonic";
+  const label = SPEECH_ENGINE_LABELS[engine.id];
   const lookaheadPositions = speechPositionsFromCurrent(
     get(),
     SPEECH_LOOKAHEAD_SENTENCES,

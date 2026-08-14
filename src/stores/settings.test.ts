@@ -10,6 +10,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * or clear it before the read happens (see FishAudioSettings.tsx's
  * persistVoice, a real caller built around this).
  *
+ * `setTheme` and `setTtsProvider` additionally set their field optimistically
+ * before the persist call, so a failed save must also revert that field to
+ * its previous value -- otherwise the store (and the UI reading it) keeps
+ * claiming a value that was never written to disk, disagreeing with what the
+ * next app start loads. The revert tests below seed a value deliberately
+ * different from the one being set, so a missing (or no-op) revert cannot
+ * pass by coincidence.
+ *
  * Every module under test is re-imported fresh per test (`vi.resetModules`)
  * so each gets its own mocked `api.setSetting`.
  */
@@ -91,5 +99,40 @@ describe("settings store persistence failures", () => {
     ).rejects.toThrow("disk full");
 
     expect(useSettingsStore.getState().error).toBe("disk full");
+  });
+
+  it("setTtsProvider reverts to the previously stored provider when the persist fails", async () => {
+    const setSetting = vi.fn(async () => {
+      throw new Error("disk full");
+    });
+    const useSettingsStore = await loadSettingsStore(setSetting);
+
+    // Seeded to "fish" -- different from the "supertonic" being set below --
+    // so a no-op revert (or no revert at all) cannot pass this assertion by
+    // coincidence. Only a real restore of the previous value proves it.
+    useSettingsStore.setState({ ttsProvider: "fish" });
+
+    await expect(
+      useSettingsStore.getState().setTtsProvider("supertonic"),
+    ).rejects.toThrow("disk full");
+
+    expect(useSettingsStore.getState().ttsProvider).toBe("fish");
+  });
+
+  it("setTheme reverts to the previously stored theme when the persist fails", async () => {
+    const setSetting = vi.fn(async () => {
+      throw new Error("disk full");
+    });
+    const useSettingsStore = await loadSettingsStore(setSetting);
+
+    // Seeded to "dark" -- different from the "light" being set below -- for
+    // the same reason as the setTtsProvider revert test above.
+    useSettingsStore.setState({ theme: "dark" });
+
+    await expect(
+      useSettingsStore.getState().setTheme("light"),
+    ).rejects.toThrow("disk full");
+
+    expect(useSettingsStore.getState().theme).toBe("dark");
   });
 });

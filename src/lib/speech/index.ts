@@ -7,6 +7,7 @@ export { createSupertonicEngine, speechAudioToBlob } from "./supertonicEngine";
 export { createFishEngine } from "./fishEngine";
 export { createFakeEngine, type FakeEngine } from "./fakeEngine";
 export {
+  SPEECH_ENGINE_LABELS,
   SpeechAbortedError,
   throwIfAborted,
   type SpeechEngine,

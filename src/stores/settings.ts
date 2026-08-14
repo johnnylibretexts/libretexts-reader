@@ -101,29 +101,39 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
   setTheme: async (theme: AppTheme) => {
+    const previousTheme = get().theme;
     set({ theme, error: null });
     persistLocalTheme(theme);
 
     try {
       await api.setSetting("theme", theme);
     } catch (error) {
-      // Set the shared banner message, then rethrow so a caller awaiting
-      // this call sees the same failure via its own try/catch rather than
-      // having to read this store's mutable `error` field, which a
-      // concurrent unrelated action could overwrite or clear first. Every
-      // call site must catch this — see Sidebar.tsx.
-      set({ error: displayError(error) });
+      // Revert the optimistic set before rethrowing: a failed persist must
+      // not leave the store (or the localStorage fallback `hydrate` reads
+      // on its own failure path) claiming a value that was never saved, or
+      // this session disagrees with what the next app start loads. Set the
+      // shared banner message, then rethrow so a caller awaiting this call
+      // sees the same failure via its own try/catch rather than having to
+      // read this store's mutable `error` field, which a concurrent
+      // unrelated action could overwrite or clear first. Every call site
+      // must catch this — see Sidebar.tsx.
+      set({ theme: previousTheme, error: displayError(error) });
+      persistLocalTheme(previousTheme);
       throw error;
     }
   },
   setTtsProvider: async (provider: TtsProvider) => {
+    const previousProvider = get().ttsProvider;
     set({ ttsProvider: provider, error: null });
 
     try {
       await api.setSetting("tts_provider", provider);
     } catch (error) {
-      // See the rethrow note on setTheme above; the same reasoning applies.
-      set({ error: displayError(error) });
+      // Revert before rethrowing -- see the note on setTheme above. Without
+      // this, a failed save leaves the store (and therefore the UI) showing
+      // a provider that was never persisted, disagreeing with what the next
+      // app start loads from the settings table.
+      set({ ttsProvider: previousProvider, error: displayError(error) });
       throw error;
     }
   },

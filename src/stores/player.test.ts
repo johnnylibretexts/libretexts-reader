@@ -154,6 +154,29 @@ describe("playback through SpeechEngine", () => {
   });
 });
 
+describe("buffering message", () => {
+  it("names the engine actually speaking, not always Supertonic", async () => {
+    // Regression guard: `speakWithBufferedSpeech` used to hardcode
+    // `const label = "Supertonic"`, so a Fish Audio user was told "Buffering
+    // Supertonic audio" while Fish was the engine actually running. The
+    // label must come from `engine.id`, which this fake engine sets to
+    // "fish" independent of whatever `useSettingsStore` reports.
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine]);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    // Checked synchronously, before awaiting: the buffering message is set
+    // before the function's first await, so it is already in the store the
+    // instant `play()` is called, without needing the call to finish.
+    const playPromise = usePlayerStore.getState().play();
+    expect(usePlayerStore.getState().bufferingMessage).toBe(
+      "Buffering Fish Audio audio",
+    );
+    await playPromise;
+  });
+});
+
 describe("engine selection", () => {
   it("builds the engine once and reuses it across sentences", async () => {
     const engine = await createFake();

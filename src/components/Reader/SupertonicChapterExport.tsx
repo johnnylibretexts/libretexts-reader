@@ -8,15 +8,10 @@ import {
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
 import { displayError } from "../../lib/errors";
-import { speechAudioToBlob } from "../../lib/speech";
+import { SPEECH_ENGINE_LABELS, speechAudioToBlob } from "../../lib/speech";
 import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
-
-const PROVIDER_LABEL: Record<string, string> = {
-  supertonic: "Supertonic",
-  fish: "Fish Audio",
-};
 
 export function SupertonicChapterExport() {
   const document = usePlayerStore((state) => state.document);
@@ -69,7 +64,7 @@ export function SupertonicChapterExport() {
     [paragraphs],
   );
   const isFish = ttsProvider === "fish";
-  const providerLabel = PROVIDER_LABEL[ttsProvider] ?? ttsProvider;
+  const providerLabel = SPEECH_ENGINE_LABELS[ttsProvider];
   // Fish has no sensible built-in voice (see FishProvider::voice in
   // src-tauri/src/tts/fish/provider.rs), so a request is only sent once one
   // is configured -- matching the backend's own guard rather than racing it.

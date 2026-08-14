@@ -1,5 +1,17 @@
 export type SpeechEngineId = "supertonic" | "fish";
 
+/**
+ * Human-readable names for user-facing strings (buffering status, export
+ * gates, settings). The single place this mapping lives, so a label can
+ * never drift out of sync with which engine is actually running -- see the
+ * bug this replaced, where `player.ts` hardcoded "Supertonic" into the
+ * buffering message regardless of `ttsProvider`.
+ */
+export const SPEECH_ENGINE_LABELS: Record<SpeechEngineId, string> = {
+  supertonic: "Supertonic",
+  fish: "Fish Audio",
+};
+
 export interface SpeechVoice {
   id: string;
   name: string;
