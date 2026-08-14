@@ -129,6 +129,76 @@ describe("imports store", () => {
     expect(useImportsStore.getState().error).toContain("network died");
   });
 
+  // The four tests below exist to kill specific mutants. `start` clears stale
+  // status in three places — on entry, on success, and on failure — and every
+  // one of those clears survives deletion unless a test seeds a non-null value
+  // first. `beforeEach` resets the store to all-null, so asserting `toBeNull()`
+  // after a fresh success asserts against a value that was already null.
+
+  it("clears a stale error the moment a new import starts", () => {
+    const pending = deferred<string>();
+    useImportsStore.setState({ error: "Import failed: network died" });
+
+    void useImportsStore.getState().start({
+      bookId: "bio-1764",
+      title: "General Biology",
+      run: () => pending.promise,
+    });
+
+    // Asserted while the import is still in flight: this pins the clear to the
+    // entry `set`, not the one on the success path.
+    expect(useImportsStore.getState().active?.bookId).toBe("bio-1764");
+    expect(useImportsStore.getState().error).toBeNull();
+
+    pending.resolve("doc-1");
+  });
+
+  it("clears a stale completion the moment a new import starts", () => {
+    const pending = deferred<string>();
+    useImportsStore.setState({ completed: { documentId: "doc-0", title: "Chemistry" } });
+
+    void useImportsStore.getState().start({
+      bookId: "bio-1764",
+      title: "General Biology",
+      run: () => pending.promise,
+    });
+
+    expect(useImportsStore.getState().active?.bookId).toBe("bio-1764");
+    expect(useImportsStore.getState().completed).toBeNull();
+
+    pending.resolve("doc-1");
+  });
+
+  it("clears a stale error when an import succeeds", async () => {
+    await useImportsStore.getState().start({
+      bookId: "bio-1764",
+      title: "General Biology",
+      run: async () => {
+        // Seeded mid-flight so the entry clear cannot be what satisfies the
+        // assertion — only the success path can clear this one.
+        useImportsStore.setState({ error: "Import failed: network died" });
+        return "doc-1";
+      },
+    });
+
+    expect(useImportsStore.getState().completed?.documentId).toBe("doc-1");
+    expect(useImportsStore.getState().error).toBeNull();
+  });
+
+  it("clears a stale completion when an import fails", async () => {
+    await useImportsStore.getState().start({
+      bookId: "bio-1764",
+      title: "General Biology",
+      run: async () => {
+        useImportsStore.setState({ completed: { documentId: "doc-0", title: "Chemistry" } });
+        throw new Error("network died");
+      },
+    });
+
+    expect(useImportsStore.getState().error).toContain("network died");
+    expect(useImportsStore.getState().completed).toBeNull();
+  });
+
   it("allows a new import after the previous one finishes", async () => {
     await useImportsStore.getState().start({
       bookId: "bio-1764",
