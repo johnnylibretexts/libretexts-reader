@@ -4,6 +4,7 @@ use tauri::State;
 use crate::commands::chapter_tts;
 use crate::db::connection::DbPool;
 use crate::error::{AppError, AppResult};
+use crate::tts::provider::TtsProvider;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,12 +74,92 @@ pub async fn synthesize_speech(
 
     let voice = request.voice_id.clone().unwrap_or_default();
     let language = request.language.clone().unwrap_or_default();
-    let audio = provider
-        .synthesize(text, &voice, &language, request.speed)
-        .await?;
+    synthesize_with(provider.as_ref(), text, &voice, &language, request.speed).await
+}
+
+/// The non-Supertonic half of `synthesize_speech`, pulled out so a test can
+/// hand it a stub `TtsProvider` and inspect exactly what reached
+/// `synthesize` -- the same reason `cache_path_in` takes a root instead of
+/// calling `paths::cache_dir()`, or `provider_for` takes a `ProviderSettings`
+/// instead of a `DbPool`. Without this seam, nothing in the test suite calls
+/// the line that forwards `speed`, so a regression back to a hardcoded value
+/// would compile and pass every test.
+async fn synthesize_with(
+    provider: &dyn TtsProvider,
+    text: &str,
+    voice: &str,
+    language: &str,
+    speed: f32,
+) -> AppResult<SpeechAudio> {
+    let audio = provider.synthesize(text, voice, language, speed).await?;
 
     Ok(SpeechAudio {
         audio,
         mime_type: "audio/mpeg".to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tts::provider::VoiceSummary;
+
+    #[derive(Debug, Default)]
+    struct StubProvider {
+        received_speed: std::sync::Mutex<Option<f32>>,
+    }
+
+    #[async_trait::async_trait]
+    impl TtsProvider for StubProvider {
+        fn id(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn synthesize(
+            &self,
+            text: &str,
+            _voice: &str,
+            _language: &str,
+            speed: f32,
+        ) -> AppResult<Vec<u8>> {
+            *self.received_speed.lock().expect("speed lock") = Some(speed);
+            Ok(text.as_bytes().to_vec())
+        }
+
+        async fn ensure_ready(&self) -> AppResult<()> {
+            Ok(())
+        }
+
+        async fn list_voices(&self) -> AppResult<Vec<VoiceSummary>> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn synthesize_with_forwards_the_requested_speed_unchanged() {
+        // A distinctive, non-default value: 1.0 would still pass if the call
+        // site regressed to hardcoding the default speed instead of
+        // forwarding the caller's.
+        let stub = StubProvider::default();
+
+        synthesize_with(&stub, "hello", "voice-1", "en", 1.75)
+            .await
+            .expect("synthesize_with should succeed");
+
+        assert_eq!(*stub.received_speed.lock().expect("speed lock"), Some(1.75));
+    }
+
+    #[tokio::test]
+    async fn synthesize_with_returns_the_mp3_mime_type() {
+        // TtsProvider::synthesize always returns encoded MP3 bytes -- the
+        // response has to say so, since playback picks its decoder from
+        // this field.
+        let stub = StubProvider::default();
+
+        let audio = synthesize_with(&stub, "hello", "voice-1", "en", 1.0)
+            .await
+            .expect("synthesize_with should succeed");
+
+        assert_eq!(audio.mime_type, "audio/mpeg");
+    }
 }
