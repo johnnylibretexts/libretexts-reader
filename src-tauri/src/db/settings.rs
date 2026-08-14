@@ -78,6 +78,7 @@ fn default_settings() -> AppResult<Vec<(&'static str, Value)>> {
         ("tts_provider", json!("supertonic")),
         ("supertonic_voice_style", json!("M1")),
         ("supertonic_language", json!("en")),
+        ("fish_voice_id", json!(null)),
     ])
 }
 
