@@ -79,6 +79,20 @@ webview at all.
                               api.fish.audio
 ```
 
+### Dispatch reads the request, never the settings table
+
+"Rust dispatches by provider" must not be read as "Rust looks up `tts_provider`". The doc
+comment on `commands::tts::synthesize_speech` records that the command **deliberately stopped**
+reading that setting: the webview already decides which engine speaks, and deciding a second
+time in Rust from a different source, with no ordering guarantee between the two, is the bug
+that change removed. It also made the command fail by default, because the seeded provider was
+not the one it served.
+
+So the provider travels as a **field on the request**. Rust builds the provider the caller
+named and never re-derives it. An unknown name is an error, not a fall back to a default — a
+silent default would let a frontend bug switch engines invisibly, which is the same class of
+failure again.
+
 `commands/supertonic_tts.rs` is renamed to `commands/chapter_tts.rs` as part of this work: it
 becomes the shared, provider-agnostic export path and keeping a provider's name on it would
 be actively misleading. `SupertonicChapterEstimate` and its siblings lose the prefix for the
