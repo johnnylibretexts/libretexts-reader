@@ -7,7 +7,12 @@ import { useImportsStore } from "../../stores/imports";
 import { useLibraryStore } from "../../stores/library";
 import { findImportedBook } from "../../lib/importedBooks";
 
-export function OpenStaxBrowser() {
+interface OpenStaxBrowserProps {
+  /** Same shape as LibraryGrid's callback — both open a book card in the reader. */
+  onOpenDocument: (document: { id: string; title: string }) => void;
+}
+
+export function OpenStaxBrowser({ onOpenDocument }: OpenStaxBrowserProps) {
   const [books, setBooks] = useState<Domain.OpenStaxBook[]>([]);
   const [query, setQuery] = useState("");
   const [subject, setSubject] = useState("all");
@@ -174,7 +179,9 @@ export function OpenStaxBrowser() {
                 <p className="min-h-5 min-w-0 truncate text-sm text-neutral-500 dark:text-neutral-400">
                   {activeImport?.bookId === book.uuid
                     ? formatOpenStaxProgress(activeImport)
-                    : `Edition ${book.edition}`}
+                    : imported
+                      ? "In library"
+                      : `Edition ${book.edition}`}
                 </p>
                 <div className="flex shrink-0 items-center gap-2">
                   <a
@@ -188,10 +195,20 @@ export function OpenStaxBrowser() {
                     <ExternalLink className="size-4" aria-hidden="true" />
                   </a>
                   {imported ? (
-                    <span className="inline-flex h-9 items-center gap-2 rounded-md border border-neutral-200 px-3 text-sm font-medium text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
+                    // Deliberately not disabled while another import runs:
+                    // opening a book already on disk touches nothing the
+                    // import guard protects.
+                    <button
+                      aria-label={`Open ${book.title} in the reader`}
+                      className="inline-flex h-9 items-center gap-2 rounded-md border border-neutral-200 px-3 text-sm font-medium text-neutral-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      onClick={() =>
+                        onOpenDocument({ id: imported.id, title: imported.title })
+                      }
+                      type="button"
+                    >
                       <BookOpen className="size-4" aria-hidden="true" />
-                      In library
-                    </span>
+                      Open
+                    </button>
                   ) : (
                     <button
                       className="inline-flex h-9 items-center gap-2 rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
