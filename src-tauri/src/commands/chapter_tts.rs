@@ -282,8 +282,16 @@ pub async fn export_supertonic_chapter_mp3(
 
     let settings = provider_settings_from_state(&state)?;
     let provider = provider_for(&request.provider, &settings)?;
+    // Export always renders at one fixed speed -- chosen here, not buried in
+    // the trait, since a per-request speed makes no sense for a file that is
+    // written once and played back later at whatever speed the reader picks.
     let mp3 = provider
-        .synthesize(&job.material.text, &job.voice_style, &job.language)
+        .synthesize(
+            &job.material.text,
+            &job.voice_style,
+            &job.language,
+            SUPERTONIC_DEFAULT_SPEED,
+        )
         .await?;
     if mp3.is_empty() {
         return Err(AppError::Tts(format!(

@@ -43,11 +43,11 @@ pub struct SpeechAudio {
 /// moved one field over.
 ///
 /// Supertonic keeps its own code path rather than going through
-/// `TtsProvider::synthesize`: that trait has no speed parameter (chapter
-/// export always renders at one fixed speed) and always returns MP3, while
-/// playback needs `request.speed` honoured and returns WAV. `provider_for` is
-/// still called first, so an unknown provider or a missing Fish key is
-/// rejected the same way regardless of which branch a valid one takes.
+/// `TtsProvider::synthesize`: that trait always returns MP3, while playback
+/// has always returned WAV, and routing it through the trait would add a
+/// per-sentence MP3 decode for no benefit. `provider_for` is still called
+/// first, so an unknown provider or a missing Fish key is rejected the same
+/// way regardless of which branch a valid one takes.
 #[tauri::command]
 pub async fn synthesize_speech(
     state: State<'_, DbPool>,
@@ -73,7 +73,9 @@ pub async fn synthesize_speech(
 
     let voice = request.voice_id.clone().unwrap_or_default();
     let language = request.language.clone().unwrap_or_default();
-    let audio = provider.synthesize(text, &voice, &language).await?;
+    let audio = provider
+        .synthesize(text, &voice, &language, request.speed)
+        .await?;
 
     Ok(SpeechAudio {
         audio,

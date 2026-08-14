@@ -31,10 +31,18 @@ impl TtsProvider for FishProvider {
         "fish"
     }
 
-    async fn synthesize(&self, text: &str, voice: &str, _language: &str) -> AppResult<Vec<u8>> {
+    async fn synthesize(
+        &self,
+        text: &str,
+        voice: &str,
+        _language: &str,
+        speed: f32,
+    ) -> AppResult<Vec<u8>> {
         // Fish infers language from the text across 83 languages, so the
         // language parameter is unused rather than mapped.
-        self.client.synthesize(text, &self.voice(voice)?, 1.0).await
+        self.client
+            .synthesize(text, &self.voice(voice)?, speed)
+            .await
     }
 
     async fn ensure_ready(&self) -> AppResult<()> {

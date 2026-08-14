@@ -3,7 +3,6 @@ use crate::error::AppResult;
 use crate::tts::provider::{TtsProvider, VoiceSummary};
 use crate::tts::supertonic::model::supertonic_model_status;
 use crate::tts::supertonic::voice::SUPERTONIC_VOICE_STYLES;
-use crate::tts::supertonic::SUPERTONIC_DEFAULT_SPEED;
 
 #[derive(Debug)]
 pub struct SupertonicProvider;
@@ -14,12 +13,18 @@ impl TtsProvider for SupertonicProvider {
         "supertonic"
     }
 
-    async fn synthesize(&self, text: &str, voice: &str, language: &str) -> AppResult<Vec<u8>> {
+    async fn synthesize(
+        &self,
+        text: &str,
+        voice: &str,
+        language: &str,
+        speed: f32,
+    ) -> AppResult<Vec<u8>> {
         synthesize_supertonic_mp3(
             text.to_string(),
             voice.to_string(),
             language.to_string(),
-            SUPERTONIC_DEFAULT_SPEED,
+            speed,
         )
         .await
     }
