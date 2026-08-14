@@ -140,11 +140,6 @@ Three things are known and settled from exploration:
    `src-tauri/Cargo.toml`. Decide deliberately where a user's API key lives before writing
    any code. Storing it as a plain settings row is the path of least resistance and the
    least defensible.
-3. **The CSP will block Fish until changed.** `connect-src` in
-   `src-tauri/tauri.conf.json` lists OpenStax, LibreTexts, HuggingFace, GitHub and jsDelivr.
-   `https://api.fish.audio` must be added. Note the app also claims "on-device / offline by
-   design" in `CLAUDE.md` — a cloud TTS provider needs that claim reworded, and needs to
-   degrade sanely with no network.
 
 Open questions for the B spec: where the key is stored; whether the key is validated at
 entry or first use; what the onboarding flow looks like (Fish account → developer account →
