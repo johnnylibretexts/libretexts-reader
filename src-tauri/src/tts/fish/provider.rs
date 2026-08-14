@@ -45,3 +45,37 @@ impl TtsProvider for FishProvider {
         self.client.list_voices().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider(voice_id: Option<String>) -> FishProvider {
+        // `FishClient::new` only builds a `reqwest::Client`; it never makes
+        // a request, so a dummy key is fine here.
+        FishProvider::new(FishClient::new("sk-test".to_string()).unwrap(), voice_id)
+    }
+
+    #[test]
+    fn a_non_empty_requested_voice_wins_over_the_configured_one() {
+        let provider = provider(Some("configured-voice".to_string()));
+        assert_eq!(
+            provider.voice("requested-voice").unwrap(),
+            "requested-voice"
+        );
+    }
+
+    #[test]
+    fn an_empty_requested_voice_falls_back_to_the_configured_one() {
+        let provider = provider(Some("configured-voice".to_string()));
+        assert_eq!(provider.voice("").unwrap(), "configured-voice");
+        assert_eq!(provider.voice("   ").unwrap(), "configured-voice");
+    }
+
+    #[test]
+    fn an_empty_requested_voice_with_no_configured_voice_fails_loudly() {
+        let provider = provider(None);
+        let error = provider.voice("").unwrap_err();
+        assert_eq!(error.kind(), "voice");
+    }
+}

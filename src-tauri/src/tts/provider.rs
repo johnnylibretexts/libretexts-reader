@@ -27,7 +27,9 @@ pub trait TtsProvider: Send + Sync {
     /// export path never branches on which one produced the audio.
     async fn synthesize(&self, text: &str, voice: &str, language: &str) -> AppResult<Vec<u8>>;
 
-    /// Downloads the model for Supertonic; checks the key and voice for Fish.
+    /// Reports whether the engine is usable right now. For Supertonic this
+    /// is a status check, not a download — fetching the model is a separate
+    /// command that reports progress. For Fish it checks the key and voice.
     async fn ensure_ready(&self) -> AppResult<()>;
 
     async fn list_voices(&self) -> AppResult<Vec<VoiceSummary>>;
