@@ -58,9 +58,38 @@ The app database and downloaded models/images are not stored in the repo. On mac
 
 Copying only the project folder will not copy the local library, downloaded books, TTS models, cover images, or downloaded section images. To preserve a test library across machines, copy that app data directory too. The app can also use `LIBRETEXTS_READER_APP_DATA_DIR` to point tests or local runs at a temporary data directory.
 
-## Current Work In Progress
+## Recently Landed
 
-The current change set adds:
+**There is no work in progress.** This section used to track an uncommitted change set; everything in it is merged and pushed. It is kept as a map of what the app gained most recently, newest wave first.
+
+### 3. Durable import state (2026-08-13, `97473cc`)
+
+Imports no longer die when you navigate away from a catalog. `AppShell` renders the browsers conditionally, so unmounting one killed its progress display, its event listener, and — the damaging part — its concurrency guard, so clicking Add again started a *second* concurrent import. That is how two copies of General Biology (~308 MB) got downloaded.
+
+New files a fresh reader will not otherwise find:
+
+- `src/stores/imports.ts` — module-level Zustand store owning the import lifecycle. `start()` checks `active` and sets state **synchronously before `run()` is invoked**, so even a same-tick double click is refused. `run` is injected, so the store never imports the Tauri API and its whole suite (`src/stores/imports.test.ts`) runs unmocked. Also exports `attachImportListener()`, subscribed once at app level in `AppShell.tsx:89`.
+- `src/components/ImportStatus.tsx` — progress strip in persistent chrome, outside the route switch. Catalog completion now notifies instead of navigating, so a finished import no longer yanks the reader out of the book you are in.
+- `src/lib/importedBooks.ts` — `findImportedBook`, parameterised over the metadata key because LibreTexts uses `book_id` and OpenStax uses `book_uuid`. Both browsers use it to mark already-imported books.
+
+Both catalogs disable *every* Add while an import is active, so the guard is **global across catalogs** — deliberately stronger than the bug required.
+
+Spec and plan: `docs/superpowers/specs/2026-08-13-durable-import-state-design.md`, `docs/superpowers/plans/2026-08-13-durable-import-state.md`.
+
+**Verified end to end through the UI on 2026-08-13**, all ten manual checks passing against the real library — including that navigating away and back leaves every Add disabled, and that a network failure releases the guard within the request timeout rather than stranding it.
+
+**Two things were deliberately left open — pick these up before building on the store:**
+
+1. **No regression test on the final fix wave.** A reviewer mechanically reverted the store change and re-ran the suite: all 7 tests still passed. `beforeEach` resets the store to all-null, so `expect(error).toBeNull()` after a success asserts a value that was already null — it never exercises the stale-error interleaving. A mutation-killing test seeds a non-null `error` via `useImportsStore.setState(...)` before a resolving `start()` and asserts it clears, plus the mirror for `completed`. ~15 lines. Without it, deleting `error: null` ships green.
+2. **A spec requirement no task implemented.** The spec requires an in-library card to show "In library" **with an Open action in place of + Add**; both browsers render a static span. Tell-tale: `findImportedBook` returns a full `Document` but both call sites use only its truthiness. Either implement Open or amend the spec.
+
+Also carried, each belonging with other work: `active` has no user-clearable escape if `run()` never settles (mitigated by 15–20s request timeouts; belongs with cancellation), and quitting mid-import orphans image files (belongs with the deterministic-filenames follow-on — see `6c1262c`).
+
+### 2. Kokoro removal (2026-08-13, `09d97b3`)
+
+Supertonic is now the only bundled engine. See **Next Up** below and ADR-0003 for the reasoning; migration `0007_drop_kokoro_voices` drops the `voices` table and rewrites any stored `kokoro` provider/voice id, and `db/settings.rs` additionally coerces a stored `kokoro` provider to `supertonic` on read for databases that somehow skip it. The `model_precision` setting and the whole first-run model chooser are gone with it.
+
+### 1. Math, LibreTexts imports, and figures (2026-08-13)
 
 - KaTeX-based math rendering in the reader.
 - MathML token preservation for imported textbook math.
@@ -74,9 +103,9 @@ The current change set adds:
 - OpenStax bundled catalog now has `coverUrl` values for 95 of 112 books from the OpenStax CMS books API.
 - Tauri CSP now allows OpenStax cover asset hosts: `https://assets.openstax.org` and `https://images.openstax.org`.
 
-**Status as of 2026-08-13: all of the above is committed and merged to `main`.** The worktree is clean. The list of dirty files that used to appear here is gone because there are none; use `git log` rather than `git status` to see what landed.
+**Status as of 2026-08-13: all three waves are committed, merged to `main`, and pushed to `origin`.** The worktree is clean and `main` is level with `origin/main`. The list of dirty files that used to appear here is gone because there are none; use `git log` rather than `git status` to see what landed.
 
-## Next Up — TTS direction (decided 2026-08-13, not yet started)
+## Next Up — TTS direction (decided 2026-08-13; A done, B not yet started)
 
 **Decision: drop Kokoro. Supertonic becomes the only bundled engine. Add Fish Audio as an
 optional provider where the user supplies their own API key.** Supertonic stays the default.
@@ -172,7 +201,9 @@ Design and plan: `docs/superpowers/specs/2026-08-13-rename-libretexts-reader-des
 
 **Not verified, and worth doing on the next import:** cover and figure rendering. There was no library on this machine, so the identifier/`$APPDATA` coupling has not been exercised end to end with real images. That is the one failure mode that produces no error — see `check-identifier.sh` and the asset-protocol gotcha.
 
-**Open:** issue #1 (harden the `check-identifier.sh` scope guard against two false-pass paths). An empty `~/Library/Application Support/dev.johnnyrobot.reader` may still exist; it holds nothing and can be deleted.
+**Open issues** on `johnnylibretexts/libretexts-reader` as of 2026-08-13: **#1** (harden the `check-identifier.sh` scope guard against two false-pass paths) and **#2** (the Rust test suite writes into the real macOS app-data directory — `cache_path_for_chapter` creates dirs as a side effect). **#3** (model precision is a one-way door) was closed as obsolete: the Kokoro removal deleted the setting it described.
+
+An empty `~/Library/Application Support/dev.johnnyrobot.reader` may still exist; it holds nothing and can be deleted.
 
 ## Latest Codex Session Notes
 
