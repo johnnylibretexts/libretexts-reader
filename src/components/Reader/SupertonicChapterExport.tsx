@@ -12,6 +12,7 @@ import { SPEECH_ENGINE_LABELS, speechAudioToBlob } from "../../lib/speech";
 import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
+import { requiresExportConfirmation } from "./exportGate";
 
 export function SupertonicChapterExport() {
   const document = usePlayerStore((state) => state.document);
@@ -69,6 +70,11 @@ export function SupertonicChapterExport() {
   // src-tauri/src/tts/fish/provider.rs), so a request is only sent once one
   // is configured -- matching the backend's own guard rather than racing it.
   const fishVoiceReady = !isFish || !!fishVoiceId;
+  // Nothing may be exported while the price for THIS chapter and voice is
+  // unknown -- either still in flight or never fetched. Without this, the
+  // window between a section change and its estimate resolving is a window
+  // in which a click is decided from no information at all.
+  const exportBlocked = exporting || checkingExport || estimating || !estimate;
 
   // Stop any in-flight preview playback and release its blob URL when the
   // reader view unmounts, not just when playback ends or a new preview starts.
@@ -89,8 +95,17 @@ export function SupertonicChapterExport() {
   }, [ttsProvider, section?.id]);
 
   useEffect(() => {
+    // Clear FIRST, on every dependency change, before anything async starts.
+    // Overwriting the estimate only once the new one resolves left the
+    // previous chapter's (or voice's) value readable for the whole round
+    // trip, and `requestExport` read it to decide whether to gate -- so
+    // moving to a new section and clicking Generate before the estimate
+    // landed sent an unconfirmed billed Fish request priced at the previous
+    // section's "cached, costs nothing". Nothing may read a stale estimate,
+    // so no stale estimate may exist.
+    setEstimate(null);
+
     if (!document || !section || !fishVoiceReady) {
-      setEstimate(null);
       setEstimateError(null);
       return;
     }
@@ -203,24 +218,25 @@ export function SupertonicChapterExport() {
     }
   }
 
-  // The gate: a billed export (`billableCharacters > 0`) stops here and
-  // waits for an explicit confirmation naming the provider and the
-  // character count, instead of calling the export command immediately.
+  // The gate: a billed export stops here and waits for an explicit
+  // confirmation naming the provider and the character count, instead of
+  // calling the export command immediately. The decision itself lives in
+  // `requiresExportConfirmation` (./exportGate.ts) so it can be unit-tested
+  // exhaustively -- see that file for why each case decides as it does.
   //
-  // A forced export (Regenerate) re-synthesises even an already-cached
-  // chapter -- a real, billed Fish request -- so the stale `estimate` state
-  // (computed with `force: false` by the effect above) cannot be trusted to
-  // decide this: for an already-exported Fish chapter it reads
-  // `billableCharacters: 0` because the chapter is cached, which would skip
-  // the gate for a request that is very much not free. Recompute the
-  // estimate with the real `force` flag first, and gate on that. See
-  // `billable_characters` in src-tauri/src/commands/chapter_tts.rs, which
-  // takes the same `force` flag for the same reason.
+  // EVERY Fish request refetches the estimate first, not just the forced
+  // ones. The estimate held in state is computed by an effect that knows
+  // nothing about `force` and lags a section or voice change by a network
+  // round trip; deciding a billed request from it is deciding from a price
+  // that may belong to a different request. Refetching here binds the
+  // estimate to the exact chapter, voice and force flag being requested, and
+  // `requiresExportConfirmation` refuses to proceed on a null one, so the
+  // two failure modes (stale value, no value) are both closed.
   async function requestExport(force: boolean) {
     setError(null);
 
     let relevantEstimate = estimate;
-    if (force && isFish) {
+    if (isFish) {
       setCheckingExport(true);
       try {
         relevantEstimate = await api.estimateSupertonicChapter({
@@ -229,7 +245,7 @@ export function SupertonicChapterExport() {
           provider: ttsProvider,
           voiceStyle: fishVoiceId,
           language: null,
-          force: true,
+          force,
         });
         setEstimate(relevantEstimate);
       } catch (error) {
@@ -240,7 +256,13 @@ export function SupertonicChapterExport() {
       }
     }
 
-    if ((relevantEstimate?.billableCharacters ?? 0) > 0) {
+    if (
+      requiresExportConfirmation({
+        estimate: relevantEstimate,
+        force,
+        provider: ttsProvider,
+      })
+    ) {
       setPendingExport({ force });
       void refreshFishCredit();
       return;
@@ -375,7 +397,7 @@ export function SupertonicChapterExport() {
 
         <button
           className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-brand-700 px-4 text-sm font-medium text-white hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={exporting || checkingExport || !fishVoiceReady}
+          disabled={exportBlocked || !fishVoiceReady}
           onClick={() => void requestExport(false)}
           type="button"
         >
@@ -391,7 +413,7 @@ export function SupertonicChapterExport() {
 
         <button
           className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          disabled={exporting || checkingExport || !fishVoiceReady}
+          disabled={exportBlocked || !fishVoiceReady}
           onClick={() => void requestExport(true)}
           type="button"
         >
