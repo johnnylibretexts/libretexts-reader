@@ -247,6 +247,15 @@ mod tests {
 
         assert_ne!(supertonic, fish, "provider must change the path");
         assert_ne!(fish, other_model, "model must change the path");
+
+        // Same model, different provider: this is the assertion that fails if
+        // `provider` is ever dropped from the hash. The provider-vs-model
+        // comparison above varies both at once and so cannot catch it.
+        assert_ne!(
+            cache_path_in(root, "supertonic", "v1", &material("Hello."), "M1", "en"),
+            cache_path_in(root, "fish", "v1", &material("Hello."), "M1", "en"),
+            "provider alone must change the path"
+        );
     }
 
     #[test]
