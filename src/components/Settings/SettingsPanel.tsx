@@ -259,7 +259,13 @@ export function SettingsPanel() {
                   : "border-neutral-200 hover:bg-stone-100 dark:border-neutral-800 dark:hover:bg-neutral-800"
               }`}
               key={provider.id}
-              onClick={() => void setTtsProvider(provider.id)}
+              onClick={() => {
+                // setTtsProvider rethrows on a failed persist; this button
+                // doesn't await it, so it must catch here or the rejection
+                // goes unhandled. The `error` block below already renders
+                // the store's shared error field on failure.
+                void setTtsProvider(provider.id).catch(() => {});
+              }}
               type="button"
             >
               <span className="block font-medium">{provider.label}</span>

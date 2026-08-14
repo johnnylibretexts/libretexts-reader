@@ -107,26 +107,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     try {
       await api.setSetting("theme", theme);
     } catch (error) {
-      set({
-        error: displayError(error),
-      });
+      // Set the shared banner message, then rethrow so a caller awaiting
+      // this call sees the same failure via its own try/catch rather than
+      // having to read this store's mutable `error` field, which a
+      // concurrent unrelated action could overwrite or clear first. Every
+      // call site must catch this — see Sidebar.tsx.
+      set({ error: displayError(error) });
+      throw error;
     }
   },
-  /**
-   * Intentionally retained with no caller today — its only caller (a
-   * provider `<select>`) was removed earlier in this branch. It is part of
-   * the seam a follow-on spec extends to add a second, cloud-based TTS
-   * provider; do not delete it as dead code.
-   */
   setTtsProvider: async (provider: TtsProvider) => {
     set({ ttsProvider: provider, error: null });
 
     try {
       await api.setSetting("tts_provider", provider);
     } catch (error) {
-      set({
-        error: displayError(error),
-      });
+      // See the rethrow note on setTheme above; the same reasoning applies.
+      set({ error: displayError(error) });
+      throw error;
     }
   },
   saveTtsSettings: async (ttsSettings: TtsSettingsPatch) => {
@@ -162,9 +160,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         api.setSetting("fish_voice_id", fishVoiceId),
       ]);
     } catch (error) {
-      set({
-        error: displayError(error),
-      });
+      // See the rethrow note on setTheme above; the same reasoning applies.
+      set({ error: displayError(error) });
+      throw error;
     }
   },
 }));

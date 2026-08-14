@@ -182,15 +182,13 @@ export function FishAudioSettings({
     setVoiceError(null);
     setVoiceSaved(false);
     try {
+      // saveTtsSettings rethrows on a failed persist (after recording the
+      // message in the shared settings store for the banner elsewhere), so
+      // this ordinary try/catch is what detects a failure -- not a read of
+      // the store's mutable `error` field, which a concurrent unrelated
+      // settings action (e.g. a Supertonic save in flight) could otherwise
+      // overwrite or clear out from under this call.
       await saveTtsSettings({ fishVoiceId: trimmed });
-      // saveTtsSettings swallows its own failures into the shared settings
-      // store rather than rejecting (see stores/settings.ts), so a failed
-      // persist is detected here rather than via a caught rejection.
-      const storeError = useSettingsStore.getState().error;
-      if (storeError) {
-        setVoiceError(storeError);
-        return;
-      }
       setCustomVoiceId("");
       setVoiceSaved(true);
       window.setTimeout(() => setVoiceSaved(false), 1600);
@@ -201,9 +199,20 @@ export function FishAudioSettings({
     }
   }
 
-  const selectedKnownVoice =
-    fishVoiceId && voices?.some((voice) => voice.id === fishVoiceId)
-      ? fishVoiceId
+  // A sentinel, not a real Fish voice id, so it can never collide with one.
+  const PASTED_VOICE_OPTION = "__pasted-voice__";
+
+  const isKnownVoice =
+    !!fishVoiceId && !!voices?.some((voice) => voice.id === fishVoiceId);
+  // The common case: the reader's chosen voice is a public model they don't
+  // own, so it never appears in `voices` (their own models only). Without
+  // this, the <select> falls back to its blank "Choose a voice" option and
+  // reads as "nothing selected" even though a voice is very much in effect.
+  const isPastedVoice = !!fishVoiceId && !isKnownVoice;
+  const selectedVoiceOption = isKnownVoice
+    ? (fishVoiceId as string)
+    : isPastedVoice
+      ? PASTED_VOICE_OPTION
       : "";
 
   return (
@@ -333,17 +342,25 @@ export function FishAudioSettings({
               className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
               disabled={savingVoice}
               onChange={(event) => {
-                if (event.target.value) {
+                if (
+                  event.target.value &&
+                  event.target.value !== PASTED_VOICE_OPTION
+                ) {
                   void persistVoice(event.target.value);
                 }
               }}
-              value={selectedKnownVoice}
+              value={selectedVoiceOption}
             >
               <option value="">
                 {voices && voices.length > 0
                   ? "Choose a voice"
                   : "No voice models yet"}
               </option>
+              {isPastedVoice ? (
+                <option value={PASTED_VOICE_OPTION}>
+                  Using a pasted voice id (current)
+                </option>
+              ) : null}
               {voices?.map((voice) => (
                 <option
                   disabled={!voice.ready}
