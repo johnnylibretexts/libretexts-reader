@@ -59,7 +59,7 @@ pub async fn synthesize_speech(
         return Err(AppError::InvalidInput("text is required".into()));
     }
 
-    let settings = chapter_tts::provider_settings_from_state(&state)?;
+    let settings = chapter_tts::provider_settings_from_state(&state, &request.provider)?;
     let provider = chapter_tts::provider_for(&request.provider, &settings)?;
 
     if provider.id() == "supertonic" {

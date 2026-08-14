@@ -19,6 +19,23 @@ pub struct VoiceSummary {
     pub ready: bool,
 }
 
+/// The name a provider goes by in anything a person reads — today, the
+/// exported MP3's filename.
+///
+/// Mirrors `SPEECH_ENGINE_LABELS` in `src/lib/speech/types.ts`; the same
+/// reason that exists here too, so a filename can never claim one engine
+/// produced audio that another did. An unrecognised name passes through
+/// unchanged rather than erroring: this only decides a filename, and
+/// `model_for_provider` has already rejected an unknown provider long before
+/// an export reaches it.
+pub fn provider_display_name(provider: &str) -> &str {
+    match provider {
+        "supertonic" => "Supertonic",
+        "fish" => "Fish Audio",
+        other => other,
+    }
+}
+
 #[async_trait::async_trait]
 pub trait TtsProvider: Send + Sync + std::fmt::Debug {
     fn id(&self) -> &'static str;

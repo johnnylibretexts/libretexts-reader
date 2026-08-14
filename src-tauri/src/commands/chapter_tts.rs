@@ -359,7 +359,7 @@ pub async fn export_supertonic_chapter_mp3(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let settings = provider_settings_from_state(&state)?;
+    let settings = provider_settings_from_state(&state, &request.provider)?;
     let provider = provider_for(&request.provider, &settings)?;
     // Export always renders at one fixed speed -- chosen here, not buried in
     // the trait, since a per-request speed makes no sense for a file that is
@@ -438,14 +438,18 @@ fn supertonic_config_from_state(state: &State<'_, DbPool>) -> AppResult<Superton
 /// Kept out of `provider_for` itself so that function stays pure: this is the
 /// one place a command reaches the DB pool and `KeyringSecretStore` before
 /// handing plain values to the dispatcher.
+///
+/// Takes the provider the caller asked for so the keychain is only touched
+/// when the answer can matter — see `fish_api_key_for`.
 pub(crate) fn provider_settings_from_state(
     state: &State<'_, DbPool>,
+    provider: &str,
 ) -> AppResult<ProviderSettings> {
     let conn = state.get()?;
     let values = settings::get_all_settings(&conn)?;
     let config = SupertonicConfig::from_settings(&values)?;
     let fish_voice_id = crate::tts::supertonic::optional_setting_string(&values, "fish_voice_id");
-    let fish_api_key = KeyringSecretStore::new(FISH_KEY_ACCOUNT).get()?;
+    let fish_api_key = fish_api_key_for(provider, &KeyringSecretStore::new(FISH_KEY_ACCOUNT))?;
 
     Ok(ProviderSettings {
         supertonic_voice_style: config.voice_style,
@@ -453,6 +457,35 @@ pub(crate) fn provider_settings_from_state(
         fish_voice_id,
         fish_api_key,
     })
+}
+
+/// The Fish key, read only when a Fish request actually needs it.
+///
+/// This used to be an unconditional `KeyringSecretStore::get()?` on the way
+/// to every synthesis, including Supertonic's. A keychain that cannot be read
+/// — no secret-service daemon on Linux, a locked or access-denied keychain on
+/// macOS — is an `AppError::Auth`, and the `?` turned that into a hard failure
+/// of the bundled offline engine for a user who has no Fish key and never
+/// asked for one. The README promises Supertonic works with "no account, no
+/// key, no network"; an optional cloud provider must not be able to take that
+/// away.
+///
+/// So the read is scoped to the one provider that can use the result. A Fish
+/// request still surfaces the keychain error, because for Fish it is the real
+/// reason the request cannot proceed.
+///
+/// Takes `&dyn SecretStore` rather than calling the keyring directly for the
+/// same reason `cache_path_in` takes a root: a test can hand it a failing
+/// store without going near the developer's login keychain.
+pub(crate) fn fish_api_key_for(
+    provider: &str,
+    store: &dyn SecretStore,
+) -> AppResult<Option<String>> {
+    if provider != "fish" {
+        return Ok(None);
+    }
+
+    store.get()
 }
 
 fn chapter_material(
@@ -572,6 +605,71 @@ mod dispatch_tests {
             fish_api_key: None,
         };
         assert_eq!(provider_for("fish", &settings).unwrap_err().kind(), "auth");
+    }
+
+    /// A keychain that refuses every read: no secret-service daemon on Linux,
+    /// a locked or access-denied login keychain on macOS. Injected rather
+    /// than provoked, so this test never goes near the real keychain.
+    #[derive(Debug)]
+    struct FailingSecretStore;
+
+    impl SecretStore for FailingSecretStore {
+        fn set(&self, _secret: &str) -> AppResult<()> {
+            Err(AppError::Auth("cannot open the system keychain".into()))
+        }
+
+        fn get(&self) -> AppResult<Option<String>> {
+            Err(AppError::Auth("cannot open the system keychain".into()))
+        }
+
+        fn clear(&self) -> AppResult<()> {
+            Err(AppError::Auth("cannot open the system keychain".into()))
+        }
+    }
+
+    #[test]
+    fn a_supertonic_request_survives_a_keychain_that_cannot_be_read() {
+        // The whole point of the bundled engine: it works with no account, no
+        // key and no network. Reading the Fish key on the way to every
+        // synthesis made a keychain failure abort Supertonic playback for a
+        // user who has no Fish key and never wanted one.
+        let key = fish_api_key_for("supertonic", &FailingSecretStore)
+            .expect("a Supertonic request must not read the Fish key at all");
+        assert_eq!(key, None);
+
+        let settings = ProviderSettings {
+            supertonic_voice_style: "M1".into(),
+            supertonic_language: "en".into(),
+            fish_voice_id: None,
+            fish_api_key: key,
+        };
+        assert_eq!(
+            provider_for("supertonic", &settings).unwrap().id(),
+            "supertonic"
+        );
+    }
+
+    #[test]
+    fn a_fish_request_still_surfaces_the_keychain_failure() {
+        // Scoping the read must not swallow it: for Fish the keychain error
+        // is the actual reason the request cannot proceed.
+        assert_eq!(
+            fish_api_key_for("fish", &FailingSecretStore)
+                .unwrap_err()
+                .kind(),
+            "auth"
+        );
+    }
+
+    #[test]
+    fn a_fish_request_reads_the_key_it_was_given() {
+        let store = crate::secrets::MemorySecretStore::default();
+        store.set("sk-test").expect("set");
+
+        assert_eq!(
+            fish_api_key_for("fish", &store).expect("read"),
+            Some("sk-test".to_string())
+        );
     }
 }
 

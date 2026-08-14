@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::AppResult;
 use crate::paths;
+use crate::tts::provider::provider_display_name;
 use crate::tts::supertonic::chunk::{chunk_text_for_language, count_words};
 use crate::tts::supertonic::{
     ChapterEstimate, ChapterMaterial, ChapterRequest, SupertonicConfig, SUPERTONIC_TOTAL_STEPS,
@@ -65,13 +66,34 @@ pub(crate) fn output_path_for_chapter(
     let directory = PathBuf::from(&config.export_directory)
         .join(sanitize_file_component(&material.document.title, 80));
     let filename = format!(
-        "{:03} - {} - Supertonic - {} - {}.mp3",
+        "{:03} - {} - {} - {} - {}.mp3",
         material.section.ordinal + 1,
         sanitize_file_component(&material.section.title, 72),
-        sanitize_file_component(voice_style, 16),
+        // Not the literal "Supertonic" it used to be: a Fish export wrote a
+        // file whose name said Supertonic had produced it.
+        sanitize_file_component(provider_display_name(&request.provider), 16),
+        voice_file_component(voice_style),
         sanitize_file_component(language, 8)
     );
     directory.join(filename)
+}
+
+/// The voice part of an export filename, kept short without becoming ambiguous.
+///
+/// Supertonic voice styles are two characters, so 16 was plenty. A Fish
+/// `reference_id` is an opaque 32+ character model id, and truncating two of
+/// them to a shared 16-character prefix would give two different voices the
+/// same output path — one export silently overwriting the other. (The cache
+/// path is unaffected: it hashes the full voice id.) When truncation actually
+/// discards anything, a short digest of the full id goes back on the end.
+fn voice_file_component(voice_style: &str) -> String {
+    let short = sanitize_file_component(voice_style, 16);
+    if short == sanitize_file_component(voice_style, usize::MAX) {
+        return short;
+    }
+
+    let digest = hex::encode(Sha256::digest(voice_style.as_bytes()));
+    format!("{short} {}", &digest[..8])
 }
 
 /// Derive the content-addressed cache path under an explicitly supplied root.
@@ -299,6 +321,92 @@ mod tests {
             !Path::new("/nonexistent").exists(),
             "deriving a cache path must not create directories"
         );
+    }
+
+    fn config() -> SupertonicConfig {
+        SupertonicConfig {
+            voice_style: "M1".into(),
+            language: "en".into(),
+            export_directory: "/nonexistent/exports".into(),
+        }
+    }
+
+    fn request(provider: &str) -> ChapterRequest {
+        ChapterRequest {
+            document_id: "doc-1".into(),
+            section_id: "sec-1".into(),
+            provider: provider.to_string(),
+            voice_style: None,
+            language: None,
+            output_path: None,
+            force: None,
+        }
+    }
+
+    #[test]
+    fn the_output_filename_names_the_provider_that_produced_the_audio() {
+        // The filename used to hardcode "Supertonic", so a Fish export landed
+        // on disk claiming an engine that had nothing to do with it.
+        let fish = output_path_for_chapter(
+            &config(),
+            &material("Hello."),
+            "d8ee9d1a-6f3e-4b8a",
+            "en",
+            &request("fish"),
+        );
+        assert!(
+            path_to_string(&fish).contains("Fish Audio"),
+            "a Fish export must say Fish Audio: {}",
+            path_to_string(&fish)
+        );
+        assert!(!path_to_string(&fish).contains("Supertonic"));
+
+        let supertonic = output_path_for_chapter(
+            &config(),
+            &material("Hello."),
+            "M1",
+            "en",
+            &request("supertonic"),
+        );
+        assert!(path_to_string(&supertonic).contains("Supertonic"));
+    }
+
+    #[test]
+    fn two_voice_ids_sharing_a_prefix_do_not_collide_on_the_output_path() {
+        // Fish reference_ids are opaque 32+ character model ids. Truncated to
+        // 16 characters, these two are identical -- one export would silently
+        // overwrite the other's file.
+        let first = "d8ee9d1a6f3e4b8a9c1d000000000001";
+        let second = "d8ee9d1a6f3e4b8a9c1d000000000002";
+        assert_eq!(
+            &first[..16],
+            &second[..16],
+            "the ids must actually share a 16-character prefix, or this test proves nothing"
+        );
+
+        assert_ne!(
+            output_path_for_chapter(
+                &config(),
+                &material("Hello."),
+                first,
+                "en",
+                &request("fish")
+            ),
+            output_path_for_chapter(
+                &config(),
+                &material("Hello."),
+                second,
+                "en",
+                &request("fish")
+            ),
+        );
+    }
+
+    #[test]
+    fn a_short_voice_style_is_left_exactly_as_it_was() {
+        // Supertonic's two-character styles never truncate, so nothing is
+        // appended to them and existing export filenames are unchanged.
+        assert_eq!(voice_file_component("M1"), "M1");
     }
 
     #[test]

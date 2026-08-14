@@ -65,15 +65,26 @@ impl FishClient {
         })
     }
 
-    pub async fn synthesize(&self, text: &str, voice_id: &str, speed: f32) -> AppResult<Vec<u8>> {
-        let response = self
-            .http
+    /// The synthesis request, built but not sent.
+    ///
+    /// Separated from `synthesize` so a test can inspect the headers the
+    /// request actually carries -- Fish picks the model from the `model`
+    /// header and silently falls back to a different one when it is missing
+    /// or unrecognised, and that model is hashed into the audio cache key, so
+    /// a wrong header would pin cached audio to a model nobody chose and
+    /// every later run would hit that cache and never reveal it. Asserting
+    /// `FISH_MODEL == "s2.1-pro"` proves nothing about the request; building
+    /// it and reading the header back does.
+    fn tts_request(&self, text: &str, voice_id: &str, speed: f32) -> reqwest::RequestBuilder {
+        self.http
             .post(format!("{}/v1/tts", self.base_url))
             .bearer_auth(&self.api_key)
             .header("model", FISH_MODEL)
             .json(&tts_request_body(text, voice_id, speed))
-            .send()
-            .await?;
+    }
+
+    pub async fn synthesize(&self, text: &str, voice_id: &str, speed: f32) -> AppResult<Vec<u8>> {
+        let response = self.tts_request(text, voice_id, speed).send().await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -179,6 +190,27 @@ mod tests {
         assert_eq!(body["reference_id"], "voice-abc");
         assert_eq!(body["format"], "mp3");
         assert_eq!(body["prosody"]["speed"], 1.25);
+    }
+
+    #[test]
+    fn the_synthesis_request_carries_the_paid_model_in_its_header() {
+        // Built, never sent: no network, no key required beyond a placeholder.
+        // This replaces an assertion that FISH_MODEL equalled its own literal,
+        // which could only fail if someone edited both lines at once.
+        let client = FishClient::new("sk-not-a-real-key".into()).expect("client");
+        let request = client
+            .tts_request("Hello.", "voice-abc", 1.0)
+            .build()
+            .expect("the request must build");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("model")
+                .expect("the model header selects the engine and must be present"),
+            FISH_MODEL
+        );
+        assert_eq!(request.url().path(), "/v1/tts");
     }
 
     #[test]
