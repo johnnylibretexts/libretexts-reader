@@ -9,9 +9,18 @@ import {
 } from "../../lib/supertonic";
 import { displayError } from "../../lib/errors";
 import { speechAudioToBlob } from "../../lib/speech";
-import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
+import {
+  api,
+  type FishKeyStatus,
+  type SupertonicChapterEstimate,
+} from "../../lib/tauri";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
+
+const PROVIDER_LABEL: Record<string, string> = {
+  supertonic: "Supertonic",
+  fish: "Fish Audio",
+};
 
 export function SupertonicChapterExport() {
   const document = usePlayerStore((state) => state.document);
@@ -20,6 +29,8 @@ export function SupertonicChapterExport() {
     (state) => state.currentSectionIndex,
   );
   const paragraphs = usePlayerStore((state) => state.paragraphs);
+  const ttsProvider = useSettingsStore((state) => state.ttsProvider);
+  const fishVoiceId = useSettingsStore((state) => state.fishVoiceId);
   const defaultVoiceStyle = useSettingsStore(
     (state) => state.supertonicVoiceStyle,
   );
@@ -38,6 +49,17 @@ export function SupertonicChapterExport() {
   const [exporting, setExporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set instead of exporting directly whenever the estimate says this export
+  // is billed. Cleared on confirm or cancel; never auto-dismissed, so a
+  // slow credit-balance fetch cannot let the export through before the
+  // reader has seen it.
+  const [pendingExport, setPendingExport] = useState<{
+    force: boolean;
+  } | null>(null);
+  const [fishCreditStatus, setFishCreditStatus] =
+    useState<FishKeyStatus | null>(null);
+  const [fishCreditLoading, setFishCreditLoading] = useState(false);
+  const [fishCreditError, setFishCreditError] = useState<string | null>(null);
 
   const section = sections[currentSectionIndex] ?? null;
   const sampleText = useMemo(
@@ -46,6 +68,12 @@ export function SupertonicChapterExport() {
       "",
     [paragraphs],
   );
+  const isFish = ttsProvider === "fish";
+  const providerLabel = PROVIDER_LABEL[ttsProvider] ?? ttsProvider;
+  // Fish has no sensible built-in voice (see FishProvider::voice in
+  // src-tauri/src/tts/fish/provider.rs), so a request is only sent once one
+  // is configured -- matching the backend's own guard rather than racing it.
+  const fishVoiceReady = !isFish || !!fishVoiceId;
 
   // Stop any in-flight preview playback and release its blob URL when the
   // reader view unmounts, not just when playback ends or a new preview starts.
@@ -59,9 +87,16 @@ export function SupertonicChapterExport() {
     setLanguage(defaultLanguage);
   }, [defaultLanguage]);
 
+  // A provider or section change invalidates any confirmation already on
+  // screen -- it named a character count and provider that no longer apply.
   useEffect(() => {
-    if (!document || !section) {
+    setPendingExport(null);
+  }, [ttsProvider, section?.id]);
+
+  useEffect(() => {
+    if (!document || !section || !fishVoiceReady) {
       setEstimate(null);
+      setEstimateError(null);
       return;
     }
 
@@ -72,9 +107,9 @@ export function SupertonicChapterExport() {
       .estimateSupertonicChapter({
         documentId: document.id,
         sectionId: section.id,
-        provider: "supertonic",
-        voiceStyle,
-        language,
+        provider: ttsProvider,
+        voiceStyle: isFish ? fishVoiceId : voiceStyle,
+        language: isFish ? null : language,
       })
       .then((result) => {
         if (!cancelled) {
@@ -96,7 +131,16 @@ export function SupertonicChapterExport() {
     return () => {
       cancelled = true;
     };
-  }, [document, language, section, voiceStyle]);
+  }, [
+    document,
+    fishVoiceId,
+    fishVoiceReady,
+    isFish,
+    language,
+    section,
+    ttsProvider,
+    voiceStyle,
+  ]);
 
   if (!document || !section) {
     return null;
@@ -133,7 +177,7 @@ export function SupertonicChapterExport() {
     }
   }
 
-  async function exportChapter(force = false) {
+  async function runExport(force: boolean) {
     setExporting(true);
     setError(null);
     setStatus(
@@ -141,13 +185,15 @@ export function SupertonicChapterExport() {
     );
 
     try {
-      await persistSupertonicDefaults();
+      if (!isFish) {
+        await persistSupertonicDefaults();
+      }
       const result = await api.exportSupertonicChapterMp3({
         documentId: activeDocument.id,
         sectionId: activeSection.id,
-        provider: "supertonic",
-        voiceStyle,
-        language,
+        provider: ttsProvider,
+        voiceStyle: isFish ? fishVoiceId : voiceStyle,
+        language: isFish ? null : language,
         force,
       });
       setEstimate(result.estimate);
@@ -162,13 +208,52 @@ export function SupertonicChapterExport() {
     }
   }
 
+  // The gate: a billed export (`billableCharacters > 0`, which is only ever
+  // true for an uncached Fish chapter -- see `billable_characters` in
+  // src-tauri/src/commands/chapter_tts.rs) stops here and waits for an
+  // explicit confirmation naming the provider and the character count,
+  // instead of calling the export command immediately.
+  function requestExport(force: boolean) {
+    setError(null);
+    if ((estimate?.billableCharacters ?? 0) > 0) {
+      setPendingExport({ force });
+      void refreshFishCredit();
+      return;
+    }
+    void runExport(force);
+  }
+
+  async function refreshFishCredit() {
+    setFishCreditLoading(true);
+    setFishCreditError(null);
+    try {
+      // No network call -- getFishKeyStatus reads what was last learned
+      // about the key, so this is safe to call every time the gate opens.
+      const status = await api.getFishKeyStatus();
+      setFishCreditStatus(status);
+    } catch (error) {
+      setFishCreditError(displayError(error));
+    } finally {
+      setFishCreditLoading(false);
+    }
+  }
+
+  function confirmExport() {
+    if (!pendingExport) {
+      return;
+    }
+    const { force } = pendingExport;
+    setPendingExport(null);
+    void runExport(force);
+  }
+
   return (
     <section className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="inline-flex items-center gap-2 text-base font-semibold">
             <FileAudio className="size-4 text-brand-700" aria-hidden="true" />
-            Supertonic chapter MP3
+            {providerLabel} chapter MP3
           </h2>
           <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
             {section.title}
@@ -195,59 +280,73 @@ export function SupertonicChapterExport() {
         </div>
       </div>
 
+      {isFish ? (
+        <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
+          {fishVoiceId
+            ? `Voice: ${fishVoiceId}. Preview is not available for Fish Audio; export bills your account for uncached chapters.`
+            : "No Fish Audio voice is configured. Choose one in Settings before exporting."}
+        </p>
+      ) : null}
+
       <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(10rem,0.25fr)_minmax(12rem,0.32fr)_auto_auto_auto]">
-        <label className="flex flex-col gap-2 text-sm font-medium">
-          Voice
-          <select
-            className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-            onChange={(event) =>
-              setVoiceStyle(event.target.value as SupertonicVoiceStyle)
-            }
-            value={voiceStyle}
-          >
-            {SUPERTONIC_VOICES.map((voice) => (
-              <option key={voice.id} value={voice.id}>
-                {voice.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {isFish ? null : (
+          <>
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Voice
+              <select
+                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                onChange={(event) =>
+                  setVoiceStyle(event.target.value as SupertonicVoiceStyle)
+                }
+                value={voiceStyle}
+              >
+                {SUPERTONIC_VOICES.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.name}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        <label className="flex flex-col gap-2 text-sm font-medium">
-          Language
-          <select
-            className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-            onChange={(event) =>
-              setLanguage(event.target.value as SupertonicLanguage)
-            }
-            value={language}
-          >
-            {SUPERTONIC_LANGUAGES.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Language
+              <select
+                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                onChange={(event) =>
+                  setLanguage(event.target.value as SupertonicLanguage)
+                }
+                value={language}
+              >
+                {SUPERTONIC_LANGUAGES.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
 
-        <button
-          className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          disabled={previewing || exporting}
-          onClick={() => void preview()}
-          type="button"
-        >
-          {previewing ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Play className="size-4" aria-hidden="true" />
-          )}
-          Preview
-        </button>
+        {isFish ? null : (
+          <button
+            className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            disabled={previewing || exporting}
+            onClick={() => void preview()}
+            type="button"
+          >
+            {previewing ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Play className="size-4" aria-hidden="true" />
+            )}
+            Preview
+          </button>
+        )}
 
         <button
           className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-brand-700 px-4 text-sm font-medium text-white hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={exporting}
-          onClick={() => void exportChapter(false)}
+          disabled={exporting || !fishVoiceReady}
+          onClick={() => requestExport(false)}
           type="button"
         >
           {exporting ? (
@@ -262,8 +361,8 @@ export function SupertonicChapterExport() {
 
         <button
           className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          disabled={exporting}
-          onClick={() => void exportChapter(true)}
+          disabled={exporting || !fishVoiceReady}
+          onClick={() => requestExport(true)}
           type="button"
         >
           <RefreshCw className="size-4" aria-hidden="true" />
@@ -273,11 +372,52 @@ export function SupertonicChapterExport() {
 
       {estimate ? (
         <p className="mt-4 break-words text-xs text-neutral-500 dark:text-neutral-400">
-          Estimate uses {estimate.chunkCount} local generation{" "}
-          {estimate.chunkCount === 1 ? "chunk" : "chunks"} at approximately{" "}
-          {formatDuration(estimate.estimatedSeconds)}. Output path:{" "}
-          {estimate.outputPath}
+          {isFish
+            ? `Estimate: ${estimate.billableCharacters.toLocaleString()} billable characters at approximately ${formatDuration(estimate.estimatedSeconds)}.`
+            : `Estimate uses ${estimate.chunkCount} local generation ${estimate.chunkCount === 1 ? "chunk" : "chunks"} at approximately ${formatDuration(estimate.estimatedSeconds)}.`}{" "}
+          Output path: {estimate.outputPath}
         </p>
+      ) : null}
+
+      {pendingExport && estimate ? (
+        <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+          <p className="font-semibold text-amber-900 dark:text-amber-200">
+            Confirm {providerLabel} export
+          </p>
+          <p className="mt-1 text-amber-800 dark:text-amber-300">
+            This will send{" "}
+            <strong>
+              {estimate.billableCharacters.toLocaleString()} characters
+            </strong>{" "}
+            to {providerLabel} and bill your account. This chapter is not
+            cached, so this request is not free.
+          </p>
+          <p className="mt-1 text-amber-800 dark:text-amber-300">
+            {fishCreditLoading
+              ? "Checking Fish Audio credit balance..."
+              : fishCreditError
+                ? `Could not check credit balance: ${fishCreditError}`
+                : fishCreditStatus?.credit != null
+                  ? `Current Fish Audio credit balance: ${fishCreditStatus.credit.toLocaleString()}`
+                  : "Fish Audio credit balance is unavailable."}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-amber-700 px-4 text-sm font-medium text-white hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              onClick={confirmExport}
+              type="button"
+            >
+              Confirm and export with {providerLabel}
+            </button>
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-amber-300 px-4 text-sm font-medium text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/60"
+              onClick={() => setPendingExport(null)}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {estimateError ? (

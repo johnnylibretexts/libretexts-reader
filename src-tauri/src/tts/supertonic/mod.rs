@@ -52,6 +52,15 @@ pub struct ChapterEstimate {
     pub chunk_count: u32,
     pub cached: bool,
     pub output_path: String,
+    /// How many characters this export will actually be billed for. Always 0
+    /// for a cached chapter and for any non-billed provider, so the gate in
+    /// `SupertonicChapterExport.tsx` never asks the user to approve spending
+    /// that will not happen. Computed by `billable_characters` in
+    /// `commands::chapter_tts`.
+    pub billable_characters: u32,
+    /// Which engine this estimate was computed for, so the frontend gate can
+    /// name it without re-deriving it from a second source.
+    pub provider: String,
 }
 
 #[derive(Debug)]

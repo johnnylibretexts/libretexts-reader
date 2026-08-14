@@ -23,6 +23,7 @@ pub(crate) fn estimate_for_text(
     language: &str,
     output_path: &Path,
     cached: bool,
+    provider: &str,
 ) -> ChapterEstimate {
     let chunks = chunk_text_for_language(&material.text, language);
     let word_count = count_words(&material.text) as u32;
@@ -36,6 +37,12 @@ pub(crate) fn estimate_for_text(
         chunk_count: chunks.len() as u32,
         cached,
         output_path: path_to_string(output_path),
+        // The real value is filled in by `resolve_chapter_job`, which owns
+        // `billable_characters` (see `commands::chapter_tts`) -- this
+        // function has no notion of billing, only of the text and provider
+        // name.
+        billable_characters: 0,
+        provider: provider.to_string(),
     }
 }
 
@@ -301,12 +308,14 @@ mod tests {
             "en",
             Path::new("/tmp/a.mp3"),
             false,
+            "supertonic",
         );
         let long = estimate_for_text(
             &material(&"word ".repeat(500)),
             "en",
             Path::new("/tmp/a.mp3"),
             false,
+            "supertonic",
         );
 
         assert!(long.word_count > short.word_count);

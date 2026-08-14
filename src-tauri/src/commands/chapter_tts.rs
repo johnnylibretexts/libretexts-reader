@@ -225,19 +225,88 @@ fn model_for_provider(provider: &str) -> AppResult<&'static str> {
     }
 }
 
+/// Voice and language resolution, kept provider-aware.
+///
+/// `resolve_voice_style` / `resolve_language` only know Supertonic's ten
+/// voice styles and closed language list. Running a Fish request through
+/// them rejected every real Fish voice id -- a `reference_id` is an opaque
+/// model id (e.g. `d8ee9d1a...`, or a public model id pasted from
+/// fish.audio) that looks nothing like `M1`..`F5` -- and required a language
+/// code Fish does not take, since Fish infers language from the text across
+/// 83 languages instead. This match is the one place that fork happens: the
+/// `_` arm below calls the exact same two functions with the exact same
+/// arguments as before this fix, so Supertonic's behaviour is unchanged.
+///
+/// `model_for_provider` is called before this in `resolve_chapter_job`, so an
+/// unrecognised provider is already rejected by the time this runs; the `_`
+/// arm only ever sees `"supertonic"` in practice.
+fn resolve_voice_and_language(
+    provider: &str,
+    request: &ChapterRequest,
+    config: &SupertonicConfig,
+) -> AppResult<(String, String)> {
+    match provider {
+        "fish" => {
+            let voice_style = request
+                .voice_style
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    AppError::Voice("Choose a Fish Audio voice in Settings before using it.".into())
+                })?;
+            // No validation: Fish infers language from the text itself. A
+            // value is still needed for chunking the estimate and for the
+            // content-addressed cache key, so a blank request falls back to
+            // Supertonic's own default rather than being rejected.
+            let language = request
+                .language
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(DEFAULT_LANGUAGE)
+                .to_string();
+            Ok((voice_style, language))
+        }
+        _ => Ok((
+            resolve_voice_style(request.voice_style.as_deref(), &config.voice_style)?,
+            resolve_language(request.language.as_deref(), &config.language)?,
+        )),
+    }
+}
+
+/// How many characters this export will actually be billed for.
+///
+/// Zero for a cached chapter and zero for any local provider, so the gate
+/// never asks the user to approve spending that will not happen.
+pub fn billable_characters(text: &str, provider: &str, cached: bool) -> u32 {
+    if cached || provider != "fish" {
+        return 0;
+    }
+    text.chars().count() as u32
+}
+
 fn resolve_chapter_job(
     state: &State<'_, DbPool>,
     request: &ChapterRequest,
 ) -> AppResult<ChapterJob> {
     let config = supertonic_config_from_state(state)?;
     let material = chapter_material(state, &request.document_id, &request.section_id)?;
-    let voice_style = resolve_voice_style(request.voice_style.as_deref(), &config.voice_style)?;
-    let language = resolve_language(request.language.as_deref(), &config.language)?;
-    let output_path = output_path_for_chapter(&config, &material, &voice_style, &language, request);
     let model = model_for_provider(&request.provider)?;
+    let (voice_style, language) = resolve_voice_and_language(&request.provider, request, &config)?;
+    let output_path = output_path_for_chapter(&config, &material, &voice_style, &language, request);
     let cache_path =
         cache_path_for_chapter(&request.provider, model, &material, &voice_style, &language)?;
-    let estimate = estimate_for_text(&material, &language, &output_path, cache_path.exists());
+    let mut estimate = estimate_for_text(
+        &material,
+        &language,
+        &output_path,
+        cache_path.exists(),
+        &request.provider,
+    );
+    estimate.billable_characters =
+        billable_characters(&material.text, &request.provider, estimate.cached);
 
     Ok(ChapterJob {
         material,
@@ -314,9 +383,11 @@ pub async fn export_supertonic_chapter_mp3(
         cached: false,
         byte_length: mp3.len() as u64,
         // The chapter was not cached when the job was resolved, which is why
-        // it was synthesized; it is now.
+        // it was synthesized; it is now, so nothing further is billable for
+        // it.
         estimate: ChapterEstimate {
             cached: true,
+            billable_characters: 0,
             ..job.estimate
         },
     })
@@ -491,5 +562,147 @@ mod dispatch_tests {
             fish_api_key: None,
         };
         assert_eq!(provider_for("fish", &settings).unwrap_err().kind(), "auth");
+    }
+}
+
+#[cfg(test)]
+mod billable_tests {
+    use super::billable_characters;
+
+    #[test]
+    fn a_cached_chapter_bills_nothing() {
+        // The gate must not ask the user to approve spending on audio that
+        // already exists on disk.
+        assert_eq!(billable_characters("Some text here.", "fish", true), 0);
+    }
+
+    #[test]
+    fn an_uncached_fish_chapter_bills_its_characters() {
+        assert_eq!(billable_characters("Some text here.", "fish", false), 15);
+    }
+
+    #[test]
+    fn supertonic_never_bills() {
+        assert_eq!(
+            billable_characters("Some text here.", "supertonic", false),
+            0
+        );
+    }
+
+    #[test]
+    fn counts_characters_not_bytes() {
+        // Fish bills text, and a multi-byte character is one character. Using
+        // len() here would overstate an accented or CJK chapter by 2-3x.
+        assert_eq!(billable_characters("héllo", "fish", false), 5);
+    }
+}
+
+/// The Task 5 blocker: `resolve_chapter_job` used to run Supertonic-only
+/// voice/language validation unconditionally, rejecting every Fish chapter
+/// export or estimate before it started. These tests exercise
+/// `resolve_voice_and_language` directly -- the pure seam both commands
+/// funnel through -- since a full `resolve_chapter_job` call needs a Tauri
+/// `State<DbPool>`, which is out of reach for a unit test.
+#[cfg(test)]
+mod provider_aware_validation_tests {
+    use super::*;
+
+    fn config() -> SupertonicConfig {
+        SupertonicConfig {
+            voice_style: DEFAULT_VOICE_STYLE.to_string(),
+            language: DEFAULT_LANGUAGE.to_string(),
+            export_directory: "/tmp".to_string(),
+        }
+    }
+
+    fn request(
+        provider: &str,
+        voice_style: Option<&str>,
+        language: Option<&str>,
+    ) -> ChapterRequest {
+        ChapterRequest {
+            document_id: "doc-1".into(),
+            section_id: "sec-1".into(),
+            provider: provider.to_string(),
+            voice_style: voice_style.map(str::to_string),
+            language: language.map(str::to_string),
+            output_path: None,
+            force: None,
+        }
+    }
+
+    #[test]
+    fn a_fish_reference_id_supertonic_would_reject_still_resolves() {
+        // This is the regression guard for the whole fix: without it, a
+        // future change could reintroduce the unconditional Supertonic
+        // validation and every test in this module could still pass if it
+        // only used ids that happen to look like Supertonic voice styles.
+        // A real Fish reference_id looks nothing like `M1`..`F5`.
+        let voice_id = "d8ee9d1a-6f3e-4b8a-9c1d-abcdef012345";
+        assert!(
+            resolve_voice_style(Some(voice_id), DEFAULT_VOICE_STYLE).is_err(),
+            "the id must actually be one Supertonic's validator rejects, or this test proves nothing"
+        );
+
+        let (resolved_voice, _language) =
+            resolve_voice_and_language("fish", &request("fish", Some(voice_id), None), &config())
+                .unwrap();
+        assert_eq!(resolved_voice, voice_id);
+    }
+
+    #[test]
+    fn fish_without_a_configured_voice_is_a_voice_error_not_a_panic() {
+        let error = resolve_voice_and_language("fish", &request("fish", None, None), &config())
+            .unwrap_err();
+        assert_eq!(error.kind(), "voice");
+    }
+
+    #[test]
+    fn fish_ignores_supertonic_language_validation() {
+        // "klingon" would fail resolve_language outright; Fish must not care,
+        // since it infers language from the text across 83 languages rather
+        // than taking a language code.
+        assert!(resolve_language(Some("klingon"), DEFAULT_LANGUAGE).is_err());
+
+        let (_voice, language) = resolve_voice_and_language(
+            "fish",
+            &request("fish", Some("voice-1"), Some("klingon")),
+            &config(),
+        )
+        .unwrap();
+        assert_eq!(language, "klingon");
+    }
+
+    #[test]
+    fn fish_blank_language_falls_back_instead_of_erroring() {
+        let (_voice, language) =
+            resolve_voice_and_language("fish", &request("fish", Some("voice-1"), None), &config())
+                .unwrap();
+        assert_eq!(language, DEFAULT_LANGUAGE);
+    }
+
+    #[test]
+    fn supertonic_validation_is_byte_for_byte_unchanged() {
+        let (voice, language) = resolve_voice_and_language(
+            "supertonic",
+            &request("supertonic", Some("f2"), Some("fr")),
+            &config(),
+        )
+        .unwrap();
+        assert_eq!(voice, "F2");
+        assert_eq!(language, "fr");
+
+        assert!(resolve_voice_and_language(
+            "supertonic",
+            &request("supertonic", Some("not-a-real-voice"), None),
+            &config()
+        )
+        .is_err());
+        assert!(resolve_voice_and_language(
+            "supertonic",
+            &request("supertonic", None, Some("klingon")),
+            &config()
+        )
+        .is_err());
     }
 }

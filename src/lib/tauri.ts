@@ -46,6 +46,16 @@ export interface SupertonicChapterEstimate {
   chunkCount: number;
   cached: boolean;
   outputPath: string;
+  /**
+   * How many characters this export will actually be billed for. Always 0
+   * for a cached chapter and for any non-billed provider. Mirrors
+   * `billable_characters` on `ChapterEstimate` in
+   * `src-tauri/src/tts/supertonic/mod.rs` -- the gate in
+   * `SupertonicChapterExport.tsx` reads this, never a locally computed price.
+   */
+  billableCharacters: number;
+  /** Which engine this estimate was computed for. */
+  provider: Domain.TtsProvider;
 }
 
 export interface SupertonicChapterExport {
