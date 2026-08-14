@@ -12,8 +12,7 @@ use crate::error::AppResult;
 use crate::paths;
 use crate::tts::supertonic::chunk::{chunk_text_for_language, count_words};
 use crate::tts::supertonic::{
-    ChapterMaterial, SupertonicChapterEstimate, SupertonicChapterRequest, SupertonicConfig,
-    SUPERTONIC_TOTAL_STEPS,
+    ChapterEstimate, ChapterMaterial, ChapterRequest, SupertonicConfig, SUPERTONIC_TOTAL_STEPS,
 };
 
 pub(crate) const AUDIOBOOK_WORDS_PER_MINUTE: f64 = 165.0;
@@ -24,14 +23,14 @@ pub(crate) fn estimate_for_text(
     language: &str,
     output_path: &Path,
     cached: bool,
-) -> SupertonicChapterEstimate {
+) -> ChapterEstimate {
     let chunks = chunk_text_for_language(&material.text, language);
     let word_count = count_words(&material.text) as u32;
     let estimated_seconds = ((word_count as f64 / AUDIOBOOK_WORDS_PER_MINUTE) * 60.0)
         .ceil()
         .max(1.0) as u32;
 
-    SupertonicChapterEstimate {
+    ChapterEstimate {
         word_count,
         estimated_seconds,
         chunk_count: chunks.len() as u32,
@@ -45,7 +44,7 @@ pub(crate) fn output_path_for_chapter(
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
-    request: &SupertonicChapterRequest,
+    request: &ChapterRequest,
 ) -> PathBuf {
     if let Some(output_path) = request
         .output_path

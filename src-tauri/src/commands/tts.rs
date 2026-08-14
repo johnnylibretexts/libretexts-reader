@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::commands::supertonic_tts;
+use crate::commands::chapter_tts;
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Deserialize)]
@@ -36,7 +36,7 @@ pub async fn synthesize_speech(request: SynthesizeSpeechRequest) -> AppResult<Sp
         return Err(AppError::InvalidInput("text is required".into()));
     }
 
-    supertonic_tts::synthesize_supertonic_text(
+    chapter_tts::synthesize_supertonic_text(
         text,
         request.voice_id.as_deref(),
         request.language.as_deref(),

@@ -39,11 +39,11 @@ pub fn run() {
             commands::settings::set_setting,
             commands::settings::get_all_settings,
             commands::tts::synthesize_speech,
-            commands::supertonic_tts::get_supertonic_model_status,
-            commands::supertonic_tts::ensure_supertonic_model_downloaded,
-            commands::supertonic_tts::preview_supertonic_tts,
-            commands::supertonic_tts::estimate_supertonic_chapter,
-            commands::supertonic_tts::export_supertonic_chapter_mp3,
+            commands::chapter_tts::get_supertonic_model_status,
+            commands::chapter_tts::ensure_supertonic_model_downloaded,
+            commands::chapter_tts::preview_supertonic_tts,
+            commands::chapter_tts::estimate_supertonic_chapter,
+            commands::chapter_tts::export_supertonic_chapter_mp3,
         ])
         .setup(|app| {
             let db_path = paths::database_path()?;

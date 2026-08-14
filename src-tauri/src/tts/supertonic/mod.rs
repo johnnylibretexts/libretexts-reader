@@ -31,7 +31,7 @@ pub(crate) const SUPERTONIC_SILENCE_SECONDS: f32 = 0.3;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SupertonicChapterRequest {
+pub struct ChapterRequest {
     pub document_id: String,
     pub section_id: String,
     pub voice_style: Option<String>,
@@ -42,7 +42,7 @@ pub struct SupertonicChapterRequest {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SupertonicChapterEstimate {
+pub struct ChapterEstimate {
     pub word_count: u32,
     pub estimated_seconds: u32,
     pub chunk_count: u32,

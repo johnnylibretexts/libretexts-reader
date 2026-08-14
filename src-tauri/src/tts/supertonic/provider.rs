@@ -1,4 +1,4 @@
-use crate::commands::supertonic_tts::synthesize_supertonic_mp3;
+use crate::commands::chapter_tts::synthesize_supertonic_mp3;
 use crate::error::AppResult;
 use crate::tts::provider::{TtsProvider, VoiceSummary};
 use crate::tts::supertonic::model::supertonic_model_status;

@@ -28,8 +28,7 @@ use crate::tts::supertonic::voice::{
     DEFAULT_LANGUAGE, DEFAULT_VOICE_STYLE,
 };
 use crate::tts::supertonic::{
-    ChapterMaterial, SupertonicChapterEstimate, SupertonicChapterRequest, SupertonicConfig,
-    SUPERTONIC_DEFAULT_SPEED,
+    ChapterEstimate, ChapterMaterial, ChapterRequest, SupertonicConfig, SUPERTONIC_DEFAULT_SPEED,
 };
 
 #[derive(Debug, Deserialize)]
@@ -42,11 +41,11 @@ pub struct SupertonicPreviewRequest {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SupertonicChapterExport {
+pub struct ChapterExport {
     pub output_path: String,
     pub cached: bool,
     pub byte_length: u64,
-    pub estimate: SupertonicChapterEstimate,
+    pub estimate: ChapterEstimate,
 }
 
 #[tauri::command]
@@ -165,12 +164,12 @@ struct ChapterJob {
     language: String,
     output_path: PathBuf,
     cache_path: PathBuf,
-    estimate: SupertonicChapterEstimate,
+    estimate: ChapterEstimate,
 }
 
 fn resolve_chapter_job(
     state: &State<'_, DbPool>,
-    request: &SupertonicChapterRequest,
+    request: &ChapterRequest,
 ) -> AppResult<ChapterJob> {
     let config = supertonic_config_from_state(state)?;
     let material = chapter_material(state, &request.document_id, &request.section_id)?;
@@ -199,23 +198,23 @@ fn resolve_chapter_job(
 #[tauri::command]
 pub async fn estimate_supertonic_chapter(
     state: State<'_, DbPool>,
-    request: SupertonicChapterRequest,
-) -> AppResult<SupertonicChapterEstimate> {
+    request: ChapterRequest,
+) -> AppResult<ChapterEstimate> {
     Ok(resolve_chapter_job(&state, &request)?.estimate)
 }
 
 #[tauri::command]
 pub async fn export_supertonic_chapter_mp3(
     state: State<'_, DbPool>,
-    request: SupertonicChapterRequest,
-) -> AppResult<SupertonicChapterExport> {
+    request: ChapterRequest,
+) -> AppResult<ChapterExport> {
     let job = resolve_chapter_job(&state, &request)?;
     let force = request.force.unwrap_or(false);
 
     if job.cache_path.exists() && !force {
         copy_cached_mp3(&job.cache_path, &job.output_path).await?;
         let bytes = tokio::fs::metadata(&job.output_path).await?.len();
-        return Ok(SupertonicChapterExport {
+        return Ok(ChapterExport {
             output_path: path_to_string(&job.output_path),
             cached: true,
             byte_length: bytes,
@@ -247,13 +246,13 @@ pub async fn export_supertonic_chapter_mp3(
     tokio::fs::rename(&temp_path, &job.cache_path).await?;
     copy_cached_mp3(&job.cache_path, &job.output_path).await?;
 
-    Ok(SupertonicChapterExport {
+    Ok(ChapterExport {
         output_path: path_to_string(&job.output_path),
         cached: false,
         byte_length: mp3.len() as u64,
         // The chapter was not cached when the job was resolved, which is why
         // it was synthesized; it is now.
-        estimate: SupertonicChapterEstimate {
+        estimate: ChapterEstimate {
             cached: true,
             ..job.estimate
         },
