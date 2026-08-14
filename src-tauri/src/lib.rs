@@ -5,6 +5,7 @@ pub mod db;
 pub mod error;
 pub mod net;
 mod paths;
+pub mod secrets;
 pub mod tts;
 
 use db::connection::init_pool;

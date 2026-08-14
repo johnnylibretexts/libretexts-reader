@@ -40,6 +40,9 @@ pub enum AppError {
     #[error("voice error: {0}")]
     Voice(String),
 
+    #[error("authentication error: {0}")]
+    Auth(String),
+
     #[error("tts error: {0}")]
     Tts(String),
 
@@ -75,6 +78,7 @@ impl AppError {
             Self::LibreTexts(_) => "libretexts",
             Self::Model(_) => "model",
             Self::Voice(_) => "voice",
+            Self::Auth(_) => "auth",
             Self::Tts(_) => "tts",
             Self::DrmProtected => "drm_protected",
             Self::Tauri(_) => "tauri",
@@ -101,6 +105,7 @@ impl AppError {
             | Self::LibreTexts(message)
             | Self::Model(message)
             | Self::Voice(message)
+            | Self::Auth(message)
             | Self::Tts(message)
             | Self::InvalidInput(message)
             | Self::Migration(message) => message.clone(),
@@ -126,6 +131,7 @@ impl AppError {
             | Self::LibreTexts(_)
             | Self::Model(_)
             | Self::Voice(_)
+            | Self::Auth(_)
             | Self::Tts(_)
             | Self::DrmProtected
             | Self::Tauri(_)
