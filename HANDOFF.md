@@ -1,6 +1,6 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-13
+Last updated: 2026-08-14
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
@@ -87,7 +87,7 @@ Also carried, each belonging with other work: `active` has no user-clearable esc
 
 ### 2. Kokoro removal (2026-08-13, `09d97b3`)
 
-Supertonic is now the only bundled engine. See **Next Up** below and ADR-0003 for the reasoning; migration `0007_drop_kokoro_voices` drops the `voices` table and rewrites any stored `kokoro` provider/voice id, and `db/settings.rs` additionally coerces a stored `kokoro` provider to `supertonic` on read for databases that somehow skip it. The `model_precision` setting and the whole first-run model chooser are gone with it.
+Supertonic is now the only bundled engine. See **TTS direction** below and ADR-0003 for the reasoning; migration `0007_drop_kokoro_voices` drops the `voices` table and rewrites any stored `kokoro` provider/voice id, and `db/settings.rs` additionally coerces a stored `kokoro` provider to `supertonic` on read for databases that somehow skip it. The `model_precision` setting and the whole first-run model chooser are gone with it.
 
 ### 1. Math, LibreTexts imports, and figures (2026-08-13)
 
@@ -105,46 +105,58 @@ Supertonic is now the only bundled engine. See **Next Up** below and ADR-0003 fo
 
 **Status as of 2026-08-13: all three waves are committed, merged to `main`, and pushed to `origin`.** The worktree is clean and `main` is level with `origin/main`. The list of dirty files that used to appear here is gone because there are none; use `git log` rather than `git status` to see what landed.
 
-## Next Up — TTS direction (decided 2026-08-13; A done, B not yet started)
+## TTS direction (decided 2026-08-13; A and B both done)
 
 **Decision: drop Kokoro. Supertonic becomes the only bundled engine. Add Fish Audio as an
 optional provider where the user supplies their own API key.** Supertonic stays the default.
 
-Sequence these as **two separate specs**, A before B. A is mostly deletion and it removes a
-broken engine plus its workarounds before anything new is added, so Fish lands in a
-two-case registry instead of a three-case one.
+These were sequenced as **two separate specs**, A before B. A was mostly deletion and it
+removed a broken engine plus its workarounds before anything new was added, so Fish landed
+in a two-case registry instead of a three-case one. Keep that shape: a third provider should
+arrive the same way.
 
 ### A. Remove Kokoro — DONE (2026-08-13)
 
 Spec: `docs/superpowers/specs/2026-08-13-remove-kokoro-design.md`.
 Plan: `docs/superpowers/plans/2026-08-13-remove-kokoro.md`. See ADR-0003.
 
-### B. Add Fish Audio (bring-your-own API key)
+### B. Add Fish Audio (bring-your-own API key) — DONE (2026-08-14, branch `feat/fish-audio`)
+
+Spec: `docs/superpowers/specs/2026-08-13-fish-audio-design.md`.
+Plan: `docs/superpowers/plans/2026-08-13-fish-audio.md`.
+Task briefs and reports: `.superpowers/sdd/2026-08-13-fish-audio/`.
 
 Reference docs the user supplied: <https://docs.fish.audio/overview/capabilities>,
 <https://docs.fish.audio/features/text-to-speech>,
 <https://docs.fish.audio/developer-guide/core-features/fine-grained-control>,
 <https://fish.audio/blog/s2-1-pro-free-api/>. **Two skills exist for this** — prefer them
 over reading the docs by hand: `fish-audio-api` (raw REST/WebSocket) and `fish-audio-sdk`
-(official SDKs). Raw HTTP from Rust is likely the right call here; see below.
+(official SDKs). Raw HTTP from Rust was the call taken.
 
-Three things are known and settled from exploration:
+How the open questions were answered, so they are not reopened by accident:
 
-1. **The abstraction is ready.** `SpeechEngine` (`src/lib/speech/types.ts`) needs only `id`,
-   `defaultVoice`, `synthesize()`, `ensureReady()`, `listVoices()`. `createSpeechEngine` is
-   explicitly documented as the single place engines are chosen. Fish maps cleanly:
-   `ensureReady` validates the key, `listVoices` lists the account's voice models.
-2. **There is no secret storage in this app, and this is the central open question.**
-   Settings are plain rows in the SQLite `settings` table. Installed Tauri plugins are only
-   `dialog`, `fs`, `shell` — no keychain, no stronghold, and no `keyring` crate in
-   `src-tauri/Cargo.toml`. Decide deliberately where a user's API key lives before writing
-   any code. Storing it as a plain settings row is the path of least resistance and the
-   least defensible.
+- **Where the key lives:** the OS keychain, via the `keyring` crate behind a `SecretStore`
+  trait (`src-tauri/src/secrets.rs`). Never the `settings` table, never the webview. The
+  trait exists so tests inject `MemorySecretStore` and never touch the login keychain.
+- **When it is validated:** at entry. `set_fish_api_key` calls Fish's wallet endpoint, which
+  proves the key and reads the balance without synthesizing (and therefore without billing);
+  an invalid key is rejected without overwriting the stored one.
+- **Whether cost is surfaced:** yes, at both places money is spent. Chapter export gates on
+  `requiresExportConfirmation` (`src/components/Reader/exportGate.ts`) and shows the billable
+  character count plus a freshly fetched credit balance; the Settings "Test voice" button
+  gates the same way when the active provider bills.
+- **What happens when the network drops mid-playback:** playback stops and says why. It
+  never silently falls back to Supertonic — the switch is offered as a button the reader
+  clicks (`canSwitchToSupertonic` / `switchToSupertonic` in `src/stores/player.ts`).
 
-Open questions for the B spec: where the key is stored; whether the key is validated at
-entry or first use; what the onboarding flow looks like (Fish account → developer account →
-generated key); whether usage/cost is surfaced; what happens mid-playback when the network
-drops.
+**Supertonic remains the default and must stay independent of all of this**: it needs no key,
+no account and no network, and a Fish-only failure (an unreadable keychain, say) must never
+be able to break it. See `fish_api_key_for` in `src-tauri/src/commands/chapter_tts.rs`.
+
+Still true and still worth knowing: `SpeechEngine` (`src/lib/speech/types.ts`) is the seam,
+and `createSpeechEngine` (`src/lib/speech/index.ts`) is the single place an engine is chosen.
+A third provider is a case there and a case in `provider_for` on the Rust side, and nowhere
+else.
 
 ### Why Kokoro is being dropped — do not re-investigate
 

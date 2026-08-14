@@ -55,7 +55,12 @@ If you enable Fish, be aware:
   Audio's own privacy documentation for their current retention policy.
 - Fish Audio synthesis is a paid, metered service. LibreTexts Reader gates
   chapter export behind an explicit cost confirmation, but ordinary playback
-  also bills your account as you listen.
+  also bills your account as you listen. Playback is not billed
+  sentence-by-sentence as you hear it: to keep audio gapless, the player reads
+  ahead and synthesizes up to ten sentences at a time, so pressing Play bills
+  for roughly ten sentences at once, and so does every seek past what is
+  already buffered. Sentences fetched ahead of a passage you skip or a session
+  you end are billed whether or not you hear them.
 - Your Fish Audio API key is stored in the operating system keychain, never in
   the app's SQLite database or in plain text, and the app has no way to
   display it back to you once saved.
