@@ -30,6 +30,29 @@ pub fn key_status_from(store: &dyn SecretStore) -> AppResult<FishKeyStatus> {
     })
 }
 
+/// Store the key only if validation succeeded.
+///
+/// Takes the validation result rather than performing it, so the ordering --
+/// an invalid key must never reach the keychain -- is testable without a
+/// network round trip or a real keychain.
+fn store_if_valid(
+    store: &dyn SecretStore,
+    key: &str,
+    validation: AppResult<f64>,
+) -> AppResult<FishKeyStatus> {
+    match validation {
+        Ok(credit) => {
+            store.set(key)?;
+            Ok(FishKeyStatus {
+                present: true,
+                valid: Some(true),
+                credit: Some(credit),
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
 #[tauri::command]
 pub async fn get_fish_key_status() -> AppResult<FishKeyStatus> {
     key_status_from(&KeyringSecretStore::new(FISH_KEY_ACCOUNT))
@@ -48,14 +71,8 @@ pub async fn set_fish_api_key(key: String) -> AppResult<FishKeyStatus> {
         ));
     }
 
-    let credit = FishClient::new(key.clone())?.credit().await?;
-    KeyringSecretStore::new(FISH_KEY_ACCOUNT).set(&key)?;
-
-    Ok(FishKeyStatus {
-        present: true,
-        valid: Some(true),
-        credit: Some(credit),
-    })
+    let validation = FishClient::new(key.clone())?.credit().await;
+    store_if_valid(&KeyringSecretStore::new(FISH_KEY_ACCOUNT), &key, validation)
 }
 
 #[tauri::command]
@@ -95,6 +112,53 @@ mod tests {
         assert!(
             !json.contains("sk-secret"),
             "the key must never reach the frontend"
+        );
+    }
+
+    #[test]
+    fn store_if_valid_rejects_invalid_key_without_writing() {
+        let store = MemorySecretStore::default();
+        let validation_error = Err(crate::error::AppError::Auth("rejected".into()));
+
+        let result = store_if_valid(&store, "sk-bad-key", validation_error);
+
+        assert!(result.is_err(), "store_if_valid must propagate the error");
+        assert!(
+            store.get().expect("store read").is_none(),
+            "invalid key must not be stored"
+        );
+    }
+
+    #[test]
+    fn store_if_valid_accepts_valid_key_and_returns_credit() {
+        let store = MemorySecretStore::default();
+        let validation = Ok(42.5);
+
+        let status = store_if_valid(&store, "sk-good-key", validation).expect("store_if_valid");
+
+        assert!(status.present);
+        assert_eq!(status.valid, Some(true));
+        assert_eq!(status.credit, Some(42.5));
+        assert_eq!(
+            store.get().expect("store read"),
+            Some("sk-good-key".to_string()),
+            "valid key must be stored"
+        );
+    }
+
+    #[test]
+    fn store_if_valid_preserves_existing_key_on_validation_failure() {
+        let store = MemorySecretStore::default();
+        store.set("sk-existing-key").expect("seed existing key");
+
+        let validation_error = Err(crate::error::AppError::Auth("rejected".into()));
+        let result = store_if_valid(&store, "sk-new-bad-key", validation_error);
+
+        assert!(result.is_err(), "store_if_valid must propagate the error");
+        assert_eq!(
+            store.get().expect("store read"),
+            Some("sk-existing-key".to_string()),
+            "existing key must not be overwritten on validation failure"
         );
     }
 }
