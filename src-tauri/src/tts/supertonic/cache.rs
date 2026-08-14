@@ -69,11 +69,25 @@ pub(crate) fn output_path_for_chapter(
     directory.join(filename)
 }
 
-pub(crate) fn cache_path_for_chapter(
+/// Derive the content-addressed cache path under an explicitly supplied root.
+///
+/// Pure: it hashes and joins, and touches the filesystem not at all. The root
+/// is a parameter rather than resolved here because `paths::cache_dir()` calls
+/// `create_dir_all`, so merely asking it for the path materialises the real
+/// app-data tree — which is how `cargo test` used to create
+/// `~/Library/Application Support/dev.johnnylibretexts.reader/cache` on
+/// machines where the app had never been launched.
+///
+/// Passed explicitly rather than redirected through
+/// `LIBRETEXTS_READER_APP_DATA_DIR`, for the same reason `cleanup::reclaim_in`
+/// takes a directory: `set_var` is process-global and Rust runs tests as
+/// threads in one process, so an override here could race another test.
+pub(crate) fn cache_path_in(
+    cache_root: &Path,
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
-) -> AppResult<PathBuf> {
+) -> PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(SUPERTONIC_CACHE_VERSION.as_bytes());
     hasher.update(SUPERTONIC_MODEL_VERSION.as_bytes());
@@ -84,9 +98,27 @@ pub(crate) fn cache_path_for_chapter(
     hasher.update(material.section.id.as_bytes());
     hasher.update(material.text.as_bytes());
     let hash = hex::encode(hasher.finalize());
-    Ok(paths::cache_dir()?
+
+    cache_root
         .join("supertonic-tts")
-        .join(format!("{hash}.mp3")))
+        .join(format!("{hash}.mp3"))
+}
+
+/// The cache path under the real app-data cache directory.
+///
+/// Resolving that directory creates it, which is correct here — every caller is
+/// about to read or write the file.
+pub(crate) fn cache_path_for_chapter(
+    material: &ChapterMaterial,
+    voice_style: &str,
+    language: &str,
+) -> AppResult<PathBuf> {
+    Ok(cache_path_in(
+        &paths::cache_dir()?,
+        material,
+        voice_style,
+        language,
+    ))
 }
 
 pub(crate) async fn copy_cached_mp3(cache_path: &Path, output_path: &Path) -> AppResult<()> {
@@ -199,17 +231,39 @@ mod tests {
 
     #[test]
     fn cache_path_is_content_addressed() {
-        let same_a = cache_path_for_chapter(&material("Hello."), "M1", "en").unwrap();
-        let same_b = cache_path_for_chapter(&material("Hello."), "M1", "en").unwrap();
+        // A fictional root. This test asserts only how inputs map to paths, so
+        // it must not reach paths::cache_dir() -- that call creates the real
+        // app-data tree as a side effect, on a machine that may never have run
+        // the app.
+        let root = Path::new("/nonexistent/cache");
+        let path = |text: &str, voice: &str, language: &str| {
+            cache_path_in(root, &material(text), voice, language)
+        };
+
+        let same_a = path("Hello.", "M1", "en");
+        let same_b = path("Hello.", "M1", "en");
         assert_eq!(same_a, same_b, "identical input must reuse the cached file");
 
-        let other_voice = cache_path_for_chapter(&material("Hello."), "F2", "en").unwrap();
-        let other_language = cache_path_for_chapter(&material("Hello."), "M1", "fr").unwrap();
-        let other_text = cache_path_for_chapter(&material("Goodbye."), "M1", "en").unwrap();
+        assert_ne!(
+            same_a,
+            path("Hello.", "F2", "en"),
+            "voice must change the path"
+        );
+        assert_ne!(
+            same_a,
+            path("Hello.", "M1", "fr"),
+            "language must change the path"
+        );
+        assert_ne!(
+            same_a,
+            path("Goodbye.", "M1", "en"),
+            "text must change the path"
+        );
 
-        assert_ne!(same_a, other_voice);
-        assert_ne!(same_a, other_language);
-        assert_ne!(same_a, other_text);
+        assert!(
+            !Path::new("/nonexistent").exists(),
+            "deriving a cache path must not create directories"
+        );
     }
 
     #[test]

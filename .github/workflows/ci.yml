@@ -51,5 +51,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      # Wraps the suite rather than running beside it, so this is not a second
+      # test run. Fails if any test reached a paths:: helper, which would create
+      # the real app-data tree as a side effect of resolving a path.
       - name: Rust tests
-        run: cargo test -p libretexts-reader
+        run: |
+          scripts/ci/check-app-data-isolation.test.sh
+          scripts/ci/check-app-data-isolation.sh
