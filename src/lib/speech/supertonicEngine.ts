@@ -28,6 +28,7 @@ export function createSupertonicEngine(options: {
     async synthesize(request, signal) {
       throwIfAborted(signal);
       const speech = await api.synthesizeSpeech({
+        provider: "supertonic",
         text: request.text,
         speed: request.speed,
         voiceId: request.voice || SUPERTONIC_DEFAULT_VOICE,

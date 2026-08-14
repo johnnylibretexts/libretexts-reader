@@ -1,4 +1,4 @@
-export type SpeechEngineId = "supertonic";
+export type SpeechEngineId = "supertonic" | "fish";
 
 export interface SpeechVoice {
   id: string;

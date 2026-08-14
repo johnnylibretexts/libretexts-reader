@@ -72,6 +72,7 @@ export function SupertonicChapterExport() {
       .estimateSupertonicChapter({
         documentId: document.id,
         sectionId: section.id,
+        provider: "supertonic",
         voiceStyle,
         language,
       })
@@ -144,6 +145,7 @@ export function SupertonicChapterExport() {
       const result = await api.exportSupertonicChapterMp3({
         documentId: activeDocument.id,
         sectionId: activeSection.id,
+        provider: "supertonic",
         voiceStyle,
         language,
         force,

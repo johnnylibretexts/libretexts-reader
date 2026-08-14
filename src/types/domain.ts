@@ -1,5 +1,15 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+/**
+ * Which TTS engine speaks. Declared here — the file `CLAUDE.md` designates for
+ * mirroring payload shapes shared with Rust — rather than in
+ * `stores/settings.ts` or `lib/speech/types.ts`, so both can import it without
+ * either importing the other: `tauri.ts` needs it for the `provider` field
+ * Rust now requires, and the settings store needs it for `TtsProvider`. This
+ * module has no imports of its own, so it cannot introduce a cycle.
+ */
+export type TtsProvider = "supertonic" | "fish";
+
 export type SourceType = "openstax" | "libretexts" | "epub" | "pdf" | "pasted" | "url";
 
 export type Document = { id: string, title: string, sourceType: SourceType, sourceMetadata: JsonValue, coverImagePath: string | null, license: string | null, attribution: string | null, wordCount: number, importedAt: string, lastOpenedAt: string | null, };

@@ -149,6 +149,10 @@ export function SettingsPanel() {
       const engine = createSpeechEngine({
         ttsProvider: "supertonic",
         supertonicLanguage: language,
+        // The Fish arm of SpeechEngineSettings is unused here: this button
+        // still only tests Supertonic. A later task makes it test whichever
+        // provider is selected and gains a real fishVoiceId to pass.
+        fishVoiceId: null,
       });
       await engine.ensureReady(setTestStatus);
 

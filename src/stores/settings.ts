@@ -7,10 +7,17 @@ import {
 } from "../lib/supertonic";
 import { api } from "../lib/tauri";
 import { displayError } from "../lib/errors";
+import type { TtsProvider } from "../types/domain";
 
 export type AppTheme = "light" | "dark" | "system";
-/** Mirrors `SpeechEngineId` — every provider here is one a reader can pick. */
-export type TtsProvider = "supertonic";
+/**
+ * Mirrors `SpeechEngineId` — every provider here is one a reader can pick.
+ * Re-exported from `types/domain.ts`, which is also where `tauri.ts` gets it
+ * for the `provider` field Rust now requires on synthesis and chapter
+ * requests; declaring it there once means this store and the invoke layer
+ * cannot drift apart without a compile error.
+ */
+export type { TtsProvider };
 
 export interface TtsSettingsPatch {
   ttsProvider?: TtsProvider;
@@ -28,6 +35,13 @@ export interface SettingsState {
   ttsProvider: TtsProvider;
   supertonicVoiceStyle: SupertonicVoiceStyle;
   supertonicLanguage: SupertonicLanguage;
+  /**
+   * The reader's chosen Fish voice id, or null when none has been picked yet.
+   * Settings UI for this lands in a later task; declared here now because
+   * `createSpeechEngine` requires it on every `SpeechEngineSettings`, and this
+   * store hands its whole state to that function.
+   */
+  fishVoiceId: string | null;
 }
 
 interface SettingsStore extends SettingsState {
@@ -50,6 +64,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   ttsProvider: "supertonic",
   supertonicVoiceStyle: "M1",
   supertonicLanguage: "en",
+  fishVoiceId: null,
 };
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -161,6 +176,7 @@ export async function loadSettings(): Promise<Partial<SettingsState>> {
       settings.supertonic_voice_style,
     ),
     supertonicLanguage: asSupertonicLanguage(settings.supertonic_language),
+    fishVoiceId: asString(settings.fish_voice_id) ?? null,
   });
 }
 
@@ -191,16 +207,19 @@ function asTheme(value: unknown): AppTheme | undefined {
 /**
  * The single place stored provider values are interpreted, including retired
  * ones. `system` was the Web Speech path, removed once every engine sat behind
- * SpeechEngine; `gemini` and `fish` predate Supertonic; `kokoro` was removed
- * once it proved it could not produce audio in a bundled build. All fall back
- * to the default rather than being written back — the next settings save
+ * SpeechEngine; `gemini` predates Supertonic; `kokoro` was removed once it
+ * proved it could not produce audio in a bundled build. Retired values fall
+ * back to the default rather than being written back — the next settings save
  * overwrites the stale row anyway.
+ *
+ * `fish` is no longer retired: it is a real, selectable provider again (see
+ * `SpeechEngineId` in `lib/speech/types.ts`).
  */
 function asTtsProvider(value: unknown): TtsProvider | undefined {
-  if (value === "gemini" || value === "fish" || value === "kokoro") {
+  if (value === "gemini" || value === "kokoro") {
     return "supertonic";
   }
-  return value === "supertonic" ? value : undefined;
+  return value === "supertonic" || value === "fish" ? value : undefined;
 }
 
 // The localStorage key is intentionally still "johnny-reader-theme" from the
