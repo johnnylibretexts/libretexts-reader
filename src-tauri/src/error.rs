@@ -57,6 +57,12 @@ pub enum AppError {
 
     #[error("migration error: {0}")]
     Migration(String),
+
+    #[error("payment required: {0}")]
+    PaymentRequired(String),
+
+    #[error("rate limited: {0}")]
+    RateLimited(String),
 }
 
 impl AppError {
@@ -84,6 +90,8 @@ impl AppError {
             Self::Tauri(_) => "tauri",
             Self::InvalidInput(_) => "invalid_input",
             Self::Migration(_) => "migration",
+            Self::PaymentRequired(_) => "payment_required",
+            Self::RateLimited(_) => "rate_limited",
         }
     }
 
@@ -108,7 +116,9 @@ impl AppError {
             | Self::Auth(message)
             | Self::Tts(message)
             | Self::InvalidInput(message)
-            | Self::Migration(message) => message.clone(),
+            | Self::Migration(message)
+            | Self::PaymentRequired(message)
+            | Self::RateLimited(message) => message.clone(),
             Self::DrmProtected => self.to_string(),
         }
     }
@@ -121,7 +131,7 @@ impl AppError {
             // A timed-out or unestablished connection is worth another go; a
             // 404 or a malformed body is not.
             Self::Http(error) => error.is_timeout() || error.is_connect(),
-            Self::Io(_) | Self::Pool(_) => true,
+            Self::Io(_) | Self::Pool(_) | Self::RateLimited(_) => true,
             Self::Database(_)
             | Self::Serde(_)
             | Self::Readability(_)
@@ -136,7 +146,8 @@ impl AppError {
             | Self::DrmProtected
             | Self::Tauri(_)
             | Self::InvalidInput(_)
-            | Self::Migration(_) => false,
+            | Self::Migration(_)
+            | Self::PaymentRequired(_) => false,
         }
     }
 }
