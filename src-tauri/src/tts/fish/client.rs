@@ -41,6 +41,19 @@ pub struct FishClient {
     http: reqwest::Client,
 }
 
+impl std::fmt::Debug for FishClient {
+    /// Redacts the key: this type ends up inside `Box<dyn TtsProvider>` for
+    /// `unwrap_err`'s `Debug` bound, and a derived impl would put the API key
+    /// in any panic message or log that prints the value.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FishClient")
+            .field("api_key", &"<redacted>")
+            .field("base_url", &self.base_url)
+            .finish()
+    }
+}
+
 impl FishClient {
     pub fn new(api_key: String) -> AppResult<Self> {
         Ok(Self {

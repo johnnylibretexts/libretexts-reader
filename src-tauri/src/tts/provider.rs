@@ -20,7 +20,7 @@ pub struct VoiceSummary {
 }
 
 #[async_trait::async_trait]
-pub trait TtsProvider: Send + Sync {
+pub trait TtsProvider: Send + Sync + std::fmt::Debug {
     fn id(&self) -> &'static str;
 
     /// Encoded MP3 bytes. Both implementations return the same thing so the
@@ -39,6 +39,7 @@ pub trait TtsProvider: Send + Sync {
 mod tests {
     use super::*;
 
+    #[derive(Debug)]
     struct StubProvider;
 
     #[async_trait::async_trait]

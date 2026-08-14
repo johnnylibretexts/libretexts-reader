@@ -2,6 +2,7 @@ use crate::error::{AppError, AppResult};
 use crate::tts::fish::client::FishClient;
 use crate::tts::provider::{TtsProvider, VoiceSummary};
 
+#[derive(Debug)]
 pub struct FishProvider {
     client: FishClient,
     voice_id: Option<String>,

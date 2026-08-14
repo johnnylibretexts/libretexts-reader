@@ -34,6 +34,10 @@ pub(crate) const SUPERTONIC_SILENCE_SECONDS: f32 = 0.3;
 pub struct ChapterRequest {
     pub document_id: String,
     pub section_id: String,
+    /// Which engine renders this chapter. No default: a missing value is a
+    /// hard error rather than a silent fall back to whichever engine used to
+    /// be the only one. See `provider_for` in `commands::chapter_tts`.
+    pub provider: String,
     pub voice_style: Option<String>,
     pub language: Option<String>,
     pub output_path: Option<String>,

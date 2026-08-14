@@ -11,6 +11,11 @@ use crate::db::library;
 use crate::db::settings;
 use crate::error::{AppError, AppResult};
 use crate::net::download::{download_verified, Download};
+use crate::secrets::{KeyringSecretStore, SecretStore, FISH_KEY_ACCOUNT};
+use crate::tts::fish::client::FishClient;
+use crate::tts::fish::provider::FishProvider;
+use crate::tts::fish::FISH_MODEL;
+use crate::tts::provider::TtsProvider;
 use crate::tts::supertonic::audio::{encode_f32_to_mp3, encode_f32_to_wav, SUPERTONIC_SAMPLE_RATE};
 use crate::tts::supertonic::cache::{
     cache_path_for_chapter, copy_cached_mp3, estimate_for_text, output_path_for_chapter,
@@ -23,6 +28,7 @@ use crate::tts::supertonic::model::{
     supertonic_model_status, temp_download_path, SupertonicModelStatus, SUPERTONIC_MODEL_VERSION,
     SUPERTONIC_READ_TIMEOUT, SUPERTONIC_USER_AGENT,
 };
+use crate::tts::supertonic::provider::SupertonicProvider;
 use crate::tts::supertonic::voice::{
     normalize_language, playback_voice_style, resolve_language, resolve_voice_style,
     DEFAULT_LANGUAGE, DEFAULT_VOICE_STYLE,
@@ -30,6 +36,41 @@ use crate::tts::supertonic::voice::{
 use crate::tts::supertonic::{
     ChapterEstimate, ChapterMaterial, ChapterRequest, SupertonicConfig, SUPERTONIC_DEFAULT_SPEED,
 };
+
+/// Everything a provider needs, read once by the caller.
+///
+/// A struct rather than a `DbPool` so `provider_for` is pure and testable and
+/// cannot reach the database or the keychain itself.
+pub struct ProviderSettings {
+    pub supertonic_voice_style: String,
+    pub supertonic_language: String,
+    pub fish_voice_id: Option<String>,
+    pub fish_api_key: Option<String>,
+}
+
+/// Build the provider the *caller* named.
+///
+/// `name` comes from the request, never from the `tts_provider` setting. See
+/// the doc comment on `commands::tts::synthesize_speech`: the webview is the
+/// single place an engine is chosen, and re-deriving that here from a second
+/// source with no ordering guarantee is the bug that was removed.
+pub fn provider_for(name: &str, settings: &ProviderSettings) -> AppResult<Box<dyn TtsProvider>> {
+    match name {
+        "supertonic" => Ok(Box::new(SupertonicProvider)),
+        "fish" => {
+            let key = settings.fish_api_key.clone().ok_or_else(|| {
+                AppError::Auth("Add a Fish Audio API key in Settings first.".into())
+            })?;
+            Ok(Box::new(FishProvider::new(
+                FishClient::new(key)?,
+                settings.fish_voice_id.clone(),
+            )))
+        }
+        other => Err(AppError::InvalidInput(format!(
+            "unknown TTS provider: {other}"
+        ))),
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,6 +208,23 @@ struct ChapterJob {
     estimate: ChapterEstimate,
 }
 
+/// The cache-key model string for a provider, kept in one place so it can
+/// only ever be `SUPERTONIC_MODEL_VERSION` or `FISH_MODEL` — the same
+/// constants `provider_for` and the two engines' own tests already pin.
+///
+/// Separate from `provider_for`'s own match: this only needs a name, not a
+/// `ProviderSettings`, so both the estimate and export commands can call it
+/// without touching the database or the keychain.
+fn model_for_provider(provider: &str) -> AppResult<&'static str> {
+    match provider {
+        "supertonic" => Ok(SUPERTONIC_MODEL_VERSION),
+        "fish" => Ok(FISH_MODEL),
+        other => Err(AppError::InvalidInput(format!(
+            "unknown TTS provider: {other}"
+        ))),
+    }
+}
+
 fn resolve_chapter_job(
     state: &State<'_, DbPool>,
     request: &ChapterRequest,
@@ -176,13 +234,9 @@ fn resolve_chapter_job(
     let voice_style = resolve_voice_style(request.voice_style.as_deref(), &config.voice_style)?;
     let language = resolve_language(request.language.as_deref(), &config.language)?;
     let output_path = output_path_for_chapter(&config, &material, &voice_style, &language, request);
-    let cache_path = cache_path_for_chapter(
-        "supertonic",
-        SUPERTONIC_MODEL_VERSION,
-        &material,
-        &voice_style,
-        &language,
-    )?;
+    let model = model_for_provider(&request.provider)?;
+    let cache_path =
+        cache_path_for_chapter(&request.provider, model, &material, &voice_style, &language)?;
     let estimate = estimate_for_text(&material, &language, &output_path, cache_path.exists());
 
     Ok(ChapterJob {
@@ -226,15 +280,16 @@ pub async fn export_supertonic_chapter_mp3(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let mp3 = synthesize_supertonic_mp3(
-        job.material.text.clone(),
-        job.voice_style.clone(),
-        job.language.clone(),
-        SUPERTONIC_DEFAULT_SPEED,
-    )
-    .await?;
+    let settings = provider_settings_from_state(&state)?;
+    let provider = provider_for(&request.provider, &settings)?;
+    let mp3 = provider
+        .synthesize(&job.material.text, &job.voice_style, &job.language)
+        .await?;
     if mp3.is_empty() {
-        return Err(AppError::Tts("Supertonic returned empty audio.".into()));
+        return Err(AppError::Tts(format!(
+            "{} returned empty audio.",
+            provider.id()
+        )));
     }
 
     // Unique temp name so concurrent exports of the same chapter cannot write
@@ -287,6 +342,28 @@ pub async fn synthesize_supertonic_text(
 fn supertonic_config_from_state(state: &State<'_, DbPool>) -> AppResult<SupertonicConfig> {
     let conn = state.get()?;
     SupertonicConfig::from_settings(&settings::get_all_settings(&conn)?)
+}
+
+/// Read what `provider_for` needs from the database and the keychain.
+///
+/// Kept out of `provider_for` itself so that function stays pure: this is the
+/// one place a command reaches the DB pool and `KeyringSecretStore` before
+/// handing plain values to the dispatcher.
+pub(crate) fn provider_settings_from_state(
+    state: &State<'_, DbPool>,
+) -> AppResult<ProviderSettings> {
+    let conn = state.get()?;
+    let values = settings::get_all_settings(&conn)?;
+    let config = SupertonicConfig::from_settings(&values)?;
+    let fish_voice_id = crate::tts::supertonic::optional_setting_string(&values, "fish_voice_id");
+    let fish_api_key = KeyringSecretStore::new(FISH_KEY_ACCOUNT).get()?;
+
+    Ok(ProviderSettings {
+        supertonic_voice_style: config.voice_style,
+        supertonic_language: config.language,
+        fish_voice_id,
+        fish_api_key,
+    })
 }
 
 fn chapter_material(
@@ -361,4 +438,50 @@ async fn synthesize_supertonic_samples(
 
 fn clamp_speed(speed: f32) -> f32 {
     speed.clamp(0.5, 2.0)
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn dispatch_reads_the_request_not_the_settings_table() {
+        let settings = ProviderSettings {
+            supertonic_voice_style: "M1".into(),
+            supertonic_language: "en".into(),
+            fish_voice_id: None,
+            fish_api_key: Some("sk-test".into()),
+        };
+
+        assert_eq!(
+            provider_for("supertonic", &settings).unwrap().id(),
+            "supertonic"
+        );
+        assert_eq!(provider_for("fish", &settings).unwrap().id(), "fish");
+    }
+
+    #[test]
+    fn an_unknown_provider_is_rejected_rather_than_defaulted() {
+        // Falling back to a default would let a frontend bug silently switch
+        // engines, which is the class of bug the single-decision-point rule
+        // in commands/tts.rs exists to prevent.
+        let settings = ProviderSettings {
+            supertonic_voice_style: "M1".into(),
+            supertonic_language: "en".into(),
+            fish_voice_id: None,
+            fish_api_key: None,
+        };
+        assert!(provider_for("kokoro", &settings).is_err());
+    }
+
+    #[test]
+    fn fish_without_a_key_is_an_auth_error_not_a_panic() {
+        let settings = ProviderSettings {
+            supertonic_voice_style: "M1".into(),
+            supertonic_language: "en".into(),
+            fish_voice_id: Some("voice-1".into()),
+            fish_api_key: None,
+        };
+        assert_eq!(provider_for("fish", &settings).unwrap_err().kind(), "auth");
+    }
 }

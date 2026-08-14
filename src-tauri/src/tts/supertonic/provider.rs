@@ -5,6 +5,7 @@ use crate::tts::supertonic::model::supertonic_model_status;
 use crate::tts::supertonic::voice::SUPERTONIC_VOICE_STYLES;
 use crate::tts::supertonic::SUPERTONIC_DEFAULT_SPEED;
 
+#[derive(Debug)]
 pub struct SupertonicProvider;
 
 #[async_trait::async_trait]
