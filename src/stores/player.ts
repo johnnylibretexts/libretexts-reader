@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api } from "../lib/tauri";
-import { displayError } from "../lib/errors";
+import { asAppError, displayError } from "../lib/errors";
 import {
   createSpeechEngine,
   SpeechAbortedError,
@@ -31,6 +31,14 @@ interface PlayerState {
   bufferingMessage: string;
   loading: boolean;
   error: string | null;
+  /**
+   * True only while `error` describes a Fish Audio synthesis failure: it
+   * gates the MiniPlayer's "Switch to Supertonic" action. Never set true for
+   * any other engine or failure — offering an automatic-looking escape hatch
+   * from a Supertonic error would blur the one distinction this exists to
+   * preserve (see switchToSupertonic).
+   */
+  canSwitchToSupertonic: boolean;
   loadDocument: (documentId: string) => Promise<void>;
   play: () => Promise<void>;
   pause: () => void;
@@ -46,6 +54,14 @@ interface PlayerState {
   skipParagraphBack: () => Promise<void>;
   setVoice: (voiceId: string) => void;
   setSpeed: (speed: number) => void;
+  /**
+   * The one place playback is allowed to change `ttsProvider`. Reachable only
+   * from the reader clicking "Switch to Supertonic" after a Fish failure
+   * (see `canSwitchToSupertonic`) — never called automatically. Switches the
+   * settings store to Supertonic, then resumes speaking the current sentence
+   * with the newly-selected engine.
+   */
+  switchToSupertonic: () => Promise<void>;
 }
 
 let utteranceToken = 0;
@@ -101,6 +117,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   bufferingMessage: "",
   loading: false,
   error: null,
+  canSwitchToSupertonic: false,
 
   loadDocument: async (documentId: string) => {
     const requestId = ++navToken;
@@ -108,6 +125,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({
       loading: true,
       error: null,
+      canSwitchToSupertonic: false,
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
@@ -127,6 +145,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           sectionImages: [],
           loading: false,
           error: "This document has no readable sections.",
+          canSwitchToSupertonic: false,
         });
         return;
       }
@@ -148,6 +167,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         currentSentenceIndex: 0,
         loading: false,
         error: null,
+        canSwitchToSupertonic: false,
       });
       await persistPlaybackState(get());
     } catch (error) {
@@ -157,6 +177,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({
         loading: false,
         error: displayError(error),
+        canSwitchToSupertonic: false,
       });
     }
   },
@@ -188,6 +209,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       bufferingMessage: "",
       loading: false,
       error: null,
+      canSwitchToSupertonic: false,
     });
   },
 
@@ -238,6 +260,25 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setSpeed: (speed: number) => {
     set({ speed });
   },
+
+  switchToSupertonic: async () => {
+    // This is the only place `ttsProvider` may change as a consequence of a
+    // Fish failure, and it only runs from here — a click on the MiniPlayer's
+    // "Switch to Supertonic" button. Nothing above calls this on its own.
+    try {
+      await useSettingsStore.getState().setTtsProvider("supertonic");
+    } catch (error) {
+      // setTtsProvider/saveTtsSettings reject on a failed persist (after
+      // recording their own banner message) — surface that here too rather
+      // than let it become an unhandled rejection, and stop before resuming
+      // playback with a provider switch that may not have stuck.
+      set({ error: displayError(error), canSwitchToSupertonic: false });
+      return;
+    }
+
+    set({ canSwitchToSupertonic: false });
+    await speakCurrentSentence(set, get);
+  },
 }));
 
 async function speakCurrentSentence(
@@ -251,6 +292,7 @@ async function speakCurrentSentence(
     set({
       isPlaying: false,
       error: "No sentence selected.",
+      canSwitchToSupertonic: false,
     });
     return;
   }
@@ -331,6 +373,7 @@ async function speakWithBufferedSpeech(
     isBuffering: true,
     bufferingMessage: `Buffering ${label} audio`,
     error: null,
+    canSwitchToSupertonic: false,
   });
 
   try {
@@ -383,12 +426,42 @@ async function speakWithBufferedSpeech(
     if (token !== utteranceToken || error instanceof SpeechAbortedError) {
       return;
     }
+    // Never fall back to another engine here, even implicitly: stop and
+    // surface why, and — for Fish — offer the switch as something the
+    // reader must click, not something that happens on their behalf. See
+    // `canSwitchToSupertonic` and `switchToSupertonic`.
+    const isFishFailure = engine.id === "fish";
     set({
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
-      error: displayError(error),
+      error: isFishFailure ? fishFailureMessage(error) : displayError(error),
+      canSwitchToSupertonic: isFishFailure,
     });
+  }
+}
+
+/**
+ * Map a Fish Audio synthesis failure to a message the reader can act on.
+ *
+ * Kinds come from the Rust backend (`AppErrorKind`); an error without a
+ * recognised kind — including the plain `Error`s `fishEngine.ensureReady`
+ * throws locally for a missing key/voice — falls through to its own message,
+ * which is already written for a reader (see `fishEngine.ts`).
+ */
+function fishFailureMessage(error: unknown): string {
+  const appError = asAppError(error);
+  switch (appError?.kind) {
+    case "auth":
+      return "Fish Audio rejected your API key.";
+    case "payment_required":
+      return "Your Fish Audio account is out of credit.";
+    case "rate_limited":
+      return "Fish Audio is rate limiting requests.";
+    case "voice":
+      return "Choose a Fish Audio voice in Settings.";
+    default:
+      return displayError(error);
   }
 }
 
@@ -550,6 +623,7 @@ async function playGeneratedAudio(
       isBuffering: false,
       bufferingMessage: "",
       error: "Audio playback failed.",
+      canSwitchToSupertonic: false,
     });
   };
 
@@ -558,6 +632,7 @@ async function playGeneratedAudio(
     isBuffering: false,
     bufferingMessage: "",
     error: null,
+    canSwitchToSupertonic: false,
   });
 
   try {
@@ -573,6 +648,7 @@ async function playGeneratedAudio(
       isBuffering: false,
       bufferingMessage: "",
       error: displayError(error),
+      canSwitchToSupertonic: false,
     });
   }
 }
@@ -647,6 +723,7 @@ async function moveToPosition(
       bufferingMessage: "Loading section",
       isPlaying: false,
       error: null,
+      canSwitchToSupertonic: false,
     });
   }
 
@@ -665,6 +742,7 @@ async function moveToPosition(
           isBuffering: true,
           bufferingMessage: "Loading section",
           error: null,
+          canSwitchToSupertonic: false,
         });
       }
       [paragraphs, sectionImages] = await Promise.all([
@@ -705,6 +783,7 @@ async function moveToPosition(
       isBuffering: false,
       bufferingMessage: "",
       error: displayError(error),
+      canSwitchToSupertonic: false,
     });
   }
 }

@@ -67,6 +67,11 @@ async function loadPlayer(engines: FakeEngine[]) {
       listParagraphs: vi.fn(async () => PARAGRAPHS),
       listSectionImages: vi.fn(async () => []),
       savePlaybackState: vi.fn(async () => undefined),
+      // switchToSupertonic goes through useSettingsStore.setTtsProvider,
+      // which calls this; without it the switch action rejects with
+      // "api.setSetting is not a function" before it ever reaches the
+      // provider/playback assertions below.
+      setSetting: vi.fn(async () => undefined),
     },
     isTauriRuntime: () => false,
   }));
@@ -212,6 +217,110 @@ describe("cancellation", () => {
 
     expect(usePlayerStore.getState().error).toBe("model is missing");
     expect(usePlayerStore.getState().isPlaying).toBe(false);
+  });
+});
+
+describe("Fish Audio failure handling", () => {
+  it("stops playback and maps a Fish error kind to its message, without switching providers", async () => {
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine]);
+    const { useSettingsStore } = await import("./settings");
+
+    // Fish must actually be the active provider for the failure to be
+    // attributed to it — and this seeds ttsProvider away from the store's
+    // "supertonic" default, so the closing assertion (it is still "fish")
+    // cannot pass merely because nothing touched the field.
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    // Seed both fields to values a correct run must overwrite: isPlaying to
+    // true (the opposite of the "leaves playback paused" assertion below)
+    // and error to unrelated leftover text (so matching the exact mapped
+    // message proves the mapping ran, not just that *some* string landed).
+    usePlayerStore.setState({ isPlaying: true, error: "stale error" });
+
+    engine.failSynthesis(
+      { kind: "auth", message: "invalid key", retryable: false } as unknown as Error,
+    );
+    await usePlayerStore.getState().play();
+
+    const state = usePlayerStore.getState();
+    expect(state.isPlaying).toBe(false);
+    expect(state.error).toBe("Fish Audio rejected your API key.");
+    expect(state.canSwitchToSupertonic).toBe(true);
+    // The switch is the reader's action, never automatic: a failure alone
+    // must never touch ttsProvider.
+    expect(useSettingsStore.getState().ttsProvider).toBe("fish");
+  });
+
+  it.each([
+    ["payment_required", "Your Fish Audio account is out of credit."],
+    ["rate_limited", "Fish Audio is rate limiting requests."],
+    ["voice", "Choose a Fish Audio voice in Settings."],
+  ])("maps the %s error kind to its message", async (kind, expectedMessage) => {
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    engine.failSynthesis(
+      { kind, message: "raw backend message", retryable: false } as unknown as Error,
+    );
+    await usePlayerStore.getState().play();
+
+    expect(usePlayerStore.getState().error).toBe(expectedMessage);
+  });
+
+  it("falls back to the error's own message for an unrecognised kind", async () => {
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    engine.failSynthesis(new Error("the Fish backend timed out"));
+    await usePlayerStore.getState().play();
+
+    expect(usePlayerStore.getState().error).toBe("the Fish backend timed out");
+  });
+
+  it("does not offer the switch when a non-Fish engine fails", async () => {
+    const engine = await createFake({ id: "supertonic" });
+    const { usePlayerStore } = await loadPlayer([engine]);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    // Seed true first so a no-op implementation (never flipping it) cannot
+    // pass this assertion by coincidence.
+    usePlayerStore.setState({ canSwitchToSupertonic: true });
+
+    engine.failSynthesis(new Error("supertonic model is missing"));
+    await usePlayerStore.getState().play();
+
+    expect(usePlayerStore.getState().canSwitchToSupertonic).toBe(false);
+  });
+
+  it("switches to Supertonic and resumes playback only when the reader clicks it", async () => {
+    const fish = await createFake({ id: "fish" });
+    const supertonic = await createFake({ id: "supertonic" });
+    const { usePlayerStore } = await loadPlayer([fish, supertonic]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    fish.failSynthesis({ kind: "auth", message: "x", retryable: false } as unknown as Error);
+    await usePlayerStore.getState().play();
+    expect(usePlayerStore.getState().canSwitchToSupertonic).toBe(true);
+
+    await usePlayerStore.getState().switchToSupertonic();
+
+    expect(useSettingsStore.getState().ttsProvider).toBe("supertonic");
+    expect(usePlayerStore.getState().canSwitchToSupertonic).toBe(false);
+    expect(usePlayerStore.getState().isPlaying).toBe(true);
+    expect(supertonic.calls.length).toBeGreaterThan(0);
   });
 });
 
