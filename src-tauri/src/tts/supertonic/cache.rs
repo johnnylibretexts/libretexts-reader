@@ -11,14 +11,13 @@ use sha2::{Digest, Sha256};
 use crate::error::AppResult;
 use crate::paths;
 use crate::tts::supertonic::chunk::{chunk_text_for_language, count_words};
-use crate::tts::supertonic::model::SUPERTONIC_MODEL_VERSION;
 use crate::tts::supertonic::{
     ChapterMaterial, SupertonicChapterEstimate, SupertonicChapterRequest, SupertonicConfig,
     SUPERTONIC_TOTAL_STEPS,
 };
 
 pub(crate) const AUDIOBOOK_WORDS_PER_MINUTE: f64 = 165.0;
-pub(crate) const SUPERTONIC_CACHE_VERSION: &str = "supertonic-tts-cache-v1";
+pub(crate) const SUPERTONIC_CACHE_VERSION: &str = "tts-cache-v2";
 
 pub(crate) fn estimate_for_text(
     material: &ChapterMaterial,
@@ -84,13 +83,16 @@ pub(crate) fn output_path_for_chapter(
 /// threads in one process, so an override here could race another test.
 pub(crate) fn cache_path_in(
     cache_root: &Path,
+    provider: &str,
+    model: &str,
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
 ) -> PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(SUPERTONIC_CACHE_VERSION.as_bytes());
-    hasher.update(SUPERTONIC_MODEL_VERSION.as_bytes());
+    hasher.update(provider.as_bytes());
+    hasher.update(model.as_bytes());
     hasher.update(SUPERTONIC_TOTAL_STEPS.to_le_bytes());
     hasher.update(voice_style.as_bytes());
     hasher.update(language.as_bytes());
@@ -109,12 +111,16 @@ pub(crate) fn cache_path_in(
 /// Resolving that directory creates it, which is correct here — every caller is
 /// about to read or write the file.
 pub(crate) fn cache_path_for_chapter(
+    provider: &str,
+    model: &str,
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
 ) -> AppResult<PathBuf> {
     Ok(cache_path_in(
         &paths::cache_dir()?,
+        provider,
+        model,
         material,
         voice_style,
         language,
@@ -230,6 +236,20 @@ mod tests {
     }
 
     #[test]
+    fn cache_path_distinguishes_providers_and_models() {
+        // Without this, a chapter exported with Supertonic would be served
+        // from cache for a Fish request -- identical text, voice and language,
+        // identical key -- and the user would silently get the wrong voice.
+        let root = Path::new("/nonexistent/cache");
+        let supertonic = cache_path_in(root, "supertonic", "v1", &material("Hello."), "M1", "en");
+        let fish = cache_path_in(root, "fish", "s2.1-pro", &material("Hello."), "M1", "en");
+        let other_model = cache_path_in(root, "fish", "s2-pro", &material("Hello."), "M1", "en");
+
+        assert_ne!(supertonic, fish, "provider must change the path");
+        assert_ne!(fish, other_model, "model must change the path");
+    }
+
+    #[test]
     fn cache_path_is_content_addressed() {
         // A fictional root. This test asserts only how inputs map to paths, so
         // it must not reach paths::cache_dir() -- that call creates the real
@@ -237,7 +257,7 @@ mod tests {
         // the app.
         let root = Path::new("/nonexistent/cache");
         let path = |text: &str, voice: &str, language: &str| {
-            cache_path_in(root, &material(text), voice, language)
+            cache_path_in(root, "supertonic", "v1", &material(text), voice, language)
         };
 
         let same_a = path("Hello.", "M1", "en");

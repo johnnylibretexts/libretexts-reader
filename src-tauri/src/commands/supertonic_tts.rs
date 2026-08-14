@@ -20,8 +20,8 @@ use crate::tts::supertonic::engine;
 use crate::tts::supertonic::model::{
     emit_supertonic_model_progress, existing_supertonic_model_bytes, file_complete,
     supertonic_model_dir, supertonic_model_file_path, supertonic_model_manifest,
-    supertonic_model_status, temp_download_path, SupertonicModelStatus, SUPERTONIC_READ_TIMEOUT,
-    SUPERTONIC_USER_AGENT,
+    supertonic_model_status, temp_download_path, SupertonicModelStatus, SUPERTONIC_MODEL_VERSION,
+    SUPERTONIC_READ_TIMEOUT, SUPERTONIC_USER_AGENT,
 };
 use crate::tts::supertonic::voice::{
     normalize_language, playback_voice_style, resolve_language, resolve_voice_style,
@@ -177,7 +177,13 @@ fn resolve_chapter_job(
     let voice_style = resolve_voice_style(request.voice_style.as_deref(), &config.voice_style)?;
     let language = resolve_language(request.language.as_deref(), &config.language)?;
     let output_path = output_path_for_chapter(&config, &material, &voice_style, &language, request);
-    let cache_path = cache_path_for_chapter(&material, &voice_style, &language)?;
+    let cache_path = cache_path_for_chapter(
+        "supertonic",
+        SUPERTONIC_MODEL_VERSION,
+        &material,
+        &voice_style,
+        &language,
+    )?;
     let estimate = estimate_for_text(&material, &language, &output_path, cache_path.exists());
 
     Ok(ChapterJob {
