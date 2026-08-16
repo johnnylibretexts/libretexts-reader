@@ -45,8 +45,14 @@ export function SupertonicChapterExport() {
   // is billed. Cleared on confirm or cancel; never auto-dismissed, so a
   // slow credit-balance fetch cannot let the export through before the
   // reader has seen it.
+  // Carries its own estimate rather than reading the shared one. A forced
+  // estimate is a property of one request, not of the chapter: writing it to
+  // the shared state left the standing "Estimate: N billable characters" line
+  // quoting a forced price after the reader cancelled, for a plain Generate
+  // that would have been served from cache for nothing.
   const [pendingExport, setPendingExport] = useState<{
     force: boolean;
+    estimate: SupertonicChapterEstimate;
   } | null>(null);
   const [checkingExport, setCheckingExport] = useState(false);
   // The live balance, fetched fresh (over the network) each time the gate
@@ -70,11 +76,19 @@ export function SupertonicChapterExport() {
   // src-tauri/src/tts/fish/provider.rs), so a request is only sent once one
   // is configured -- matching the backend's own guard rather than racing it.
   const fishVoiceReady = !isFish || !!fishVoiceId;
-  // Nothing may be exported while the price for THIS chapter and voice is
-  // unknown -- either still in flight or never fetched. Without this, the
-  // window between a section change and its estimate resolving is a window
-  // in which a click is decided from no information at all.
-  const exportBlocked = exporting || checkingExport || estimating || !estimate;
+  // Blocked only while something is genuinely in flight. This deliberately
+  // does NOT include `!estimate`: a failed estimate fetch left both buttons
+  // dead with no retry path -- the effect below only re-runs on a chapter,
+  // voice or provider change -- so the reader had to navigate away and back,
+  // and a free Supertonic export was disabled by a price it never needed.
+  //
+  // Nothing is lost by allowing the click. `requiresExportConfirmation`
+  // treats a missing estimate as billed and gates on it (exportGate.ts, and
+  // the "gates when there is no estimate at all" case in its tests), and the
+  // Fish path in `requestExport` refetches the estimate before deciding
+  // anything. The money invariant lives there, in a pure tested function --
+  // not in a disabled attribute.
+  const exportBlocked = exporting || checkingExport || estimating;
 
   // Stop any in-flight preview playback and release its blob URL when the
   // reader view unmounts, not just when playback ends or a new preview starts.
@@ -247,7 +261,11 @@ export function SupertonicChapterExport() {
           language: null,
           force,
         });
-        setEstimate(relevantEstimate);
+        // Only an unforced estimate describes the chapter's standing price,
+        // so only that one belongs in the shared display state.
+        if (!force) {
+          setEstimate(relevantEstimate);
+        }
       } catch (error) {
         setError(displayError(error));
         return;
@@ -263,7 +281,16 @@ export function SupertonicChapterExport() {
         provider: ttsProvider,
       })
     ) {
-      setPendingExport({ force });
+      if (!relevantEstimate) {
+        // Gating means this request is billed. With no price there is nothing
+        // to show and nothing the reader could meaningfully approve, and the
+        // gate used to render only when the shared estimate happened to be
+        // set -- so this combination left the export neither running nor
+        // confirmable.
+        setError("Could not price this export. Try again.");
+        return;
+      }
+      setPendingExport({ force, estimate: relevantEstimate });
       void refreshFishCredit();
       return;
     }
@@ -435,7 +462,7 @@ export function SupertonicChapterExport() {
         </p>
       ) : null}
 
-      {pendingExport && estimate ? (
+      {pendingExport ? (
         <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
           <p className="font-semibold text-amber-900 dark:text-amber-200">
             Confirm {providerLabel} export
@@ -443,7 +470,8 @@ export function SupertonicChapterExport() {
           <p className="mt-1 text-amber-800 dark:text-amber-300">
             This will send{" "}
             <strong>
-              {estimate.billableCharacters.toLocaleString()} characters
+              {pendingExport.estimate.billableCharacters.toLocaleString()}{" "}
+              characters
             </strong>{" "}
             to {providerLabel} and bill your account. This request is not
             served from the cache, so it is not free.
