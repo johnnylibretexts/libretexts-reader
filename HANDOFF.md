@@ -1,10 +1,10 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-14
+Last updated: 2026-08-16
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
-**The working tree is now clean and everything is committed on `main`.** The previously-uncommitted feature work described below was committed and merged on 2026-08-13; treat `main` as the source of truth, not the worktree. The standing caution against `git reset --hard` still applies to any new WIP, but there is none as of this update.
+**There is live work in flight: `main` is not the whole picture.** The working tree is clean and the waves described under "Recently Landed" are merged to `main`, but the Fish Audio provider (spec B) is **23 commits on `feat/fish-audio`, open for review as [PR #4](https://github.com/johnnylibretexts/libretexts-reader/pull/4) and not yet merged** — `main` carries only its plan document, none of its code. Read `main` for everything before Fish, and the branch for Fish itself. The full gate is green on the branch head `d696071` (see the TTS direction section). The standing caution against `git reset --hard` applies with force while that branch is unmerged.
 
 ## Project Location
 
