@@ -79,9 +79,13 @@ export function FishAudioSettings({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once; the
-    // callback is stable across renders in every real caller (a Zustand
-    // setter) and later updates are reported from the handlers below.
+    // Runs once. `onKeyStatusChange` is deliberately not a dependency: it is
+    // stable across renders in every real caller (a Zustand setter), and
+    // later status changes are reported from the handlers below.
+    //
+    // No eslint-disable here -- this project has no ESLint (its frontend
+    // gates are `tsc` and vitest), so a suppression comment would suppress
+    // nothing while implying a rule was in force.
   }, []);
 
   useEffect(() => {

@@ -52,14 +52,19 @@ pub trait TtsProvider: Send + Sync + std::fmt::Debug {
         language: &str,
         speed: f32,
     ) -> AppResult<Vec<u8>>;
-
-    /// Reports whether the engine is usable right now. For Supertonic this
-    /// is a status check, not a download — fetching the model is a separate
-    /// command that reports progress. For Fish it checks the key and voice.
-    async fn ensure_ready(&self) -> AppResult<()>;
-
-    async fn list_voices(&self) -> AppResult<Vec<VoiceSummary>>;
 }
+
+// This trait carried `ensure_ready` and `list_voices` too, and nothing ever
+// called either through it: readiness is answered by the provider-specific
+// `get_supertonic_model_status` / `get_fish_key_status`, and voices by
+// `list_fish_voices`, which builds a `FishClient` directly. They were surface
+// that had to be implemented and kept correct — Fish's `ensure_ready` made a
+// live wallet call — while the one command that lists voices bypassed
+// `provider_for` and so could not serve a second provider anyway.
+//
+// If a second provider ever needs voice listing, the fix is to route that
+// command through `provider_for` and add the method back with a caller, not
+// to reinstate an abstract method nothing dispatches on.
 
 #[cfg(test)]
 mod tests {
@@ -87,12 +92,6 @@ mod tests {
         ) -> AppResult<Vec<u8>> {
             *self.received_speed.lock().expect("speed lock") = Some(speed);
             Ok(text.as_bytes().to_vec())
-        }
-        async fn ensure_ready(&self) -> AppResult<()> {
-            Ok(())
-        }
-        async fn list_voices(&self) -> AppResult<Vec<VoiceSummary>> {
-            Ok(vec![])
         }
     }
 

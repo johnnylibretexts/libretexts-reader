@@ -42,8 +42,6 @@ use crate::tts::supertonic::{
 /// A struct rather than a `DbPool` so `provider_for` is pure and testable and
 /// cannot reach the database or the keychain itself.
 pub struct ProviderSettings {
-    pub supertonic_voice_style: String,
-    pub supertonic_language: String,
     pub fish_voice_id: Option<String>,
     pub fish_api_key: Option<String>,
 }
@@ -477,13 +475,15 @@ pub(crate) fn provider_settings_from_state(
 ) -> AppResult<ProviderSettings> {
     let conn = state.get()?;
     let values = settings::get_all_settings(&conn)?;
-    let config = SupertonicConfig::from_settings(&values)?;
+    // Supertonic's config is deliberately not parsed here. It was, only to
+    // fill two fields nothing read, and `SupertonicConfig::from_settings` is
+    // fallible -- so a corrupt Supertonic voice or language failed a Fish
+    // request that never consults either. Supertonic's own path parses it
+    // where it is actually used (`supertonic_config_from_state`).
     let fish_voice_id = crate::tts::supertonic::optional_setting_string(&values, "fish_voice_id");
     let fish_api_key = fish_api_key_for(provider, &KeyringSecretStore::new(FISH_KEY_ACCOUNT))?;
 
     Ok(ProviderSettings {
-        supertonic_voice_style: config.voice_style,
-        supertonic_language: config.language,
         fish_voice_id,
         fish_api_key,
     })
@@ -599,8 +599,6 @@ mod dispatch_tests {
     #[test]
     fn dispatch_reads_the_request_not_the_settings_table() {
         let settings = ProviderSettings {
-            supertonic_voice_style: "M1".into(),
-            supertonic_language: "en".into(),
             fish_voice_id: None,
             fish_api_key: Some("sk-test".into()),
         };
@@ -618,8 +616,6 @@ mod dispatch_tests {
         // engines, which is the class of bug the single-decision-point rule
         // in commands/tts.rs exists to prevent.
         let settings = ProviderSettings {
-            supertonic_voice_style: "M1".into(),
-            supertonic_language: "en".into(),
             fish_voice_id: None,
             fish_api_key: None,
         };
@@ -629,8 +625,6 @@ mod dispatch_tests {
     #[test]
     fn fish_without_a_key_is_an_auth_error_not_a_panic() {
         let settings = ProviderSettings {
-            supertonic_voice_style: "M1".into(),
-            supertonic_language: "en".into(),
             fish_voice_id: Some("voice-1".into()),
             fish_api_key: None,
         };
@@ -668,8 +662,6 @@ mod dispatch_tests {
         assert_eq!(key, None);
 
         let settings = ProviderSettings {
-            supertonic_voice_style: "M1".into(),
-            supertonic_language: "en".into(),
             fish_voice_id: None,
             fish_api_key: key,
         };

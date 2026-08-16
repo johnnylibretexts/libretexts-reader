@@ -40,17 +40,18 @@ fn store_if_valid(
     key: &str,
     validation: AppResult<f64>,
 ) -> AppResult<FishKeyStatus> {
-    match validation {
-        Ok(credit) => {
-            store.set(key)?;
-            Ok(FishKeyStatus {
-                present: true,
-                valid: Some(true),
-                credit: Some(credit),
-            })
-        }
-        Err(error) => Err(error),
-    }
+    // `?` rather than a match: an `Err(error) => Err(error)` arm reads as a
+    // place a failure might be swallowed or rewritten, and a reader has to
+    // check that it is not. The one rule here is that nothing touches the
+    // keychain before this line.
+    let credit = validation?;
+    store.set(key)?;
+
+    Ok(FishKeyStatus {
+        present: true,
+        valid: Some(true),
+        credit: Some(credit),
+    })
 }
 
 #[tauri::command]

@@ -1,6 +1,6 @@
 use crate::error::{AppError, AppResult};
 use crate::tts::fish::client::FishClient;
-use crate::tts::provider::{TtsProvider, VoiceSummary};
+use crate::tts::provider::TtsProvider;
 
 #[derive(Debug)]
 pub struct FishProvider {
@@ -43,15 +43,6 @@ impl TtsProvider for FishProvider {
         self.client
             .synthesize(text, &self.voice(voice)?, speed)
             .await
-    }
-
-    async fn ensure_ready(&self) -> AppResult<()> {
-        self.voice("")?;
-        self.client.credit().await.map(|_| ())
-    }
-
-    async fn list_voices(&self) -> AppResult<Vec<VoiceSummary>> {
-        self.client.list_voices().await
     }
 }
 

@@ -1,8 +1,6 @@
 use crate::commands::chapter_tts::synthesize_supertonic_mp3;
 use crate::error::AppResult;
-use crate::tts::provider::{TtsProvider, VoiceSummary};
-use crate::tts::supertonic::model::supertonic_model_status;
-use crate::tts::supertonic::voice::SUPERTONIC_VOICE_STYLES;
+use crate::tts::provider::TtsProvider;
 
 #[derive(Debug)]
 pub struct SupertonicProvider;
@@ -27,23 +25,5 @@ impl TtsProvider for SupertonicProvider {
             speed,
         )
         .await
-    }
-
-    async fn ensure_ready(&self) -> AppResult<()> {
-        // Synchronous, and deliberately not a download: fetching the model is
-        // a separate command that reports progress. This only answers whether
-        // the model is already usable.
-        supertonic_model_status().map(|_| ())
-    }
-
-    async fn list_voices(&self) -> AppResult<Vec<VoiceSummary>> {
-        Ok(SUPERTONIC_VOICE_STYLES
-            .iter()
-            .map(|style| VoiceSummary {
-                id: (*style).to_string(),
-                name: (*style).to_string(),
-                ready: true,
-            })
-            .collect())
     }
 }

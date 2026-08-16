@@ -102,7 +102,6 @@ async fn synthesize_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tts::provider::VoiceSummary;
 
     #[derive(Debug, Default)]
     struct StubProvider {
@@ -124,14 +123,6 @@ mod tests {
         ) -> AppResult<Vec<u8>> {
             *self.received_speed.lock().expect("speed lock") = Some(speed);
             Ok(text.as_bytes().to_vec())
-        }
-
-        async fn ensure_ready(&self) -> AppResult<()> {
-            Ok(())
-        }
-
-        async fn list_voices(&self) -> AppResult<Vec<VoiceSummary>> {
-            Ok(vec![])
         }
     }
 
