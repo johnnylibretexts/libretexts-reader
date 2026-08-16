@@ -78,15 +78,24 @@ fn default_settings() -> AppResult<Vec<(&'static str, Value)>> {
         ("tts_provider", json!("supertonic")),
         ("supertonic_voice_style", json!("M1")),
         ("supertonic_language", json!("en")),
+        ("fish_voice_id", json!(null)),
     ])
 }
 
 /// Rewrite a stored value that names something the app no longer has.
 ///
 /// Returns true when the value changed, which is the caller's signal to write
-/// it back. Retired providers: `system` was the Web Speech path; `gemini` and
-/// `fish` predate Supertonic; `kokoro` was removed once it proved it could not
-/// produce audio in a bundled build.
+/// it back. Retired providers: `system` was the Web Speech path, `gemini` an
+/// early cloud experiment, and `kokoro` was removed once it proved it could
+/// not produce audio in a bundled build.
+///
+/// `fish` is deliberately absent. An early Fish attempt predated Supertonic
+/// and was retired here, but Fish Audio is a live provider again, and leaving
+/// it listed made selecting it impossible: `set_setting` rewrote the value
+/// before the INSERT, so the write returned `Ok` while storing `supertonic`.
+/// Nothing surfaced, and the choice reverted on the next launch. This list
+/// must name only providers `TtsProvider` can no longer construct — check
+/// `provider_for` before adding to it.
 fn migrate_removed_setting(key: &str, value: &mut Value) -> bool {
     match key {
         "tts_provider" => migrate_removed_tts_provider(value),
@@ -97,7 +106,7 @@ fn migrate_removed_setting(key: &str, value: &mut Value) -> bool {
 
 fn migrate_removed_tts_provider(value: &mut Value) -> bool {
     match value.as_str() {
-        Some("gemini" | "fish" | "kokoro") => {
+        Some("gemini" | "kokoro") => {
             *value = json!("supertonic");
             true
         }
@@ -190,6 +199,33 @@ mod tests {
         let conn = settings_conn();
         set_setting(&conn, "tts_provider", &json!("kokoro")).expect("write");
         assert_eq!(raw_value(&conn, "tts_provider"), "\"supertonic\"");
+    }
+
+    #[test]
+    fn writing_the_fish_provider_stores_it_verbatim() {
+        // Fish is a live provider, not a retired one. If this rewrites, the
+        // reader can never select Fish: the write succeeds, returns Ok, and
+        // silently stores Supertonic.
+        let conn = settings_conn();
+        set_setting(&conn, "tts_provider", &json!("fish")).expect("write");
+        assert_eq!(raw_value(&conn, "tts_provider"), "\"fish\"");
+    }
+
+    #[test]
+    fn reading_a_stored_fish_provider_leaves_it_alone() {
+        // The read path migrates and writes back independently of the write
+        // path, so it can resurrect the bug on its own.
+        let conn = settings_conn();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('tts_provider', ?1)",
+            rusqlite::params!["\"fish\""],
+        )
+        .expect("seed fish");
+
+        let all = get_all_settings(&conn).expect("read all");
+
+        assert_eq!(all.get("tts_provider"), Some(&json!("fish")));
+        assert_eq!(raw_value(&conn, "tts_provider"), "\"fish\"");
     }
 
     #[test]

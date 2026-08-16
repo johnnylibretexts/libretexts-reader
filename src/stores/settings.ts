@@ -7,15 +7,23 @@ import {
 } from "../lib/supertonic";
 import { api } from "../lib/tauri";
 import { displayError } from "../lib/errors";
+import type { TtsProvider } from "../types/domain";
 
 export type AppTheme = "light" | "dark" | "system";
-/** Mirrors `SpeechEngineId` — every provider here is one a reader can pick. */
-export type TtsProvider = "supertonic";
+/**
+ * Mirrors `SpeechEngineId` — every provider here is one a reader can pick.
+ * Re-exported from `types/domain.ts`, which is also where `tauri.ts` gets it
+ * for the `provider` field Rust now requires on synthesis and chapter
+ * requests; declaring it there once means this store and the invoke layer
+ * cannot drift apart without a compile error.
+ */
+export type { TtsProvider };
 
 export interface TtsSettingsPatch {
   ttsProvider?: TtsProvider;
   supertonicVoiceStyle?: SupertonicVoiceStyle;
   supertonicLanguage?: SupertonicLanguage;
+  fishVoiceId?: string | null;
 }
 
 export interface SettingsState {
@@ -28,6 +36,13 @@ export interface SettingsState {
   ttsProvider: TtsProvider;
   supertonicVoiceStyle: SupertonicVoiceStyle;
   supertonicLanguage: SupertonicLanguage;
+  /**
+   * The reader's chosen Fish voice id, or null when none has been picked yet.
+   * Settings UI for this lands in a later task; declared here now because
+   * `createSpeechEngine` requires it on every `SpeechEngineSettings`, and this
+   * store hands its whole state to that function.
+   */
+  fishVoiceId: string | null;
 }
 
 interface SettingsStore extends SettingsState {
@@ -50,6 +65,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   ttsProvider: "supertonic",
   supertonicVoiceStyle: "M1",
   supertonicLanguage: "en",
+  fishVoiceId: null,
 };
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -85,32 +101,40 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
   setTheme: async (theme: AppTheme) => {
+    const previousTheme = get().theme;
     set({ theme, error: null });
     persistLocalTheme(theme);
 
     try {
       await api.setSetting("theme", theme);
     } catch (error) {
-      set({
-        error: displayError(error),
-      });
+      // Revert the optimistic set before rethrowing: a failed persist must
+      // not leave the store (or the localStorage fallback `hydrate` reads
+      // on its own failure path) claiming a value that was never saved, or
+      // this session disagrees with what the next app start loads. Set the
+      // shared banner message, then rethrow so a caller awaiting this call
+      // sees the same failure via its own try/catch rather than having to
+      // read this store's mutable `error` field, which a concurrent
+      // unrelated action could overwrite or clear first. Every call site
+      // must catch this — see Sidebar.tsx.
+      set({ theme: previousTheme, error: displayError(error) });
+      persistLocalTheme(previousTheme);
+      throw error;
     }
   },
-  /**
-   * Intentionally retained with no caller today — its only caller (a
-   * provider `<select>`) was removed earlier in this branch. It is part of
-   * the seam a follow-on spec extends to add a second, cloud-based TTS
-   * provider; do not delete it as dead code.
-   */
   setTtsProvider: async (provider: TtsProvider) => {
+    const previousProvider = get().ttsProvider;
     set({ ttsProvider: provider, error: null });
 
     try {
       await api.setSetting("tts_provider", provider);
     } catch (error) {
-      set({
-        error: displayError(error),
-      });
+      // Revert before rethrowing -- see the note on setTheme above. Without
+      // this, a failed save leaves the store (and therefore the UI) showing
+      // a provider that was never persisted, disagreeing with what the next
+      // app start loads from the settings table.
+      set({ ttsProvider: previousProvider, error: displayError(error) });
+      throw error;
     }
   },
   saveTtsSettings: async (ttsSettings: TtsSettingsPatch) => {
@@ -126,10 +150,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       ttsSettings.ttsProvider ??
       get().ttsProvider ??
       DEFAULT_SETTINGS.ttsProvider;
+    const fishVoiceId =
+      ttsSettings.fishVoiceId !== undefined
+        ? ttsSettings.fishVoiceId
+        : get().fishVoiceId;
     set({
       ttsProvider,
       supertonicVoiceStyle,
       supertonicLanguage,
+      fishVoiceId,
       error: null,
     });
 
@@ -138,11 +167,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         api.setSetting("tts_provider", ttsProvider),
         api.setSetting("supertonic_voice_style", supertonicVoiceStyle),
         api.setSetting("supertonic_language", supertonicLanguage),
+        api.setSetting("fish_voice_id", fishVoiceId),
       ]);
     } catch (error) {
-      set({
-        error: displayError(error),
-      });
+      // See the rethrow note on setTheme above; the same reasoning applies.
+      set({ error: displayError(error) });
+      throw error;
     }
   },
 }));
@@ -161,6 +191,7 @@ export async function loadSettings(): Promise<Partial<SettingsState>> {
       settings.supertonic_voice_style,
     ),
     supertonicLanguage: asSupertonicLanguage(settings.supertonic_language),
+    fishVoiceId: asString(settings.fish_voice_id) ?? null,
   });
 }
 
@@ -191,16 +222,19 @@ function asTheme(value: unknown): AppTheme | undefined {
 /**
  * The single place stored provider values are interpreted, including retired
  * ones. `system` was the Web Speech path, removed once every engine sat behind
- * SpeechEngine; `gemini` and `fish` predate Supertonic; `kokoro` was removed
- * once it proved it could not produce audio in a bundled build. All fall back
- * to the default rather than being written back — the next settings save
+ * SpeechEngine; `gemini` predates Supertonic; `kokoro` was removed once it
+ * proved it could not produce audio in a bundled build. Retired values fall
+ * back to the default rather than being written back — the next settings save
  * overwrites the stale row anyway.
+ *
+ * `fish` is no longer retired: it is a real, selectable provider again (see
+ * `SpeechEngineId` in `lib/speech/types.ts`).
  */
 function asTtsProvider(value: unknown): TtsProvider | undefined {
-  if (value === "gemini" || value === "fish" || value === "kokoro") {
+  if (value === "gemini" || value === "kokoro") {
     return "supertonic";
   }
-  return value === "supertonic" ? value : undefined;
+  return value === "supertonic" || value === "fish" ? value : undefined;
 }
 
 // The localStorage key is intentionally still "johnny-reader-theme" from the

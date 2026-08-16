@@ -1,11 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import type * as Domain from "../types/domain";
+import type { SpeechVoice } from "./speech/types";
 
 type InvokeArgs = Record<string, unknown>;
 
 export interface SynthesizeSpeechRequest {
   text: string;
   speed: number;
+  /**
+   * Which engine speaks this text. Rust deserializes this with no
+   * `#[serde(default)]` — a request that omits it is rejected, not defaulted
+   * to whichever engine used to be the only one. See `SynthesizeSpeechRequest`
+   * in `src-tauri/src/commands/tts.rs`.
+   */
+  provider: Domain.TtsProvider;
   voiceId?: string | null;
   language?: string | null;
 }
@@ -24,6 +32,8 @@ export interface SupertonicPreviewRequest {
 export interface SupertonicChapterRequest {
   documentId: string;
   sectionId: string;
+  /** Which engine renders this chapter. No default; see `ChapterRequest` in `src-tauri/src/tts/supertonic/mod.rs`. */
+  provider: Domain.TtsProvider;
   voiceStyle?: string | null;
   language?: string | null;
   outputPath?: string | null;
@@ -36,6 +46,16 @@ export interface SupertonicChapterEstimate {
   chunkCount: number;
   cached: boolean;
   outputPath: string;
+  /**
+   * How many characters this export will actually be billed for. Always 0
+   * for a cached chapter and for any non-billed provider. Mirrors
+   * `billable_characters` on `ChapterEstimate` in
+   * `src-tauri/src/tts/supertonic/mod.rs` -- the gate in
+   * `SupertonicChapterExport.tsx` reads this, never a locally computed price.
+   */
+  billableCharacters: number;
+  /** Which engine this estimate was computed for. */
+  provider: Domain.TtsProvider;
 }
 
 export interface SupertonicChapterExport {
@@ -57,6 +77,17 @@ export interface SupertonicModelProgress {
   file: string;
   downloaded: number;
   total: number;
+}
+
+/**
+ * Presence/validity/credit only — there is deliberately no command that
+ * returns the stored key itself. Mirrors `FishKeyStatus` in
+ * `src-tauri/src/commands/fish.rs`.
+ */
+export interface FishKeyStatus {
+  present: boolean;
+  valid: boolean | null;
+  credit: number | null;
 }
 
 const DESKTOP_RUNTIME_ERROR = "This action requires the Tauri desktop runtime.";
@@ -153,6 +184,20 @@ export const api = {
     invokeDesktop<SupertonicChapterExport>("export_supertonic_chapter_mp3", {
       request,
     }),
+
+  getFishKeyStatus: () => invokeDesktop<FishKeyStatus>("get_fish_key_status"),
+  /**
+   * The live wallet balance, fetched over the network. Unlike
+   * `getFishKeyStatus` -- deliberately network-free so Settings can render
+   * on mount -- this one calls Fish's wallet endpoint, for the chapter
+   * export confirmation gate, which needs the real balance at the moment it
+   * asks the reader to approve spending.
+   */
+  getFishCredit: () => invokeDesktop<number>("get_fish_credit"),
+  setFishApiKey: (key: string) =>
+    invokeDesktop<FishKeyStatus>("set_fish_api_key", { key }),
+  clearFishApiKey: () => invokeDesktop<void>("clear_fish_api_key"),
+  listFishVoices: () => invokeDesktop<SpeechVoice[]>("list_fish_voices"),
 
   getSetting: <T = unknown>(key: string) =>
     invokeWithBrowserFallback<T | null>(null, "get_setting", { key }),

@@ -21,6 +21,7 @@ pub mod cache;
 pub mod chunk;
 pub mod engine;
 pub mod model;
+pub mod provider;
 pub mod text;
 pub mod voice;
 
@@ -30,9 +31,13 @@ pub(crate) const SUPERTONIC_SILENCE_SECONDS: f32 = 0.3;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SupertonicChapterRequest {
+pub struct ChapterRequest {
     pub document_id: String,
     pub section_id: String,
+    /// Which engine renders this chapter. No default: a missing value is a
+    /// hard error rather than a silent fall back to whichever engine used to
+    /// be the only one. See `provider_for` in `commands::chapter_tts`.
+    pub provider: String,
     pub voice_style: Option<String>,
     pub language: Option<String>,
     pub output_path: Option<String>,
@@ -41,12 +46,21 @@ pub struct SupertonicChapterRequest {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SupertonicChapterEstimate {
+pub struct ChapterEstimate {
     pub word_count: u32,
     pub estimated_seconds: u32,
     pub chunk_count: u32,
     pub cached: bool,
     pub output_path: String,
+    /// How many characters this export will actually be billed for. Always 0
+    /// for a cached chapter and for any non-billed provider, so the gate in
+    /// `SupertonicChapterExport.tsx` never asks the user to approve spending
+    /// that will not happen. Computed by `billable_characters` in
+    /// `commands::chapter_tts`.
+    pub billable_characters: u32,
+    /// Which engine this estimate was computed for, so the frontend gate can
+    /// name it without re-deriving it from a second source.
+    pub provider: String,
 }
 
 #[derive(Debug)]

@@ -10,34 +10,58 @@ use sha2::{Digest, Sha256};
 
 use crate::error::AppResult;
 use crate::paths;
+use crate::tts::provider::provider_display_name;
 use crate::tts::supertonic::chunk::{chunk_text_for_language, count_words};
-use crate::tts::supertonic::model::SUPERTONIC_MODEL_VERSION;
 use crate::tts::supertonic::{
-    ChapterMaterial, SupertonicChapterEstimate, SupertonicChapterRequest, SupertonicConfig,
-    SUPERTONIC_TOTAL_STEPS,
+    ChapterEstimate, ChapterMaterial, ChapterRequest, SupertonicConfig, SUPERTONIC_TOTAL_STEPS,
 };
 
 pub(crate) const AUDIOBOOK_WORDS_PER_MINUTE: f64 = 165.0;
-pub(crate) const SUPERTONIC_CACHE_VERSION: &str = "supertonic-tts-cache-v1";
+/// Bump when a change makes existing cached audio wrong to reuse.
+///
+/// A directory component rather than hash input alone: hashed into the
+/// filename it was invisible, so audio from a superseded version sat
+/// unreachable and unreclaimable next to live audio. As a directory,
+/// `cleanup::reclaim_stale_tts_cache_in` can find and remove it, and the next
+/// bump cleans up after itself.
+pub(crate) const TTS_CACHE_VERSION: &str = "tts-cache-v2";
+
+/// Holds every provider's rendered chapters, not just Supertonic's -- the
+/// cache key hashes the provider and model, so Fish and Supertonic audio for
+/// the same chapter are different files under here.
+pub(crate) const TTS_CACHE_DIR: &str = "tts-audio";
+
+/// The directory this cache used before it held more than one provider.
+///
+/// Everything in it is unreachable: the version that produced those files is
+/// superseded, so no current key can hash to any name inside it.
+pub(crate) const LEGACY_SUPERTONIC_CACHE_DIR: &str = "supertonic-tts";
 
 pub(crate) fn estimate_for_text(
     material: &ChapterMaterial,
     language: &str,
     output_path: &Path,
     cached: bool,
-) -> SupertonicChapterEstimate {
+    provider: &str,
+) -> ChapterEstimate {
     let chunks = chunk_text_for_language(&material.text, language);
     let word_count = count_words(&material.text) as u32;
     let estimated_seconds = ((word_count as f64 / AUDIOBOOK_WORDS_PER_MINUTE) * 60.0)
         .ceil()
         .max(1.0) as u32;
 
-    SupertonicChapterEstimate {
+    ChapterEstimate {
         word_count,
         estimated_seconds,
         chunk_count: chunks.len() as u32,
         cached,
         output_path: path_to_string(output_path),
+        // The real value is filled in by `resolve_chapter_job`, which owns
+        // `billable_characters` (see `commands::chapter_tts`) -- this
+        // function has no notion of billing, only of the text and provider
+        // name.
+        billable_characters: 0,
+        provider: provider.to_string(),
     }
 }
 
@@ -46,7 +70,7 @@ pub(crate) fn output_path_for_chapter(
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
-    request: &SupertonicChapterRequest,
+    request: &ChapterRequest,
 ) -> PathBuf {
     if let Some(output_path) = request
         .output_path
@@ -60,13 +84,34 @@ pub(crate) fn output_path_for_chapter(
     let directory = PathBuf::from(&config.export_directory)
         .join(sanitize_file_component(&material.document.title, 80));
     let filename = format!(
-        "{:03} - {} - Supertonic - {} - {}.mp3",
+        "{:03} - {} - {} - {} - {}.mp3",
         material.section.ordinal + 1,
         sanitize_file_component(&material.section.title, 72),
-        sanitize_file_component(voice_style, 16),
+        // Not the literal "Supertonic" it used to be: a Fish export wrote a
+        // file whose name said Supertonic had produced it.
+        sanitize_file_component(provider_display_name(&request.provider), 16),
+        voice_file_component(voice_style),
         sanitize_file_component(language, 8)
     );
     directory.join(filename)
+}
+
+/// The voice part of an export filename, kept short without becoming ambiguous.
+///
+/// Supertonic voice styles are two characters, so 16 was plenty. A Fish
+/// `reference_id` is an opaque 32+ character model id, and truncating two of
+/// them to a shared 16-character prefix would give two different voices the
+/// same output path — one export silently overwriting the other. (The cache
+/// path is unaffected: it hashes the full voice id.) When truncation actually
+/// discards anything, a short digest of the full id goes back on the end.
+fn voice_file_component(voice_style: &str) -> String {
+    let short = sanitize_file_component(voice_style, 16);
+    if short == sanitize_file_component(voice_style, usize::MAX) {
+        return short;
+    }
+
+    let digest = hex::encode(Sha256::digest(voice_style.as_bytes()));
+    format!("{short} {}", &digest[..8])
 }
 
 /// Derive the content-addressed cache path under an explicitly supplied root.
@@ -84,13 +129,16 @@ pub(crate) fn output_path_for_chapter(
 /// threads in one process, so an override here could race another test.
 pub(crate) fn cache_path_in(
     cache_root: &Path,
+    provider: &str,
+    model: &str,
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
 ) -> PathBuf {
     let mut hasher = Sha256::new();
-    hasher.update(SUPERTONIC_CACHE_VERSION.as_bytes());
-    hasher.update(SUPERTONIC_MODEL_VERSION.as_bytes());
+    hasher.update(TTS_CACHE_VERSION.as_bytes());
+    hasher.update(provider.as_bytes());
+    hasher.update(model.as_bytes());
     hasher.update(SUPERTONIC_TOTAL_STEPS.to_le_bytes());
     hasher.update(voice_style.as_bytes());
     hasher.update(language.as_bytes());
@@ -100,7 +148,8 @@ pub(crate) fn cache_path_in(
     let hash = hex::encode(hasher.finalize());
 
     cache_root
-        .join("supertonic-tts")
+        .join(TTS_CACHE_DIR)
+        .join(TTS_CACHE_VERSION)
         .join(format!("{hash}.mp3"))
 }
 
@@ -109,12 +158,16 @@ pub(crate) fn cache_path_in(
 /// Resolving that directory creates it, which is correct here — every caller is
 /// about to read or write the file.
 pub(crate) fn cache_path_for_chapter(
+    provider: &str,
+    model: &str,
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
 ) -> AppResult<PathBuf> {
     Ok(cache_path_in(
         &paths::cache_dir()?,
+        provider,
+        model,
         material,
         voice_style,
         language,
@@ -209,6 +262,30 @@ mod tests {
     }
 
     #[test]
+    fn cached_audio_is_filed_under_its_cache_version() {
+        // The version was only hashed into the filename, so audio from a
+        // superseded version was indistinguishable from live audio and could
+        // never be reclaimed -- potentially a book's worth of dead MP3s after
+        // a single bump. As a directory component it is identifiable, which is
+        // what lets `cleanup` sweep it and makes the next bump self-cleaning.
+        let path = cache_path_in(
+            Path::new("/cache"),
+            "fish",
+            "s2.1-pro",
+            &material("Vapor pressure rises with temperature."),
+            "M1",
+            "en",
+        );
+
+        assert!(
+            path.components()
+                .any(|component| component.as_os_str() == TTS_CACHE_VERSION),
+            "expected {TTS_CACHE_VERSION} as a path component, got {}",
+            path.display()
+        );
+    }
+
+    #[test]
     fn strips_path_separators_from_titles() {
         // Section titles like "11.5: Vapor Pressure" reach the filesystem, and
         // LibreTexts titles routinely contain slashes.
@@ -230,6 +307,29 @@ mod tests {
     }
 
     #[test]
+    fn cache_path_distinguishes_providers_and_models() {
+        // Without this, a chapter exported with Supertonic would be served
+        // from cache for a Fish request -- identical text, voice and language,
+        // identical key -- and the user would silently get the wrong voice.
+        let root = Path::new("/nonexistent/cache");
+        let supertonic = cache_path_in(root, "supertonic", "v1", &material("Hello."), "M1", "en");
+        let fish = cache_path_in(root, "fish", "s2.1-pro", &material("Hello."), "M1", "en");
+        let other_model = cache_path_in(root, "fish", "s2-pro", &material("Hello."), "M1", "en");
+
+        assert_ne!(supertonic, fish, "provider must change the path");
+        assert_ne!(fish, other_model, "model must change the path");
+
+        // Same model, different provider: this is the assertion that fails if
+        // `provider` is ever dropped from the hash. The provider-vs-model
+        // comparison above varies both at once and so cannot catch it.
+        assert_ne!(
+            cache_path_in(root, "supertonic", "v1", &material("Hello."), "M1", "en"),
+            cache_path_in(root, "fish", "v1", &material("Hello."), "M1", "en"),
+            "provider alone must change the path"
+        );
+    }
+
+    #[test]
     fn cache_path_is_content_addressed() {
         // A fictional root. This test asserts only how inputs map to paths, so
         // it must not reach paths::cache_dir() -- that call creates the real
@@ -237,7 +337,7 @@ mod tests {
         // the app.
         let root = Path::new("/nonexistent/cache");
         let path = |text: &str, voice: &str, language: &str| {
-            cache_path_in(root, &material(text), voice, language)
+            cache_path_in(root, "supertonic", "v1", &material(text), voice, language)
         };
 
         let same_a = path("Hello.", "M1", "en");
@@ -266,6 +366,92 @@ mod tests {
         );
     }
 
+    fn config() -> SupertonicConfig {
+        SupertonicConfig {
+            voice_style: "M1".into(),
+            language: "en".into(),
+            export_directory: "/nonexistent/exports".into(),
+        }
+    }
+
+    fn request(provider: &str) -> ChapterRequest {
+        ChapterRequest {
+            document_id: "doc-1".into(),
+            section_id: "sec-1".into(),
+            provider: provider.to_string(),
+            voice_style: None,
+            language: None,
+            output_path: None,
+            force: None,
+        }
+    }
+
+    #[test]
+    fn the_output_filename_names_the_provider_that_produced_the_audio() {
+        // The filename used to hardcode "Supertonic", so a Fish export landed
+        // on disk claiming an engine that had nothing to do with it.
+        let fish = output_path_for_chapter(
+            &config(),
+            &material("Hello."),
+            "d8ee9d1a-6f3e-4b8a",
+            "en",
+            &request("fish"),
+        );
+        assert!(
+            path_to_string(&fish).contains("Fish Audio"),
+            "a Fish export must say Fish Audio: {}",
+            path_to_string(&fish)
+        );
+        assert!(!path_to_string(&fish).contains("Supertonic"));
+
+        let supertonic = output_path_for_chapter(
+            &config(),
+            &material("Hello."),
+            "M1",
+            "en",
+            &request("supertonic"),
+        );
+        assert!(path_to_string(&supertonic).contains("Supertonic"));
+    }
+
+    #[test]
+    fn two_voice_ids_sharing_a_prefix_do_not_collide_on_the_output_path() {
+        // Fish reference_ids are opaque 32+ character model ids. Truncated to
+        // 16 characters, these two are identical -- one export would silently
+        // overwrite the other's file.
+        let first = "d8ee9d1a6f3e4b8a9c1d000000000001";
+        let second = "d8ee9d1a6f3e4b8a9c1d000000000002";
+        assert_eq!(
+            &first[..16],
+            &second[..16],
+            "the ids must actually share a 16-character prefix, or this test proves nothing"
+        );
+
+        assert_ne!(
+            output_path_for_chapter(
+                &config(),
+                &material("Hello."),
+                first,
+                "en",
+                &request("fish")
+            ),
+            output_path_for_chapter(
+                &config(),
+                &material("Hello."),
+                second,
+                "en",
+                &request("fish")
+            ),
+        );
+    }
+
+    #[test]
+    fn a_short_voice_style_is_left_exactly_as_it_was() {
+        // Supertonic's two-character styles never truncate, so nothing is
+        // appended to them and existing export filenames are unchanged.
+        assert_eq!(voice_file_component("M1"), "M1");
+    }
+
     #[test]
     fn estimate_scales_with_the_amount_of_text() {
         let short = estimate_for_text(
@@ -273,12 +459,14 @@ mod tests {
             "en",
             Path::new("/tmp/a.mp3"),
             false,
+            "supertonic",
         );
         let long = estimate_for_text(
             &material(&"word ".repeat(500)),
             "en",
             Path::new("/tmp/a.mp3"),
             false,
+            "supertonic",
         );
 
         assert!(long.word_count > short.word_count);

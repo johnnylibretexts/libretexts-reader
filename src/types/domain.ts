@@ -1,5 +1,15 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+/**
+ * Which TTS engine speaks. Declared here — the file `CLAUDE.md` designates for
+ * mirroring payload shapes shared with Rust — rather than in
+ * `stores/settings.ts` or `lib/speech/types.ts`, so both can import it without
+ * either importing the other: `tauri.ts` needs it for the `provider` field
+ * Rust now requires, and the settings store needs it for `TtsProvider`. This
+ * module has no imports of its own, so it cannot introduce a cycle.
+ */
+export type TtsProvider = "supertonic" | "fish";
+
 export type SourceType = "openstax" | "libretexts" | "epub" | "pdf" | "pasted" | "url";
 
 export type Document = { id: string, title: string, sourceType: SourceType, sourceMetadata: JsonValue, coverImagePath: string | null, license: string | null, attribution: string | null, wordCount: number, importedAt: string, lastOpenedAt: string | null, };
@@ -24,6 +34,6 @@ export type ImportStage = "fetching" | "parsing" | "tokenizing" | "storing" | "c
 export type ImportProgress = { documentId: string, stage: ImportStage, current: number, total: number, message: string | null, };
 
 /** Mirrors `AppError::kind` in `src-tauri/src/error.rs`. Kept in sync by `scripts/ci/check-error-kinds.sh`. */
-export type AppErrorKind = "database" | "pool" | "io" | "serde" | "http" | "readability" | "epub" | "pdf" | "openstax" | "libretexts" | "model" | "voice" | "tts" | "drm_protected" | "tauri" | "invalid_input" | "migration";
+export type AppErrorKind = "database" | "pool" | "io" | "serde" | "http" | "readability" | "epub" | "pdf" | "openstax" | "libretexts" | "model" | "voice" | "auth" | "tts" | "drm_protected" | "tauri" | "invalid_input" | "migration" | "payment_required" | "rate_limited";
 
 export type AppError = { kind: AppErrorKind, message: string, retryable: boolean, };

@@ -5,6 +5,7 @@ pub mod db;
 pub mod error;
 pub mod net;
 mod paths;
+pub mod secrets;
 pub mod tts;
 
 use db::connection::init_pool;
@@ -38,11 +39,16 @@ pub fn run() {
             commands::settings::set_setting,
             commands::settings::get_all_settings,
             commands::tts::synthesize_speech,
-            commands::supertonic_tts::get_supertonic_model_status,
-            commands::supertonic_tts::ensure_supertonic_model_downloaded,
-            commands::supertonic_tts::preview_supertonic_tts,
-            commands::supertonic_tts::estimate_supertonic_chapter,
-            commands::supertonic_tts::export_supertonic_chapter_mp3,
+            commands::chapter_tts::get_supertonic_model_status,
+            commands::chapter_tts::ensure_supertonic_model_downloaded,
+            commands::chapter_tts::preview_supertonic_tts,
+            commands::chapter_tts::estimate_supertonic_chapter,
+            commands::chapter_tts::export_supertonic_chapter_mp3,
+            commands::fish::get_fish_key_status,
+            commands::fish::get_fish_credit,
+            commands::fish::set_fish_api_key,
+            commands::fish::clear_fish_api_key,
+            commands::fish::list_fish_voices,
         ])
         .setup(|app| {
             let db_path = paths::database_path()?;
@@ -52,6 +58,7 @@ pub fn run() {
             paths::cache_dir()?;
             paths::temp_dir()?;
             cleanup::reclaim_kokoro_artifacts();
+            cleanup::reclaim_stale_tts_cache();
             let pool = init_pool(&db_path)?;
             app.manage(pool);
             Ok(())

@@ -121,7 +121,14 @@ export function Sidebar({ activeRoute, onNavigate }: SidebarProps) {
                   : ""
               }`}
               key={option.theme}
-              onClick={() => void setTheme(option.theme)}
+              onClick={() => {
+                // setTheme rethrows on a failed persist so an awaiting
+                // caller can react; this button doesn't await it, so it
+                // must catch here itself or the rejection goes unhandled.
+                // The store already recorded the failure in its shared
+                // `error` field.
+                void setTheme(option.theme).catch(() => {});
+              }}
               title={`${option.label} theme`}
               type="button"
             >

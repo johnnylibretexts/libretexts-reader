@@ -8,10 +8,11 @@ import {
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
 import { displayError } from "../../lib/errors";
-import { speechAudioToBlob } from "../../lib/speech";
+import { SPEECH_ENGINE_LABELS, speechAudioToBlob } from "../../lib/speech";
 import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
+import { requiresExportConfirmation } from "./exportGate";
 
 export function SupertonicChapterExport() {
   const document = usePlayerStore((state) => state.document);
@@ -20,6 +21,8 @@ export function SupertonicChapterExport() {
     (state) => state.currentSectionIndex,
   );
   const paragraphs = usePlayerStore((state) => state.paragraphs);
+  const ttsProvider = useSettingsStore((state) => state.ttsProvider);
+  const fishVoiceId = useSettingsStore((state) => state.fishVoiceId);
   const defaultVoiceStyle = useSettingsStore(
     (state) => state.supertonicVoiceStyle,
   );
@@ -38,6 +41,27 @@ export function SupertonicChapterExport() {
   const [exporting, setExporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set instead of exporting directly whenever the estimate says this export
+  // is billed. Cleared on confirm or cancel; never auto-dismissed, so a
+  // slow credit-balance fetch cannot let the export through before the
+  // reader has seen it.
+  // Carries its own estimate rather than reading the shared one. A forced
+  // estimate is a property of one request, not of the chapter: writing it to
+  // the shared state left the standing "Estimate: N billable characters" line
+  // quoting a forced price after the reader cancelled, for a plain Generate
+  // that would have been served from cache for nothing.
+  const [pendingExport, setPendingExport] = useState<{
+    force: boolean;
+    estimate: SupertonicChapterEstimate;
+  } | null>(null);
+  const [checkingExport, setCheckingExport] = useState(false);
+  // The live balance, fetched fresh (over the network) each time the gate
+  // opens -- never the value get_fish_key_status returns, which is
+  // deliberately stale/network-free so Settings can render on mount without
+  // waiting on Fish. See getFishCredit / get_fish_credit.
+  const [fishCredit, setFishCredit] = useState<number | null>(null);
+  const [fishCreditLoading, setFishCreditLoading] = useState(false);
+  const [fishCreditError, setFishCreditError] = useState<string | null>(null);
 
   const section = sections[currentSectionIndex] ?? null;
   const sampleText = useMemo(
@@ -46,6 +70,25 @@ export function SupertonicChapterExport() {
       "",
     [paragraphs],
   );
+  const isFish = ttsProvider === "fish";
+  const providerLabel = SPEECH_ENGINE_LABELS[ttsProvider];
+  // Fish has no sensible built-in voice (see FishProvider::voice in
+  // src-tauri/src/tts/fish/provider.rs), so a request is only sent once one
+  // is configured -- matching the backend's own guard rather than racing it.
+  const fishVoiceReady = !isFish || !!fishVoiceId;
+  // Blocked only while something is genuinely in flight. This deliberately
+  // does NOT include `!estimate`: a failed estimate fetch left both buttons
+  // dead with no retry path -- the effect below only re-runs on a chapter,
+  // voice or provider change -- so the reader had to navigate away and back,
+  // and a free Supertonic export was disabled by a price it never needed.
+  //
+  // Nothing is lost by allowing the click. `requiresExportConfirmation`
+  // treats a missing estimate as billed and gates on it (exportGate.ts, and
+  // the "gates when there is no estimate at all" case in its tests), and the
+  // Fish path in `requestExport` refetches the estimate before deciding
+  // anything. The money invariant lives there, in a pure tested function --
+  // not in a disabled attribute.
+  const exportBlocked = exporting || checkingExport || estimating;
 
   // Stop any in-flight preview playback and release its blob URL when the
   // reader view unmounts, not just when playback ends or a new preview starts.
@@ -59,9 +102,25 @@ export function SupertonicChapterExport() {
     setLanguage(defaultLanguage);
   }, [defaultLanguage]);
 
+  // A provider or section change invalidates any confirmation already on
+  // screen -- it named a character count and provider that no longer apply.
   useEffect(() => {
-    if (!document || !section) {
-      setEstimate(null);
+    setPendingExport(null);
+  }, [ttsProvider, section?.id]);
+
+  useEffect(() => {
+    // Clear FIRST, on every dependency change, before anything async starts.
+    // Overwriting the estimate only once the new one resolves left the
+    // previous chapter's (or voice's) value readable for the whole round
+    // trip, and `requestExport` read it to decide whether to gate -- so
+    // moving to a new section and clicking Generate before the estimate
+    // landed sent an unconfirmed billed Fish request priced at the previous
+    // section's "cached, costs nothing". Nothing may read a stale estimate,
+    // so no stale estimate may exist.
+    setEstimate(null);
+
+    if (!document || !section || !fishVoiceReady) {
+      setEstimateError(null);
       return;
     }
 
@@ -72,8 +131,9 @@ export function SupertonicChapterExport() {
       .estimateSupertonicChapter({
         documentId: document.id,
         sectionId: section.id,
-        voiceStyle,
-        language,
+        provider: ttsProvider,
+        voiceStyle: isFish ? fishVoiceId : voiceStyle,
+        language: isFish ? null : language,
       })
       .then((result) => {
         if (!cancelled) {
@@ -95,7 +155,16 @@ export function SupertonicChapterExport() {
     return () => {
       cancelled = true;
     };
-  }, [document, language, section, voiceStyle]);
+  }, [
+    document,
+    fishVoiceId,
+    fishVoiceReady,
+    isFish,
+    language,
+    section,
+    ttsProvider,
+    voiceStyle,
+  ]);
 
   if (!document || !section) {
     return null;
@@ -132,7 +201,7 @@ export function SupertonicChapterExport() {
     }
   }
 
-  async function exportChapter(force = false) {
+  async function runExport(force: boolean) {
     setExporting(true);
     setError(null);
     setStatus(
@@ -140,12 +209,15 @@ export function SupertonicChapterExport() {
     );
 
     try {
-      await persistSupertonicDefaults();
+      if (!isFish) {
+        await persistSupertonicDefaults();
+      }
       const result = await api.exportSupertonicChapterMp3({
         documentId: activeDocument.id,
         sectionId: activeSection.id,
-        voiceStyle,
-        language,
+        provider: ttsProvider,
+        voiceStyle: isFish ? fishVoiceId : voiceStyle,
+        language: isFish ? null : language,
         force,
       });
       setEstimate(result.estimate);
@@ -160,13 +232,107 @@ export function SupertonicChapterExport() {
     }
   }
 
+  // The gate: a billed export stops here and waits for an explicit
+  // confirmation naming the provider and the character count, instead of
+  // calling the export command immediately. The decision itself lives in
+  // `requiresExportConfirmation` (./exportGate.ts) so it can be unit-tested
+  // exhaustively -- see that file for why each case decides as it does.
+  //
+  // EVERY Fish request refetches the estimate first, not just the forced
+  // ones. The estimate held in state is computed by an effect that knows
+  // nothing about `force` and lags a section or voice change by a network
+  // round trip; deciding a billed request from it is deciding from a price
+  // that may belong to a different request. Refetching here binds the
+  // estimate to the exact chapter, voice and force flag being requested, and
+  // `requiresExportConfirmation` refuses to proceed on a null one, so the
+  // two failure modes (stale value, no value) are both closed.
+  async function requestExport(force: boolean) {
+    setError(null);
+
+    let relevantEstimate = estimate;
+    if (isFish) {
+      setCheckingExport(true);
+      try {
+        relevantEstimate = await api.estimateSupertonicChapter({
+          documentId: activeDocument.id,
+          sectionId: activeSection.id,
+          provider: ttsProvider,
+          voiceStyle: fishVoiceId,
+          language: null,
+          force,
+        });
+        // Only an unforced estimate describes the chapter's standing price,
+        // so only that one belongs in the shared display state.
+        if (!force) {
+          setEstimate(relevantEstimate);
+        }
+      } catch (error) {
+        setError(displayError(error));
+        return;
+      } finally {
+        setCheckingExport(false);
+      }
+    }
+
+    if (
+      requiresExportConfirmation({
+        estimate: relevantEstimate,
+        force,
+        provider: ttsProvider,
+      })
+    ) {
+      if (!relevantEstimate) {
+        // Gating means this request is billed. With no price there is nothing
+        // to show and nothing the reader could meaningfully approve, and the
+        // gate used to render only when the shared estimate happened to be
+        // set -- so this combination left the export neither running nor
+        // confirmable.
+        setError("Could not price this export. Try again.");
+        return;
+      }
+      setPendingExport({ force, estimate: relevantEstimate });
+      void refreshFishCredit();
+      return;
+    }
+    void runExport(force);
+  }
+
+  async function refreshFishCredit() {
+    setFishCreditLoading(true);
+    setFishCreditError(null);
+    setFishCredit(null);
+    try {
+      // Unlike getFishKeyStatus, this DOES call the network -- Fish's own
+      // wallet endpoint, via get_fish_credit -- because the gate needs the
+      // live balance, not the value cached from the last key validation. A
+      // failed fetch must not block an export the reader wants to make, so
+      // this only records an error for display: the gate still shows the
+      // character count and Confirm still works with no balance shown.
+      const credit = await api.getFishCredit();
+      setFishCredit(credit);
+    } catch (error) {
+      setFishCreditError(displayError(error));
+    } finally {
+      setFishCreditLoading(false);
+    }
+  }
+
+  function confirmExport() {
+    if (!pendingExport) {
+      return;
+    }
+    const { force } = pendingExport;
+    setPendingExport(null);
+    void runExport(force);
+  }
+
   return (
     <section className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="inline-flex items-center gap-2 text-base font-semibold">
             <FileAudio className="size-4 text-brand-700" aria-hidden="true" />
-            Supertonic chapter MP3
+            {providerLabel} chapter MP3
           </h2>
           <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
             {section.title}
@@ -193,59 +359,73 @@ export function SupertonicChapterExport() {
         </div>
       </div>
 
+      {isFish ? (
+        <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
+          {fishVoiceId
+            ? `Voice: ${fishVoiceId}. Preview is not available for Fish Audio; export bills your account for uncached chapters.`
+            : "No Fish Audio voice is configured. Choose one in Settings before exporting."}
+        </p>
+      ) : null}
+
       <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(10rem,0.25fr)_minmax(12rem,0.32fr)_auto_auto_auto]">
-        <label className="flex flex-col gap-2 text-sm font-medium">
-          Voice
-          <select
-            className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-            onChange={(event) =>
-              setVoiceStyle(event.target.value as SupertonicVoiceStyle)
-            }
-            value={voiceStyle}
-          >
-            {SUPERTONIC_VOICES.map((voice) => (
-              <option key={voice.id} value={voice.id}>
-                {voice.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {isFish ? null : (
+          <>
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Voice
+              <select
+                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                onChange={(event) =>
+                  setVoiceStyle(event.target.value as SupertonicVoiceStyle)
+                }
+                value={voiceStyle}
+              >
+                {SUPERTONIC_VOICES.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.name}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        <label className="flex flex-col gap-2 text-sm font-medium">
-          Language
-          <select
-            className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-            onChange={(event) =>
-              setLanguage(event.target.value as SupertonicLanguage)
-            }
-            value={language}
-          >
-            {SUPERTONIC_LANGUAGES.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Language
+              <select
+                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                onChange={(event) =>
+                  setLanguage(event.target.value as SupertonicLanguage)
+                }
+                value={language}
+              >
+                {SUPERTONIC_LANGUAGES.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
 
-        <button
-          className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          disabled={previewing || exporting}
-          onClick={() => void preview()}
-          type="button"
-        >
-          {previewing ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Play className="size-4" aria-hidden="true" />
-          )}
-          Preview
-        </button>
+        {isFish ? null : (
+          <button
+            className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            disabled={previewing || exporting}
+            onClick={() => void preview()}
+            type="button"
+          >
+            {previewing ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Play className="size-4" aria-hidden="true" />
+            )}
+            Preview
+          </button>
+        )}
 
         <button
           className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-brand-700 px-4 text-sm font-medium text-white hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={exporting}
-          onClick={() => void exportChapter(false)}
+          disabled={exportBlocked || !fishVoiceReady}
+          onClick={() => void requestExport(false)}
           type="button"
         >
           {exporting ? (
@@ -260,22 +440,71 @@ export function SupertonicChapterExport() {
 
         <button
           className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          disabled={exporting}
-          onClick={() => void exportChapter(true)}
+          disabled={exportBlocked || !fishVoiceReady}
+          onClick={() => void requestExport(true)}
           type="button"
         >
-          <RefreshCw className="size-4" aria-hidden="true" />
+          {checkingExport ? (
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <RefreshCw className="size-4" aria-hidden="true" />
+          )}
           Regenerate
         </button>
       </div>
 
       {estimate ? (
         <p className="mt-4 break-words text-xs text-neutral-500 dark:text-neutral-400">
-          Estimate uses {estimate.chunkCount} local generation{" "}
-          {estimate.chunkCount === 1 ? "chunk" : "chunks"} at approximately{" "}
-          {formatDuration(estimate.estimatedSeconds)}. Output path:{" "}
-          {estimate.outputPath}
+          {isFish
+            ? `Estimate: ${estimate.billableCharacters.toLocaleString()} billable characters at approximately ${formatDuration(estimate.estimatedSeconds)}.`
+            : `Estimate uses ${estimate.chunkCount} local generation ${estimate.chunkCount === 1 ? "chunk" : "chunks"} at approximately ${formatDuration(estimate.estimatedSeconds)}.`}{" "}
+          Output path: {estimate.outputPath}
         </p>
+      ) : null}
+
+      {pendingExport ? (
+        <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+          <p className="font-semibold text-amber-900 dark:text-amber-200">
+            Confirm {providerLabel} export
+          </p>
+          <p className="mt-1 text-amber-800 dark:text-amber-300">
+            This will send{" "}
+            <strong>
+              {pendingExport.estimate.billableCharacters.toLocaleString()}{" "}
+              characters
+            </strong>{" "}
+            to {providerLabel} and bill your account. This request is not
+            served from the cache, so it is not free.
+          </p>
+          <p className="mt-1 text-amber-800 dark:text-amber-300">
+            {fishCreditLoading
+              ? "Checking Fish Audio credit balance..."
+              : fishCreditError
+                ? // A failed balance check never blocks the export -- the
+                  // character count above is still shown and Confirm still
+                  // works.
+                  `Could not check credit balance: ${fishCreditError}`
+                : fishCredit != null
+                  ? `Current Fish Audio credit balance: ${fishCredit.toLocaleString()}`
+                  : "Fish Audio credit balance is unavailable."}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-amber-700 px-4 text-sm font-medium text-white hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              onClick={confirmExport}
+              type="button"
+            >
+              Confirm and export with {providerLabel}
+            </button>
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-amber-300 px-4 text-sm font-medium text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/60"
+              onClick={() => setPendingExport(null)}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {estimateError ? (

@@ -1,3 +1,12 @@
+import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
+
+// Testing Library only auto-cleans when vitest runs with `globals: true`, and
+// this project does not. Without this, a component from one test stays in the
+// document and the next test's queries match two of everything.
+afterEach(cleanup);
+
 // jsdom implements the HTMLAudioElement shape but none of its playback, and no
 // object-URL support at all. Stub the pieces the player relies on so tests can
 // drive audio without a real media stack.
