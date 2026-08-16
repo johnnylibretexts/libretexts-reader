@@ -581,6 +581,13 @@ function speechCacheKey(
     voice: state.voice,
     speed: state.speed,
     supertonicLanguage: settings.supertonicLanguage,
+    // Fish's voice does not travel through `state.voice`: it is captured at
+    // engine construction from settings, and a change to it keeps
+    // `engine.id === "fish"`, so `activeEngine` rebuilds the engine without
+    // resetting `state.voice`. Every other field above would be identical
+    // across the change, and the buffered sentences would replay in the old
+    // voice while new ones used the new one.
+    fishVoiceId: settings.fishVoiceId,
   });
 }
 

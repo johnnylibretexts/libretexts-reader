@@ -152,6 +152,30 @@ describe("playback through SpeechEngine", () => {
     expect(engine.calls.length).toBeGreaterThan(atOriginalSpeed);
     expect(engine.calls[engine.calls.length - 1].speed).toBe(1.5);
   });
+
+  it("re-synthesizes when the Fish voice changes, because the cache key includes it", async () => {
+    // Deliberately the same shape as "serves a repeated sentence from the
+    // cache" above, seeking back to the *same* sentence so an extra call can
+    // only be a cache miss and not a different sentence being spoken. A
+    // fishVoiceId change keeps engine.id === "fish", so nothing else in the
+    // key moves: without fishVoiceId in it, the buffered sentences replay in
+    // the old voice while new ones use the new one, and the chapter narrates
+    // in two voices.
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    const withFirstVoice = engine.calls.length;
+
+    useSettingsStore.setState({ fishVoiceId: "voice-2" });
+    await usePlayerStore.getState().seekToSentence(0, 0);
+    await usePlayerStore.getState().play();
+
+    expect(engine.calls.length).toBeGreaterThan(withFirstVoice);
+  });
 });
 
 describe("buffering message", () => {
