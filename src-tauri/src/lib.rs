@@ -58,6 +58,7 @@ pub fn run() {
             paths::cache_dir()?;
             paths::temp_dir()?;
             cleanup::reclaim_kokoro_artifacts();
+            cleanup::reclaim_stale_tts_cache();
             let pool = init_pool(&db_path)?;
             app.manage(pool);
             Ok(())

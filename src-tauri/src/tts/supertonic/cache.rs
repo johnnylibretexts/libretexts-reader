@@ -17,7 +17,25 @@ use crate::tts::supertonic::{
 };
 
 pub(crate) const AUDIOBOOK_WORDS_PER_MINUTE: f64 = 165.0;
-pub(crate) const SUPERTONIC_CACHE_VERSION: &str = "tts-cache-v2";
+/// Bump when a change makes existing cached audio wrong to reuse.
+///
+/// A directory component rather than hash input alone: hashed into the
+/// filename it was invisible, so audio from a superseded version sat
+/// unreachable and unreclaimable next to live audio. As a directory,
+/// `cleanup::reclaim_stale_tts_cache_in` can find and remove it, and the next
+/// bump cleans up after itself.
+pub(crate) const TTS_CACHE_VERSION: &str = "tts-cache-v2";
+
+/// Holds every provider's rendered chapters, not just Supertonic's -- the
+/// cache key hashes the provider and model, so Fish and Supertonic audio for
+/// the same chapter are different files under here.
+pub(crate) const TTS_CACHE_DIR: &str = "tts-audio";
+
+/// The directory this cache used before it held more than one provider.
+///
+/// Everything in it is unreachable: the version that produced those files is
+/// superseded, so no current key can hash to any name inside it.
+pub(crate) const LEGACY_SUPERTONIC_CACHE_DIR: &str = "supertonic-tts";
 
 pub(crate) fn estimate_for_text(
     material: &ChapterMaterial,
@@ -118,7 +136,7 @@ pub(crate) fn cache_path_in(
     language: &str,
 ) -> PathBuf {
     let mut hasher = Sha256::new();
-    hasher.update(SUPERTONIC_CACHE_VERSION.as_bytes());
+    hasher.update(TTS_CACHE_VERSION.as_bytes());
     hasher.update(provider.as_bytes());
     hasher.update(model.as_bytes());
     hasher.update(SUPERTONIC_TOTAL_STEPS.to_le_bytes());
@@ -130,7 +148,8 @@ pub(crate) fn cache_path_in(
     let hash = hex::encode(hasher.finalize());
 
     cache_root
-        .join("supertonic-tts")
+        .join(TTS_CACHE_DIR)
+        .join(TTS_CACHE_VERSION)
         .join(format!("{hash}.mp3"))
 }
 
@@ -240,6 +259,30 @@ mod tests {
             },
             text: text.into(),
         }
+    }
+
+    #[test]
+    fn cached_audio_is_filed_under_its_cache_version() {
+        // The version was only hashed into the filename, so audio from a
+        // superseded version was indistinguishable from live audio and could
+        // never be reclaimed -- potentially a book's worth of dead MP3s after
+        // a single bump. As a directory component it is identifiable, which is
+        // what lets `cleanup` sweep it and makes the next bump self-cleaning.
+        let path = cache_path_in(
+            Path::new("/cache"),
+            "fish",
+            "s2.1-pro",
+            &material("Vapor pressure rises with temperature."),
+            "M1",
+            "en",
+        );
+
+        assert!(
+            path.components()
+                .any(|component| component.as_os_str() == TTS_CACHE_VERSION),
+            "expected {TTS_CACHE_VERSION} as a path component, got {}",
+            path.display()
+        );
     }
 
     #[test]
