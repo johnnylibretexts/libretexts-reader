@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::error::{AppError, AppResult};
-use crate::tts::fish::{FISH_BASE_URL, FISH_MODEL, FISH_TIMEOUT_SECONDS};
+use crate::tts::fish::{synthesis_timeout, FISH_BASE_URL, FISH_MODEL, FISH_TIMEOUT_SECONDS};
 use crate::tts::provider::VoiceSummary;
 
 pub fn map_status(status: u16, body: &str) -> AppError {
@@ -80,6 +80,7 @@ impl FishClient {
             .post(format!("{}/v1/tts", self.base_url))
             .bearer_auth(&self.api_key)
             .header("model", FISH_MODEL)
+            .timeout(synthesis_timeout(text.len()))
             .json(&tts_request_body(text, voice_id, speed))
     }
 
@@ -211,6 +212,30 @@ mod tests {
             FISH_MODEL
         );
         assert_eq!(request.url().path(), "/v1/tts");
+    }
+
+    #[test]
+    fn a_chapter_sized_request_carries_its_own_ceiling() {
+        // The client-level timeout is reqwest's *total* request budget, body
+        // download included. Applied to a whole-chapter synthesis it aborts the
+        // request after Fish has already synthesized and billed for it, so the
+        // reader pays and gets nothing -- on every retry. Synthesis must
+        // override it per request.
+        let client = FishClient::new("sk-not-a-real-key".into()).expect("client");
+        let chapter = "word ".repeat(8_000);
+        let request = client
+            .tts_request(&chapter, "voice-abc", 1.0)
+            .build()
+            .expect("the request must build");
+
+        let timeout = request
+            .timeout()
+            .copied()
+            .expect("synthesis must set its own ceiling, not inherit the control-plane one");
+        assert!(
+            timeout > Duration::from_secs(FISH_TIMEOUT_SECONDS),
+            "a chapter cannot finish inside the control-plane ceiling, got {timeout:?}"
+        );
     }
 
     #[test]
