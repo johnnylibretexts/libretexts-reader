@@ -24,6 +24,22 @@ pub fn map_status(status: u16, body: &str) -> AppError {
     }
 }
 
+/// Read the wallet balance, refusing to guess.
+///
+/// Zero is a balance a reader can genuinely have, so defaulting to it when the
+/// payload cannot be read is indistinguishable from an empty wallet. That
+/// number is shown in the export gate at the moment the reader is asked to
+/// approve a charge, and it is what `set_fish_api_key` treats as proof the key
+/// works -- so a renamed or restyled field would silently store an unvalidated
+/// key and tell a funded reader they have nothing.
+pub fn parse_credit(payload: &Value) -> AppResult<f64> {
+    payload["credit"].as_f64().ok_or_else(|| {
+        AppError::Tts(format!(
+            "Fish Audio returned a wallet balance we could not read: {payload}"
+        ))
+    })
+}
+
 pub fn tts_request_body(text: &str, voice_id: &str, speed: f32) -> Value {
     json!({
         "text": text,
@@ -115,7 +131,7 @@ impl FishClient {
         }
 
         let payload: Value = response.json().await?;
-        Ok(payload["credit"].as_f64().unwrap_or(0.0))
+        parse_credit(&payload)
     }
 
     pub async fn list_voices(&self) -> AppResult<Vec<VoiceSummary>> {
@@ -212,6 +228,39 @@ mod tests {
             FISH_MODEL
         );
         assert_eq!(request.url().path(), "/v1/tts");
+    }
+
+    #[test]
+    fn a_balance_is_read_from_the_wallet_payload() {
+        assert_eq!(
+            parse_credit(&json!({ "credit": 42.5 })).expect("credit"),
+            42.5
+        );
+    }
+
+    #[test]
+    fn a_genuinely_empty_wallet_reads_as_zero() {
+        // Zero must stay a readable balance, or the check below would reject
+        // the one account state it most needs to report accurately.
+        assert_eq!(parse_credit(&json!({ "credit": 0 })).expect("credit"), 0.0);
+    }
+
+    #[test]
+    fn an_unreadable_wallet_payload_fails_rather_than_reporting_zero() {
+        // Zero is a balance a reader can really have, so returning it for a
+        // payload we could not read is indistinguishable from an empty wallet.
+        // This value is shown in the export gate at the moment the reader is
+        // asked to approve a charge, and it is also what `set_fish_api_key`
+        // treats as proof the key works.
+        for payload in [
+            json!({ "balance": 42.5 }),   // renamed field
+            json!({ "credit": "42.50" }), // sent as a string
+            json!({ "credit": null }),
+            json!({}),
+        ] {
+            let error = parse_credit(&payload).expect_err("must not invent a balance");
+            assert_eq!(error.kind(), "tts", "payload was {payload}");
+        }
     }
 
     #[test]
