@@ -55,6 +55,16 @@ pub fn tts_request_body(text: &str, voice_id: &str, speed: f32) -> Value {
     })
 }
 
+/// One connection pool for the whole process.
+///
+/// `reqwest::Client` is a handle around a pool and is documented as
+/// create-once-clone-many. Building one per call gave every playback sentence
+/// its own pool and a fresh TLS handshake to api.fish.audio -- with the
+/// player's ten-sentence lookahead, ten handshakes for what should be one
+/// reused connection, adding latency to exactly the window the buffering UI
+/// exists to hide.
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
 pub struct FishClient {
     api_key: String,
     base_url: String,
@@ -76,12 +86,24 @@ impl std::fmt::Debug for FishClient {
 
 impl FishClient {
     pub fn new(api_key: String) -> AppResult<Self> {
+        // Cloning a Client shares its pool; it does not copy it. The timeout
+        // set here is the control-plane ceiling, which synthesis overrides per
+        // request (see `tts_request`).
+        let http = match HTTP_CLIENT.get() {
+            Some(client) => client.clone(),
+            None => {
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(FISH_TIMEOUT_SECONDS))
+                    .build()?;
+                // A racing thread may win; either way one client is shared.
+                HTTP_CLIENT.get_or_init(|| client).clone()
+            }
+        };
+
         Ok(Self {
             api_key,
             base_url: FISH_BASE_URL.to_string(),
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(FISH_TIMEOUT_SECONDS))
-                .build()?,
+            http,
         })
     }
 
@@ -237,6 +259,20 @@ mod tests {
             FISH_MODEL
         );
         assert_eq!(request.url().path(), "/v1/tts");
+    }
+
+    #[test]
+    fn fish_clients_share_one_pooled_http_client() {
+        // Playback builds a client per sentence through provider_for. Sharing
+        // the pool is the difference between one TLS handshake per session and
+        // one per sentence.
+        let _first = FishClient::new("sk-not-a-real-key".into()).expect("first client");
+        let _second = FishClient::new("sk-also-not-real".into()).expect("second client");
+
+        assert!(
+            HTTP_CLIENT.get().is_some(),
+            "FishClient must build through the shared pool, not its own builder"
+        );
     }
 
     #[test]
