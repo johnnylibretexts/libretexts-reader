@@ -17,6 +17,10 @@ pub fn map_status(status: u16, body: &str) -> AppError {
     match status {
         401 => AppError::Auth(format!("Fish Audio rejected the API key: {detail}")),
         402 => AppError::PaymentRequired(format!("Fish Audio account is out of credit: {detail}")),
+        // A key that exists but may not do this: no permission for the model,
+        // or an account state that blocks it. Auth rather than the generic arm
+        // so the player names it and Settings treats it as a key problem.
+        403 => AppError::Auth(format!("Fish Audio refused this API key: {detail}")),
         404 => AppError::Voice(format!("Fish Audio has no such voice: {detail}")),
         422 => AppError::InvalidInput(format!("Fish Audio rejected the request: {detail}")),
         429 => AppError::RateLimited(format!("Fish Audio is rate limiting: {detail}")),
@@ -176,6 +180,11 @@ mod tests {
         // 401 and 402 are terminal: retrying bills nothing and fixes nothing.
         // 429 is the only retryable one.
         assert_eq!(map_status(401, "bad key").kind(), "auth");
+        // 403 is Fish refusing a key that exists -- no permission for the
+        // requested model, or an account state that blocks it. Falling through
+        // to the generic arm showed the reader a raw backend string and stopped
+        // the Settings panel presenting it as the key problem it is.
+        assert_eq!(map_status(403, "forbidden").kind(), "auth");
         assert_eq!(map_status(402, "no credit").kind(), "payment_required");
         assert_eq!(map_status(404, "no model").kind(), "voice");
         assert_eq!(map_status(422, "bad field").kind(), "invalid_input");
