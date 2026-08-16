@@ -34,14 +34,27 @@ pub fn map_status(status: u16, body: &str) -> AppError {
 /// payload cannot be read is indistinguishable from an empty wallet. That
 /// number is shown in the export gate at the moment the reader is asked to
 /// approve a charge, and it is what `set_fish_api_key` treats as proof the key
-/// works -- so a renamed or restyled field would silently store an unvalidated
-/// key and tell a funded reader they have nothing.
+/// works -- so a renamed field would silently store an unvalidated key and tell
+/// a funded reader they have nothing.
+///
+/// **Fish sends the balance as a JSON string**, e.g. `"credit":"5"` -- money as
+/// a string, which avoids float rounding on their side. Accepting only a JSON
+/// number rejected every real account outright. Both forms are read here; a
+/// number first, so a future change to numeric JSON needs no code change.
 pub fn parse_credit(payload: &Value) -> AppResult<f64> {
-    payload["credit"].as_f64().ok_or_else(|| {
-        AppError::Tts(format!(
-            "Fish Audio returned a wallet balance we could not read: {payload}"
-        ))
-    })
+    let credit = &payload["credit"];
+
+    credit
+        .as_f64()
+        .or_else(|| credit.as_str()?.trim().parse().ok())
+        .ok_or_else(|| {
+            // Deliberately not the whole payload: it carries `_id` and
+            // `user_id`, and this message reaches the UI and any log a reader
+            // pastes into a bug report.
+            AppError::Tts(format!(
+                "Fish Audio returned a wallet balance we could not read: credit was {credit}"
+            ))
+        })
 }
 
 pub fn tts_request_body(text: &str, voice_id: &str, speed: f32) -> Value {
@@ -298,14 +311,55 @@ mod tests {
         // asked to approve a charge, and it is also what `set_fish_api_key`
         // treats as proof the key works.
         for payload in [
-            json!({ "balance": 42.5 }),   // renamed field
-            json!({ "credit": "42.50" }), // sent as a string
+            json!({ "balance": 42.5 }),    // renamed field
+            json!({ "credit": "plenty" }), // a string, but not a number
             json!({ "credit": null }),
+            json!({ "credit": { "amount": 5 } }),
             json!({}),
         ] {
             let error = parse_credit(&payload).expect_err("must not invent a balance");
             assert_eq!(error.kind(), "tts", "payload was {payload}");
         }
+    }
+
+    #[test]
+    fn a_balance_sent_as_a_string_is_still_a_balance() {
+        // This is what Fish actually returns. A real response body:
+        //   {"_id":"...","credit":"5","cumulative_top_up":"5",...}
+        // Money as a string is a deliberate choice on their side -- it avoids
+        // float rounding -- not corruption. Requiring a JSON number rejected a
+        // funded account outright: the key could not be saved, and the export
+        // gate could not price anything.
+        assert_eq!(
+            parse_credit(&json!({ "credit": "5" })).expect("credit"),
+            5.0
+        );
+        assert_eq!(
+            parse_credit(&json!({ "credit": "42.50" })).expect("credit"),
+            42.5
+        );
+        assert_eq!(
+            parse_credit(&json!({ "credit": "0" })).expect("credit"),
+            0.0
+        );
+    }
+
+    #[test]
+    fn an_unreadable_balance_error_does_not_quote_the_whole_wallet() {
+        // The wallet body carries `_id` and `user_id`. This message reaches the
+        // UI and any log a reader pastes into a bug report, so it names the
+        // field's value and nothing else.
+        let error = parse_credit(&json!({
+            "credit": "plenty",
+            "user_id": "217d51b6daac4d5c8d9be64f628a0345",
+        }))
+        .expect_err("must fail");
+
+        assert!(error.to_string().contains("plenty"));
+        assert!(
+            !error.to_string().contains("217d51b6"),
+            "the account id must not travel with the error: {error}"
+        );
     }
 
     #[test]
