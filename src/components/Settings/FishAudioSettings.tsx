@@ -115,7 +115,14 @@ export function FishAudioSettings({
     return () => {
       cancelled = true;
     };
-  }, [keyStatus?.present]);
+    // Keyed on the status object, not `keyStatus.present`. Replacing one key
+    // with another leaves `present` true either side, so a boolean dep does
+    // not re-run and the previous account's voice models stay listed --
+    // picking one persists a reference_id the new account does not own, and
+    // the first synthesis 404s into "Choose a Fish Audio voice in Settings"
+    // while one is chosen. Every `setKeyStatus` call passes a fresh object,
+    // so identity changes exactly when the stored key might have.
+  }, [keyStatus]);
 
   function startReplace() {
     setKeyError(null);
