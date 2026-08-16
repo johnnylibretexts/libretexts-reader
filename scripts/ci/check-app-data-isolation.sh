@@ -25,6 +25,29 @@ trap 'rm -rf "$sandbox"' EXIT
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 
+# Compile before the sandbox exists.
+#
+# This wraps `cargo test`, which builds before it runs -- and the `ort` crate's
+# build script downloads a ~73MB libonnxruntime.a into
+# $HOME/Library/Caches/ort.pyke.io. That is a toolchain artifact, not app data,
+# for the same reason CARGO_HOME and RUSTUP_HOME are preserved above. Sandboxing
+# the build put it under the throwaway HOME, so this check failed on every cold
+# runner while passing on any machine that had already built once -- green
+# locally, red in CI, and the failure text blamed a `paths::` leak that was not
+# there. Exempting the path by name would only work until the next dependency
+# picked a new cache location.
+#
+# Building first also makes the guard stricter: what it observes afterwards is
+# only what the *tests* write.
+#
+# A caller substituting TEST_CMD (the self-test) is not running cargo at all, so
+# it gets no default build -- but it can still set BUILD_CMD explicitly.
+if [ -n "${BUILD_CMD+set}" ]; then
+  eval "$BUILD_CMD"
+elif [ -z "${TEST_CMD:-}" ]; then
+  cargo test -p libretexts-reader --no-run "$@"
+fi
+
 # Every branch of paths::platform_app_data_dir keys off one of these.
 export HOME="$sandbox"
 export XDG_DATA_HOME="$sandbox/.local/share"

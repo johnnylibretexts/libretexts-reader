@@ -10,9 +10,13 @@ subject="$script_dir/check-app-data-isolation.sh"
 pass=0
 fail=0
 
-expect() { # $1 = "pass"|"fail", $2 = description, $3 = TEST_CMD
+expect() { # $1 = "pass"|"fail", $2 = description, $3 = TEST_CMD, $4 = BUILD_CMD (optional)
   local status=0
-  TEST_CMD="$3" "$subject" >/dev/null 2>&1 || status=$?
+  if [ "$#" -ge 4 ]; then
+    BUILD_CMD="$4" TEST_CMD="$3" "$subject" >/dev/null 2>&1 || status=$?
+  else
+    TEST_CMD="$3" "$subject" >/dev/null 2>&1 || status=$?
+  fi
   if { [ "$1" = "pass" ] && [ "$status" -eq 0 ]; } || { [ "$1" = "fail" ] && [ "$status" -ne 0 ]; }; then
     echo "ok: $2"; pass=$((pass + 1))
   else
@@ -44,6 +48,25 @@ expect fail "a suite that writes a stray dotfile into HOME" \
 # A failing suite must surface as a failure, not be masked by a clean HOME.
 expect fail "a failing test command with a clean HOME" \
   'exit 3'
+
+# The build must run BEFORE HOME is replaced. `ort`'s build script downloads
+# libonnxruntime.a into $HOME/Library/Caches, so a build inside the sandbox
+# fails this check on any runner that has not compiled before -- which is what
+# broke CI while every developer machine stayed green.
+probe="$(mktemp -d)"
+trap 'rm -rf "$probe"' EXIT
+BUILD_CMD="printf '%s' \"\$HOME\" > '$probe/build-home'" TEST_CMD='true' \
+  "$subject" >/dev/null 2>&1 || true
+if [ "$(cat "$probe/build-home" 2>/dev/null)" = "$HOME" ]; then
+  echo "ok: the build step saw the real HOME, not the sandbox"; pass=$((pass + 1))
+else
+  echo "FAILED: the build step ran inside the sandbox HOME" >&2; fail=$((fail + 1))
+fi
+
+# A failing build must stop the run rather than falling through to a test pass:
+# `set -e` is what enforces that, and it is easy to lose to a stray `|| true`.
+expect fail "a build command that fails" \
+  'true' 'exit 4'
 
 echo
 echo "$pass passed, $fail failed"
