@@ -4,7 +4,7 @@ Last updated: 2026-08-16
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
-**There is live work in flight: `main` is not the whole picture.** The working tree is clean and the waves described under "Recently Landed" are merged to `main`, but the Fish Audio provider (spec B) is **23 commits on `feat/fish-audio`, open for review as [PR #4](https://github.com/johnnylibretexts/libretexts-reader/pull/4) and not yet merged** — `main` carries only its plan document, none of its code. Read `main` for everything before Fish, and the branch for Fish itself. The full gate is green on the branch head `d696071` (see the TTS direction section). The standing caution against `git reset --hard` applies with force while that branch is unmerged.
+**There is live work in flight: `main` is not the whole picture.** The working tree is clean and the waves described under "Recently Landed" are merged to `main`, but the Fish Audio provider (spec B) is **36 commits on `feat/fish-audio`, open as [PR #4](https://github.com/johnnylibretexts/libretexts-reader/pull/4) and not yet merged** — `main` carries only its plan document, none of its code. Read `main` for everything before Fish, and the branch for Fish itself. Review is complete and all 15 findings are resolved; the full gate is green on the branch head `67f3698` (see the TTS direction section). The standing caution against `git reset --hard` applies with force while that branch is unmerged.
 
 ## Project Location
 
@@ -157,6 +157,52 @@ Still true and still worth knowing: `SpeechEngine` (`src/lib/speech/types.ts`) i
 and `createSpeechEngine` (`src/lib/speech/index.ts`) is the single place an engine is chosen.
 A third provider is a case there and a case in `provider_for` on the Rust side, and nowhere
 else.
+
+#### What playback actually bills
+
+Fish playback does **not** bill one sentence per Play. The player reads ten sentences ahead
+at concurrency two on every play and every seek past the buffered window, and there is no
+cancellation channel — so sentences fetched for a passage the reader skips are billed and
+never heard. One Play is roughly ten sentences of spend. `README.md` says this plainly;
+don't "simplify" it back to per-sentence.
+
+#### Review round (2026-08-16) — 15 findings, all resolved
+
+`/code-review xhigh` over `main...HEAD` found 15 issues; every one is fixed on the branch.
+Two were outright blockers, and both are worth knowing because neither showed up as a
+failing test or a red build:
+
+1. **Fish could never be selected.** `migrate_removed_tts_provider` still listed `fish` as
+   a retired provider, and `set_setting` applies that rewrite *before* the INSERT — so
+   saving `tts_provider = "fish"` stored `"supertonic"` and returned `Ok`. The frontend
+   twin `asTtsProvider` had been updated and even carried a comment saying `fish` was live
+   again; the Rust half had not. **Both lists must move together.**
+2. **Every Fish chapter export would fail after being billed.** `FISH_TIMEOUT_SECONDS` was
+   set on the reqwest *client*, which makes it the total request budget including body
+   download, and a chapter is minutes of MP3. `synthesis_timeout(text_len)` now scales the
+   budget per request (capped at 15 minutes); the client keeps the 20s ceiling for the
+   control-plane calls only.
+
+Three others are worth carrying forward as facts rather than history:
+
+- **The chapter cache moved to `cache/tts-audio/<version>/<hash>.mp3`.** The version used to
+  be hashed into the filename only, which made superseded audio indistinguishable from live
+  audio and impossible to reclaim. `cleanup::reclaim_stale_tts_cache_in` now sweeps
+  non-current version directories at launch, so future bumps clean up after themselves.
+- **Caching a chapter is best-effort; delivering it is not.** A paid provider has already
+  billed by the time the bytes exist, so a cache-side failure writes straight to the
+  reader's output path instead of aborting. See `deliver_synthesized_mp3`.
+- **One review finding was wrong and should not be re-fixed.** It claimed an
+  export-directory failure loses paid audio. It does not: the cache is written and renamed
+  into place before `copy_cached_mp3` touches the output path, so that retry is free. Only
+  the cache-side steps could lose billed audio, and that is what was fixed.
+
+**The frontend can now test components.** `@testing-library/react`, `/user-event` and
+`/jest-dom` are dev dependencies, and `src/test/setup.ts` registers `afterEach(cleanup)` —
+required, because Testing Library only auto-cleans under `globals: true` and this project
+does not set it. Three fixes that previously had no possible test now have one. When
+retrofitting a test to an already-applied fix, **revert the fix and watch the test fail**
+before trusting it; all four component tests here were verified that way.
 
 ### Why Kokoro is being dropped — do not re-investigate
 
@@ -358,6 +404,10 @@ Relevant files:
 OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, rendered in the reader, and normalized for TTS.
 
 ## Testing And Verification
+
+Current counts on `feat/fish-audio` @ `67f3698`: **129 Rust tests** (1 ignored — the live
+network import smoke) and **83 frontend tests across 11 files**, including two component
+test files. `main` is lower on both; the difference is this branch.
 
 These commands were green before handoff:
 
