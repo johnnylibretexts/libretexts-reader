@@ -328,6 +328,43 @@ fn resolve_chapter_job(
     })
 }
 
+/// Write bytes into place via a uniquely-named temp file.
+///
+/// The unique name is what stops two concurrent exports of the same chapter
+/// from writing to one in-progress file before the atomic rename.
+async fn write_atomic(bytes: &[u8], path: &std::path::Path) -> AppResult<()> {
+    let temp_path = path.with_extension(format!("{}.mp3.download", Uuid::new_v4()));
+    tokio::fs::write(&temp_path, bytes).await?;
+    tokio::fs::rename(&temp_path, path).await?;
+    Ok(())
+}
+
+/// Put the audio where the reader asked for it, and cache it if we can.
+///
+/// The cache is an optimization; the reader's file is what they paid for. A
+/// paid provider has already billed for these bytes by the time we hold them,
+/// so a cache-side failure -- a full app-data volume, a cache directory that
+/// vanished -- must not abort the export. Doing so drops the only copy of
+/// billed audio and makes the retry bill again, indefinitely if the cache
+/// problem persists. A failure writing the reader's own file is still fatal:
+/// there is nothing left to deliver.
+async fn deliver_synthesized_mp3(
+    mp3: &[u8],
+    cache_path: &std::path::Path,
+    output_path: &std::path::Path,
+) -> AppResult<()> {
+    if let Err(error) = write_atomic(mp3, cache_path).await {
+        eprintln!("chapter export: caching failed, delivering uncached: {error}");
+
+        if let Some(parent) = output_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        return write_atomic(mp3, output_path).await;
+    }
+
+    copy_cached_mp3(cache_path, output_path).await
+}
+
 #[tauri::command]
 pub async fn estimate_supertonic_chapter(
     state: State<'_, DbPool>,
@@ -379,14 +416,7 @@ pub async fn export_supertonic_chapter_mp3(
         )));
     }
 
-    // Unique temp name so concurrent exports of the same chapter cannot write
-    // to the same in-progress file before the atomic rename into place.
-    let temp_path = job
-        .cache_path
-        .with_extension(format!("{}.mp3.download", Uuid::new_v4()));
-    tokio::fs::write(&temp_path, &mp3).await?;
-    tokio::fs::rename(&temp_path, &job.cache_path).await?;
-    copy_cached_mp3(&job.cache_path, &job.output_path).await?;
+    deliver_synthesized_mp3(&mp3, &job.cache_path, &job.output_path).await?;
 
     Ok(ChapterExport {
         output_path: path_to_string(&job.output_path),
@@ -843,5 +873,61 @@ mod provider_aware_validation_tests {
             &config()
         )
         .is_err());
+    }
+}
+
+/// Delivery of already-synthesized audio, exercised on a real filesystem.
+///
+/// Every path is passed in explicitly and lands under the OS temp dir, so
+/// nothing here touches `paths::` or the real app-data tree.
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("libretexts-reader-{label}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    #[tokio::test]
+    async fn a_normal_export_writes_both_the_cache_and_the_output() {
+        let root = scratch_dir("deliver-ok");
+        let cache_path = root.join("cache/chapter.mp3");
+        let output_path = root.join("out/Chapter One.mp3");
+        std::fs::create_dir_all(cache_path.parent().unwrap()).expect("cache dir");
+
+        deliver_synthesized_mp3(b"paid-audio", &cache_path, &output_path)
+            .await
+            .expect("delivery must succeed");
+
+        assert_eq!(std::fs::read(&cache_path).expect("cache"), b"paid-audio");
+        assert_eq!(std::fs::read(&output_path).expect("output"), b"paid-audio");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn a_cache_failure_still_delivers_the_audio_the_reader_paid_for() {
+        // Fish has already synthesized and billed for these bytes. The cache is
+        // an optimization; the reader's file is the thing they paid for. If a
+        // cache-side failure aborts the export, the bytes are dropped and the
+        // retry bills again -- indefinitely, if the cache problem persists.
+        let root = scratch_dir("deliver-cache-fail");
+        // A regular file where the cache directory should be: creating or
+        // renaming into it cannot succeed.
+        let blocked = root.join("blocked");
+        std::fs::write(&blocked, b"not a directory").expect("seed the blocker");
+        let cache_path = blocked.join("chapter.mp3");
+        let output_path = root.join("out/Chapter One.mp3");
+
+        deliver_synthesized_mp3(b"paid-audio", &cache_path, &output_path)
+            .await
+            .expect("a cache failure must not deny the reader audio they paid for");
+
+        assert_eq!(std::fs::read(&output_path).expect("output"), b"paid-audio");
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }
