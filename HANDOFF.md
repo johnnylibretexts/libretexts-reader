@@ -4,7 +4,9 @@ Last updated: 2026-08-16
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
-**There is live work in flight: `main` is not the whole picture.** The working tree is clean and the waves described under "Recently Landed" are merged to `main`, but the Fish Audio provider (spec B) is **36 commits on `feat/fish-audio`, open as [PR #4](https://github.com/johnnylibretexts/libretexts-reader/pull/4) and not yet merged** — `main` carries only its plan document, none of its code. Read `main` for everything before Fish, and the branch for Fish itself. Review is complete and all 15 findings are resolved; the full gate is green on the branch head `67f3698` (see the TTS direction section). The standing caution against `git reset --hard` applies with force while that branch is unmerged.
+**There is no work in progress. `main` is the whole picture.** The Fish Audio provider (spec B) merged on 2026-08-16 via [PR #4](https://github.com/johnnylibretexts/libretexts-reader/pull/4) — 39 commits, merge commit `64ead91`, reviewed with all 15 findings resolved. Everything described below is on `main` and the working tree is clean. The standing caution against `git reset --hard` still applies to any new WIP; there is none as of this update.
+
+**CI is green again.** It had been red on `main` since 2026-08-14 — not from any code defect, but because `check-app-data-isolation` wrapped `cargo test`, and the `ort` crate's build script caches a ~73MB `libonnxruntime.a` under `$HOME/Library/Caches`. That is a toolchain artifact, not app data, but a *cold* build inside the throwaway `$HOME` tripped the check. It reproduced only on machines that had never compiled before, so it was green for every developer and red on every runner, and the failure text blamed a `paths::` leak that did not exist. The script now compiles before creating the sandbox. **If this check ever fails again, read the leaked paths before believing the message** — it names `paths::` regardless of what actually wrote.
 
 ## Project Location
 
@@ -61,6 +63,12 @@ Copying only the project folder will not copy the local library, downloaded book
 ## Recently Landed
 
 **There is no work in progress.** This section used to track an uncommitted change set; everything in it is merged and pushed. It is kept as a map of what the app gained most recently, newest wave first.
+
+### 4. Fish Audio, the optional cloud provider (2026-08-16, `64ead91`)
+
+Spec B of the TTS direction. Supertonic stays the default and stays fully on-device; Fish Audio is a second engine the reader configures with their own API key, used for playback and chapter export. Full detail — the design decisions, what the review found, and what playback actually bills — is in **TTS direction** below. Read that section before touching provider selection, the audio cache, or the export gate.
+
+The two things most likely to surprise someone new to this code: **one Play bills roughly ten sentences**, not one, because the player reads ahead and cannot cancel; and **the webview is the only place an engine is chosen** — no Rust command may re-derive it from the `tts_provider` setting.
 
 ### 3. Durable import state (2026-08-13, `97473cc`)
 
@@ -120,7 +128,7 @@ arrive the same way.
 Spec: `docs/superpowers/specs/2026-08-13-remove-kokoro-design.md`.
 Plan: `docs/superpowers/plans/2026-08-13-remove-kokoro.md`. See ADR-0003.
 
-### B. Add Fish Audio (bring-your-own API key) — DONE (2026-08-14, branch `feat/fish-audio`)
+### B. Add Fish Audio (bring-your-own API key) — MERGED (2026-08-16, PR #4, `64ead91`)
 
 Spec: `docs/superpowers/specs/2026-08-13-fish-audio-design.md`.
 Plan: `docs/superpowers/plans/2026-08-13-fish-audio.md`.
@@ -405,9 +413,8 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 
 ## Testing And Verification
 
-Current counts on `feat/fish-audio` @ `67f3698`: **129 Rust tests** (1 ignored — the live
-network import smoke) and **83 frontend tests across 11 files**, including two component
-test files. `main` is lower on both; the difference is this branch.
+Current counts on `main`: **129 Rust tests** (1 ignored — the live network import smoke) and
+**83 frontend tests across 11 files**, including two component test files.
 
 These commands were green before handoff:
 
