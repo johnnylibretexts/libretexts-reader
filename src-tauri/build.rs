@@ -12,6 +12,16 @@ use zip::ZipArchive;
 const PDFIUM_RELEASE: &str = "chromium/7789";
 const PDFIUM_RELEASE_URL_COMPONENT: &str = "chromium%2F7789";
 
+// A dated BtbN release, never the rolling `latest`. BtbN rebuilds `latest`
+// daily under unchanged `ffmpeg-master-latest-*` filenames, so a pinned SHA
+// against it goes stale within a day and fails every build until someone
+// regenerates it -- which is exactly what happened on 2026-08-17, the first
+// time CI built a BtbN target. Dated releases embed the build id in the asset
+// name, so tag, filename and SHA all move together and the download is
+// reproducible. Bumping this means changing the tag, all three asset names and
+// all three SHAs as one edit.
+const FFMPEG_BTBN_RELEASE: &str = "autobuild-2026-08-16-13-00";
+
 struct PdfiumAsset {
     target: &'static str,
     asset_name: &'static str,
@@ -210,9 +220,12 @@ fn download_pdfium(asset: &PdfiumAsset) -> Vec<u8> {
 
 fn verify_sha256(bytes: &[u8], expected: &str, asset_name: &str) {
     let actual = hex::encode(Sha256::digest(bytes));
+    // Shared by the PDFium and ffmpeg downloads, so the message names neither:
+    // it said "PDFium archive" for an ffmpeg asset on 2026-08-17 and sent the
+    // diagnosis to the wrong dependency.
     assert_eq!(
         actual, expected,
-        "SHA-256 mismatch for downloaded PDFium archive {asset_name}"
+        "SHA-256 mismatch for downloaded archive {asset_name}"
     );
 }
 
@@ -309,8 +322,8 @@ fn ffmpeg_asset_for_target(target: &str) -> FfmpegAsset {
         },
         "x86_64-pc-windows-msvc" => FfmpegAsset {
             target: "x86_64-pc-windows-msvc",
-            asset_name: "ffmpeg-master-latest-win64-lgpl-shared.zip",
-            archive_sha256: "b5b73363a72f73da39463688be20cde0f17b626a544ab3c3c68ef44e24e31a6f",
+            asset_name: "ffmpeg-N-126175-g0056dd32fd-win64-lgpl-shared.zip",
+            archive_sha256: "2ad56ddf12ef5cc30343233482537e89184a27e928213264dd54338e5c635edd",
             source: FfmpegSource::BtbN,
             archive_kind: ArchiveKind::Zip,
             executable_name: "ffmpeg.exe",
@@ -318,8 +331,8 @@ fn ffmpeg_asset_for_target(target: &str) -> FfmpegAsset {
         },
         "x86_64-unknown-linux-gnu" => FfmpegAsset {
             target: "x86_64-unknown-linux-gnu",
-            asset_name: "ffmpeg-master-latest-linux64-lgpl-shared.tar.xz",
-            archive_sha256: "171aa349c6e1d018d602ecdf497d493fa9aa7c84f9d1d0160526f23f331d37d3",
+            asset_name: "ffmpeg-N-126175-g0056dd32fd-linux64-lgpl-shared.tar.xz",
+            archive_sha256: "917119a5488e4e2468578db1b5046872b6f4a67ced1312a818e38ea424c5f7c4",
             source: FfmpegSource::BtbN,
             archive_kind: ArchiveKind::TarXz,
             executable_name: "ffmpeg",
@@ -327,8 +340,8 @@ fn ffmpeg_asset_for_target(target: &str) -> FfmpegAsset {
         },
         "aarch64-unknown-linux-gnu" => FfmpegAsset {
             target: "aarch64-unknown-linux-gnu",
-            asset_name: "ffmpeg-master-latest-linuxarm64-lgpl-shared.tar.xz",
-            archive_sha256: "4537a74aca76d66faf6d04d82a9b0fc8b4b8185ced17def66afbe683c4fe95c7",
+            asset_name: "ffmpeg-N-126175-g0056dd32fd-linuxarm64-lgpl-shared.tar.xz",
+            archive_sha256: "d6d20d395e999a090a4db259734772f618592b29a0c7d23cd72a9320fc952d8c",
             source: FfmpegSource::BtbN,
             archive_kind: ArchiveKind::TarXz,
             executable_name: "ffmpeg",
@@ -340,14 +353,10 @@ fn ffmpeg_asset_for_target(target: &str) -> FfmpegAsset {
 
 fn download_ffmpeg(asset: &FfmpegAsset) -> Vec<u8> {
     let url = match asset.source {
-        // NOTE: BtbN publishes Windows/Linux ffmpeg under a rolling `latest`
-        // tag. The pinned `archive_sha256` keeps this fail-safe (a moved asset
-        // fails verification rather than producing a wrong binary), but the
-        // download is not reproducible: when BtbN rotates `latest`, this SHA
-        // must be regenerated, or — preferably — repointed at a dated
-        // `autobuild-YYYY-MM-DD` tag whose asset matches the recorded SHA.
+        // Pinned to a dated release, not the rolling `latest` -- see
+        // FFMPEG_BTBN_RELEASE for why.
         FfmpegSource::BtbN => format!(
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/{}",
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/{FFMPEG_BTBN_RELEASE}/{}",
             asset.asset_name
         ),
         FfmpegSource::ColorsWindMac => format!(
