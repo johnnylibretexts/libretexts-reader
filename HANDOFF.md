@@ -501,11 +501,26 @@ only in `build.rs` and `tauri.conf.json` — so no test executes it, and Linux i
 not a shipping target. **It was left unfixed deliberately, because nothing in
 this pipeline can verify a fix.** Issue #12 records how to verify one.
 
-**Timing.** The first Linux run was 17m29s fully cold. Do not read the runs
-immediately after the merge as the steady state: `save-if`/`if:` limit cache
-saves to `main`, so PR #13 started before `main`'s saving run had finished and
-restored nothing. The Linux entries exist now (~1.0GB rust, 61MB native assets,
+**Timing, measured 2026-08-17.** Warm Linux is **5m39s**; cold was 17m25s. Do
+not read the runs immediately after a merge as the steady state: `save-if`/`if:`
+limit cache saves to `main`, so PR #13 started before `main`'s saving run had
+finished and restored nothing — both its 16m41s and the first run's 17m29s were
+effectively cold. The Linux entries exist now (~1.0GB rust, 61MB native assets,
 50MB npm).
+
+**The win is billing, not speed, and the difference matters if anyone proposes
+reverting.** Linux is genuinely *slower* in wall clock than macOS was — 5m39s
+against 2m52s — because the macOS runners have faster CPUs and this build is
+compile-bound. What changed is the multiplier:
+
+| | `macos-14` | `ubuntu-latest` |
+| --- | --- | --- |
+| Wall clock, warm | ~2m52s | 5m39s |
+| Multiplier | 10× | 1× |
+| **Billable minutes** | **~29** | **~6** |
+
+So it is roughly a **5× cost improvement, not the 10× the raw multiplier
+suggests**, bought with about three extra minutes of wall clock.
 
 Also on 2026-08-17, **PR #13 moved the actions off deprecated Node 20**:
 `actions/checkout` v4→v7, `actions/setup-node` v4→v7, `actions/cache` v4→v6.
