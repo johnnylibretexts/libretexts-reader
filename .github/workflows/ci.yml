@@ -85,10 +85,16 @@ jobs:
       # Split restore/save rather than `actions/cache`, for the same reason the
       # step above sets save-if: the save is limited to main. `restore-keys`
       # makes an edit to build.rs that does not touch an asset pin -- a comment,
-      # a new target arm -- reuse the existing ~60MB rather than refetch it. A
-      # stale entry cannot produce a wrong binary: ensure_pdfium and
-      # ensure_ffmpeg both gate on a `.sha256` marker equal to the pinned
-      # archive_sha256, and rewrite in place when it differs.
+      # a new target arm -- reuse the existing ~60MB rather than refetch it.
+      #
+      # That fallback is only safe because the `.sha256` markers ensure_pdfium
+      # and ensure_ffmpeg gate on record *both* the pinned archive_sha256 and
+      # an extraction version. They used to record the archive alone, which
+      # identifies the bytes downloaded and says nothing about what was
+      # unpacked from them -- so a restored tree extracted by superseded logic
+      # passed the check and was reused, and a fix to the extraction landed
+      # with no effect at all. Change how an archive is unpacked and you must
+      # bump its *_EXTRACT_VERSION, or this cache will hand back the old tree.
       - name: Restore bundled native assets
         id: native-assets
         uses: actions/cache/restore@v6
@@ -121,6 +127,15 @@ jobs:
         run: |
           scripts/ci/check-app-data-isolation.test.sh
           scripts/ci/check-app-data-isolation.sh
+
+      # After the Rust steps, because it inspects what build.rs extracted. This
+      # is the only place the bundled ffmpeg is ever executed: no Rust source
+      # references it, so no test runs it, and until CI moved to Linux the tar
+      # extraction path had never run at all.
+      - name: Bundled ffmpeg loads its libraries
+        run: |
+          scripts/ci/check-ffmpeg-bundle.test.sh
+          scripts/ci/check-ffmpeg-bundle.sh
 
       # Last, and only once the build that populated these has actually passed.
       # Steps skip by default when an earlier one fails, which is the same

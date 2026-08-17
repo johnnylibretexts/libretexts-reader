@@ -12,6 +12,24 @@ use zip::ZipArchive;
 const PDFIUM_RELEASE: &str = "chromium/7789";
 const PDFIUM_RELEASE_URL_COMPONENT: &str = "chromium%2F7789";
 
+// Bump when the *extraction* changes, not when the archive does.
+//
+// The `.sha256` markers used to record only archive_sha256, which identifies
+// the bytes downloaded and says nothing about what was unpacked from them. A
+// CI cache holding a tree extracted by older logic therefore satisfied the
+// check and was reused verbatim -- which is exactly how the dropped-symlink
+// fix below first landed with no observable effect: the gate kept reporting
+// the same seven unresolvable libraries against a cached, stale extraction.
+//
+// Kept per asset so bumping one does not force the other to re-download.
+const PDFIUM_EXTRACT_VERSION: u32 = 1;
+const FFMPEG_EXTRACT_VERSION: u32 = 2;
+
+/// Marker contents: which archive, and which extraction produced this tree.
+fn marker_value(archive_sha256: &str, extract_version: u32) -> String {
+    format!("{archive_sha256} extract{extract_version}")
+}
+
 // A dated BtbN release, never the rolling `latest`. BtbN rebuilds `latest`
 // daily under unchanged `ffmpeg-master-latest-*` filenames, so a pinned SHA
 // against it goes stale within a day and fails every build until someone
@@ -148,8 +166,9 @@ fn ensure_pdfium() -> PathBuf {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", marker_path.display());
 
+    let expected_marker = marker_value(asset.archive_sha256, PDFIUM_EXTRACT_VERSION);
     if library_path.exists()
-        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == asset.archive_sha256)
+        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == expected_marker)
     {
         return library_path;
     }
@@ -160,7 +179,7 @@ fn ensure_pdfium() -> PathBuf {
     verify_sha256(&archive, asset.archive_sha256, asset.asset_name);
     extract_library(&archive, &asset, &library_path);
     extract_license_files(&archive, &manifest_dir);
-    fs::write(marker_path, format!("{}\n", asset.archive_sha256)).expect("write PDFium marker");
+    fs::write(marker_path, format!("{expected_marker}\n")).expect("write PDFium marker");
 
     library_path
 }
@@ -283,8 +302,9 @@ fn ensure_ffmpeg() -> PathBuf {
 
     println!("cargo:rerun-if-changed={}", marker_path.display());
 
+    let expected_marker = marker_value(asset.archive_sha256, FFMPEG_EXTRACT_VERSION);
     if sidecar_path.exists()
-        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == asset.archive_sha256)
+        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == expected_marker)
     {
         return sidecar_path;
     }
@@ -295,7 +315,7 @@ fn ensure_ffmpeg() -> PathBuf {
     verify_sha256(&archive, asset.archive_sha256, asset.asset_name);
     extract_ffmpeg(&archive, &asset, &binaries_dir, &sidecar_path);
     write_ffmpeg_license(&manifest_dir);
-    fs::write(marker_path, format!("{}\n", asset.archive_sha256)).expect("write ffmpeg marker");
+    fs::write(marker_path, format!("{expected_marker}\n")).expect("write ffmpeg marker");
 
     sidecar_path
 }
@@ -449,13 +469,19 @@ fn extract_ffmpeg_tar<R: Read>(
 
     for entry in archive.entries().expect("read ffmpeg tar entries") {
         let mut entry = entry.expect("read ffmpeg tar entry");
-        if !entry.header().entry_type().is_file() {
+        let entry_type = entry.header().entry_type();
+
+        // Symlinks are kept, not skipped. ffmpeg's lib/ is 14 symlinks against
+        // 7 real files, and the SONAMEs the dynamic loader actually asks for
+        // (libavdevice.so.63) are among the links -- dropping them left every
+        // library unresolvable while the extraction looked like it worked.
+        if !entry_type.is_file() && !entry_type.is_symlink() {
             continue;
         }
 
         let path = entry.path().expect("read ffmpeg tar entry path");
         let path_text = path.to_string_lossy();
-        if path.ends_with(Path::new("bin").join(asset.executable_name)) {
+        if entry_type.is_file() && path.ends_with(Path::new("bin").join(asset.executable_name)) {
             entry
                 .unpack(sidecar_path)
                 .expect("unpack ffmpeg executable");
@@ -469,9 +495,32 @@ fn extract_ffmpeg_tar<R: Read>(
             fs::create_dir_all(libs_dir).expect("create ffmpeg library directory");
 
             let file_name = path.file_name().expect("shared library file name");
-            entry
-                .unpack(libs_dir.join(file_name))
-                .expect("unpack ffmpeg shared library");
+            let destination = libs_dir.join(file_name);
+
+            if entry_type.is_symlink() {
+                let target = entry
+                    .link_name()
+                    .expect("read ffmpeg symlink target")
+                    .expect("ffmpeg symlink has a target")
+                    .into_owned();
+
+                // These links are flattened into one directory, so a target
+                // naming any path at all -- absolute, or escaping via .. --
+                // would point somewhere this layout cannot reproduce. Refuse
+                // rather than silently create a link that resolves elsewhere.
+                assert!(
+                    target.components().count() == 1 && target.file_name().is_some(),
+                    "ffmpeg library symlink {} points outside its directory: {}",
+                    path_text,
+                    target.display()
+                );
+
+                symlink_library(&target, &destination);
+            } else {
+                entry
+                    .unpack(&destination)
+                    .expect("unpack ffmpeg shared library");
+            }
         }
     }
 
@@ -479,6 +528,29 @@ fn extract_ffmpeg_tar<R: Read>(
         found_executable,
         "ffmpeg executable {} not found in {}",
         asset.executable_name, asset.asset_name
+    );
+}
+
+/// Recreate a shared-library symlink. Order-independent: the tar may list a
+/// link before the file it points at, and a symlink does not require its
+/// target to exist yet.
+#[cfg(unix)]
+fn symlink_library(target: &Path, destination: &Path) {
+    // Freshly created directory, so a collision means the archive listed the
+    // same link twice -- surface it rather than leaving whichever won.
+    std::os::unix::fs::symlink(target, destination).expect("create ffmpeg library symlink");
+}
+
+/// Only the TarXz path extracts symlinks, and only Linux targets use it --
+/// macOS and Windows both take zips. This exists so build.rs still compiles on
+/// a Windows host, and panics rather than silently dropping the links again if
+/// some future target routes here.
+#[cfg(not(unix))]
+fn symlink_library(target: &Path, destination: &Path) {
+    panic!(
+        "cannot recreate ffmpeg library symlink {} -> {} on this platform",
+        destination.display(),
+        target.display()
     );
 }
 
