@@ -122,6 +122,15 @@ jobs:
           scripts/ci/check-app-data-isolation.test.sh
           scripts/ci/check-app-data-isolation.sh
 
+      # After the Rust steps, because it inspects what build.rs extracted. This
+      # is the only place the bundled ffmpeg is ever executed: no Rust source
+      # references it, so no test runs it, and until CI moved to Linux the tar
+      # extraction path had never run at all.
+      - name: Bundled ffmpeg loads its libraries
+        run: |
+          scripts/ci/check-ffmpeg-bundle.test.sh
+          scripts/ci/check-ffmpeg-bundle.sh
+
       # Last, and only once the build that populated these has actually passed.
       # Steps skip by default when an earlier one fails, which is the same
       # guarantee `actions/cache`'s `post-if: success()` gives -- stated here
