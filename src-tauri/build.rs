@@ -449,13 +449,19 @@ fn extract_ffmpeg_tar<R: Read>(
 
     for entry in archive.entries().expect("read ffmpeg tar entries") {
         let mut entry = entry.expect("read ffmpeg tar entry");
-        if !entry.header().entry_type().is_file() {
+        let entry_type = entry.header().entry_type();
+
+        // Symlinks are kept, not skipped. ffmpeg's lib/ is 14 symlinks against
+        // 7 real files, and the SONAMEs the dynamic loader actually asks for
+        // (libavdevice.so.63) are among the links -- dropping them left every
+        // library unresolvable while the extraction looked like it worked.
+        if !entry_type.is_file() && !entry_type.is_symlink() {
             continue;
         }
 
         let path = entry.path().expect("read ffmpeg tar entry path");
         let path_text = path.to_string_lossy();
-        if path.ends_with(Path::new("bin").join(asset.executable_name)) {
+        if entry_type.is_file() && path.ends_with(Path::new("bin").join(asset.executable_name)) {
             entry
                 .unpack(sidecar_path)
                 .expect("unpack ffmpeg executable");
@@ -469,9 +475,32 @@ fn extract_ffmpeg_tar<R: Read>(
             fs::create_dir_all(libs_dir).expect("create ffmpeg library directory");
 
             let file_name = path.file_name().expect("shared library file name");
-            entry
-                .unpack(libs_dir.join(file_name))
-                .expect("unpack ffmpeg shared library");
+            let destination = libs_dir.join(file_name);
+
+            if entry_type.is_symlink() {
+                let target = entry
+                    .link_name()
+                    .expect("read ffmpeg symlink target")
+                    .expect("ffmpeg symlink has a target")
+                    .into_owned();
+
+                // These links are flattened into one directory, so a target
+                // naming any path at all -- absolute, or escaping via .. --
+                // would point somewhere this layout cannot reproduce. Refuse
+                // rather than silently create a link that resolves elsewhere.
+                assert!(
+                    target.components().count() == 1 && target.file_name().is_some(),
+                    "ffmpeg library symlink {} points outside its directory: {}",
+                    path_text,
+                    target.display()
+                );
+
+                symlink_library(&target, &destination);
+            } else {
+                entry
+                    .unpack(&destination)
+                    .expect("unpack ffmpeg shared library");
+            }
         }
     }
 
@@ -479,6 +508,29 @@ fn extract_ffmpeg_tar<R: Read>(
         found_executable,
         "ffmpeg executable {} not found in {}",
         asset.executable_name, asset.asset_name
+    );
+}
+
+/// Recreate a shared-library symlink. Order-independent: the tar may list a
+/// link before the file it points at, and a symlink does not require its
+/// target to exist yet.
+#[cfg(unix)]
+fn symlink_library(target: &Path, destination: &Path) {
+    // Freshly created directory, so a collision means the archive listed the
+    // same link twice -- surface it rather than leaving whichever won.
+    std::os::unix::fs::symlink(target, destination).expect("create ffmpeg library symlink");
+}
+
+/// Only the TarXz path extracts symlinks, and only Linux targets use it --
+/// macOS and Windows both take zips. This exists so build.rs still compiles on
+/// a Windows host, and panics rather than silently dropping the links again if
+/// some future target routes here.
+#[cfg(not(unix))]
+fn symlink_library(target: &Path, destination: &Path) {
+    panic!(
+        "cannot recreate ffmpeg library symlink {} -> {} on this platform",
+        destination.display(),
+        target.display()
     );
 }
 
