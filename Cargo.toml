@@ -10,6 +10,22 @@ authors = ["Johnny Phung"]
 license = "Apache-2.0"
 repository = "https://github.com/johnnylibretexts/libretexts-reader"
 
+# Supertonic's inference path is numeric Rust -- ndarray tensor building, mask
+# construction, and the diffusion loop -- sitting between the ONNX calls.
+# Unoptimized it runs at ~0.2x realtime, five times slower than a listener, so
+# the app's flagship on-device engine looks broken in exactly the build the
+# README and CLAUDE.md recommend for a quick run. Measured on an unchanged
+# model: 17.4s to speak a 58-character sentence at opt-level 0.
+#
+# opt-level 1 on this workspace is enough on its own. The hot code is generic
+# ndarray monomorphised into this crate, so optimizing dependencies as well
+# (`[profile.dev.package."*"]`) measured identically -- 2.09s against 2.08s --
+# while tripling a cold CI build from ~4m to ~13m. CI has no cargo cache, so
+# that cost would be paid on every run.
+
+[profile.dev]
+opt-level = 1
+
 [profile.release]
 opt-level = 3
 lto = true
