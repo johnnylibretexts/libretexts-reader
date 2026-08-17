@@ -32,9 +32,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.20.0'
+          cache: npm
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: rustup show
+
+      # Keyed on Cargo.lock and the resolved rustc, so a dependency or
+      # toolchain change invalidates it rather than silently reusing stale
+      # artifacts. Saved only from main: a cache write per PR branch would
+      # churn the repo's 10GB budget and evict the entry every branch restores
+      # from. PRs still restore main's.
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # PDFium and ffmpeg are fetched by src-tauri/build.rs into gitignored
+      # directories outside target/, so rust-cache does not cover them and they
+      # were re-downloaded on every run. build.rs pins the asset versions, so
+      # hashing it is what expires this.
+      - name: Cache bundled native assets
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/resources/pdfium
+            src-tauri/binaries
+          key: native-assets-${{ runner.os }}-${{ hashFiles('src-tauri/build.rs') }}
 
       - name: Install npm dependencies
         run: npm ci
