@@ -1,6 +1,6 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-16
+Last updated: 2026-08-17
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
@@ -8,7 +8,17 @@ This repo is an in-progress Tauri desktop app for reading and listening to OpenS
 
 **CI is green again.** It had been red on `main` since 2026-08-14 — not from any code defect, but because `check-app-data-isolation` wrapped `cargo test`, and the `ort` crate's build script caches a ~73MB `libonnxruntime.a` under `$HOME/Library/Caches`. That is a toolchain artifact, not app data, but a *cold* build inside the throwaway `$HOME` tripped the check. It reproduced only on machines that had never compiled before, so it was green for every developer and red on every runner, and the failure text blamed a `paths::` leak that did not exist. The script now compiles before creating the sandbox. **If this check ever fails again, read the leaked paths before believing the message** — it names `paths::` regardless of what actually wrote.
 
-**CI cannot currently run: the GitHub Actions spending limit is reached.** A job that fails in ~3 seconds with *"The job was not started because recent account payments have failed or your spending limit needs to be increased"* is billing, not code — check the run annotation before debugging. Raise the limit under Settings → Billing & plans. The cause is structural: `ci.yml` runs on `macos-14`, which bills at a **10× multiplier**, so each 4–13 minute run costs 40–130 billable minutes. See "Moving CI off macOS" below.
+**CI runs on `ubuntu-latest` and the billing block is resolved** (2026-08-17). Two
+things happened: the account moved to GitHub Pro, and the `verify` job moved off
+macOS — see "Moving CI off macOS" below for what that cost to land.
+`release.yml` stays on `macos-14`; it codesigns the `.app` and the bundled dylibs.
+
+Keep the diagnostic, because the failure mode can recur: **a job that fails in ~3
+seconds with *"The job was not started because recent account payments have failed
+or your spending limit needs to be increased"* is billing, not code.** Check the run
+annotation before debugging anything. The limit lives under Settings → Billing &
+plans. What made it structural was the `macos-14` **10× multiplier** — a 4–13 minute
+run cost 40–130 billable minutes. On Linux the same run bills at 1×.
 
 ## Project Location
 
@@ -452,39 +462,71 @@ For the LibreTexts image/layout feature:
 
 Important: any LibreTexts book imported before the image-anchor change should be deleted and reimported to test accurate placement.
 
-## Moving CI off macOS — scoped, not done
+## Moving CI off macOS — DONE (2026-08-17, PR #11)
 
-`ci.yml` runs on `macos-14` at a 10× billing multiplier and exhausted the
-account's Actions minutes on 2026-08-16. Moving the `verify` job to
-`ubuntu-latest` cuts that roughly tenfold. `release.yml` must stay on macOS —
-it builds and signs the macOS app.
+`verify` runs on `ubuntu-latest`. `release.yml` stays on `macos-14` because it
+builds and signs the macOS app. The pre-flight analysis held up exactly as
+written — no `cfg(target_os)` surprises, the XDG fallthrough in `paths.rs` is
+real, `check-app-data-isolation.sh` already exported `XDG_DATA_HOME`, and
+Tauri's documented Ubuntu package list was sufficient on the first try.
 
-Checked on 2026-08-16; **nothing in the verify suite is macOS-specific**:
+**What the analysis did not predict is the part worth reading.** Moving to Linux
+did not merely need a package list; it *executed code that had never run
+anywhere*, and that code was broken in two ways. `build.rs` is compiled for the
+host on every platform, so the Linux-only branches typechecked on every machine
+anyone had ever used while never once executing. Compile coverage 100%,
+execution coverage 0% — the shape that survives code review indefinitely.
 
-- Only three `cfg(target_os)` sites exist (`paths.rs` macOS + Windows,
-  `db/settings.rs` Windows). Linux falls through to the XDG branch, and
-  `check-app-data-isolation.sh` already exports `XDG_DATA_HOME`, so that guard
-  works on Linux by design rather than by accident.
-- `build.rs` carries Linux x86_64 assets for both PDFium
-  (`pdfium-linux-x64.tgz`) and ffmpeg
-  (`ffmpeg-master-latest-linux64-lgpl-shared.tar.xz`). `ubuntu-latest` is
-  x86_64.
-- The macOS paths in `db/migrations.rs` tests are SQL string fixtures, not
-  filesystem paths, so they are platform-independent.
+1. **The ffmpeg SHA-256 was pinned against BtbN's rolling `latest` tag**, which
+   BtbN rebuilds daily under unchanged `ffmpeg-master-latest-*` filenames. All
+   three BtbN pins (Linux x64, Linux arm64, **and Windows**) were stale and had
+   been for days. macOS never noticed because it pulls ffmpeg from ColorsWind at
+   a fixed tag. Fixed by pinning `FFMPEG_BTBN_RELEASE` to a dated `autobuild-*`
+   release, where the tag, asset filename and SHA all move together. **Bumping
+   it means changing the tag, all three asset names and all three SHAs as one
+   edit** — regenerate the SHAs by downloading and hashing, never by copying the
+   value out of a failure message.
+2. **`extract_ffmpeg_tar` unpacked into a directory that was never created.**
+   `extract_ffmpeg` removes `libs_dir` and never creates it, and
+   `tar::Entry::unpack` does not create parents — unlike the zip branch, which
+   writes through `copy_reader_to_path` and calls `create_dir_all` itself. Two
+   extraction paths, only one with the safety built in.
 
-**What must be added:** the crate depends on `tauri`, which links webkit2gtk
-through pkg-config on Linux. Nothing in this repo documents that today, so the
-job needs an install step before the Rust steps:
+A third defect in the same branch is **filed, not fixed: issue #12.** The tar
+loop skips every non-regular-file entry, and ffmpeg's `lib/` is 14 symlinks to 7
+real files, so the SONAME links (`libavdevice.so.63` → `libavdevice.so.63.2.100`)
+are dropped and the extracted Linux ffmpeg cannot resolve its own libraries. It
+is latent: nothing under `src-tauri/src` references ffmpeg at all — it appears
+only in `build.rs` and `tauri.conf.json` — so no test executes it, and Linux is
+not a shipping target. **It was left unfixed deliberately, because nothing in
+this pipeline can verify a fix.** Issue #12 records how to verify one.
 
-```bash
-sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential \
-  curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-```
+**Timing, measured 2026-08-17.** Warm Linux is **5m39s**; cold was 17m25s. Do
+not read the runs immediately after a merge as the steady state: `save-if`/`if:`
+limit cache saves to `main`, so PR #13 started before `main`'s saving run had
+finished and restored nothing — both its 16m41s and the first run's 17m29s were
+effectively cold. The Linux entries exist now (~1.0GB rust, 61MB native assets,
+50MB npm).
 
-**Still unproven:** that it compiles on Linux. It could not be verified — the
-only proofs available are a CI run (blocked by billing) or a local container
-(Docker is installed on the dev machine but was not running). Treat the package
-list as the documented requirement, not as a tested one.
+**The win is billing, not speed, and the difference matters if anyone proposes
+reverting.** Linux is genuinely *slower* in wall clock than macOS was — 5m39s
+against 2m52s — because the macOS runners have faster CPUs and this build is
+compile-bound. What changed is the multiplier:
+
+| | `macos-14` | `ubuntu-latest` |
+| --- | --- | --- |
+| Wall clock, warm | ~2m52s | 5m39s |
+| Multiplier | 10× | 1× |
+| **Billable minutes** | **~29** | **~6** |
+
+So it is roughly a **5× cost improvement, not the 10× the raw multiplier
+suggests**, bought with about three extra minutes of wall clock.
+
+Also on 2026-08-17, **PR #13 moved the actions off deprecated Node 20**:
+`actions/checkout` v4→v7, `actions/setup-node` v4→v7, `actions/cache` v4→v6.
+`Swatinem/rust-cache@v2` was never in the annotation and is unchanged. The same
+`checkout` bump was applied to `release.yml`, but **that half is unverified** —
+`release.yml` only runs on a tag, so the next release is where it gets tested.
 
 ## Known Limitations And Next Steps
 
