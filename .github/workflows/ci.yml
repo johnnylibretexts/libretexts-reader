@@ -13,8 +13,18 @@ permissions:
   contents: read
 
 jobs:
+  # Linux, not macOS. GitHub bills macOS runners at a 10x multiplier, so a
+  # ~10 minute verify run cost 100 billable minutes and exhausted the account's
+  # Actions minutes on 2026-08-16. Nothing verified here is macOS-specific: the
+  # only cfg(target_os) sites are macOS and Windows arms in paths.rs plus a
+  # Windows arm in db/settings.rs, and Linux takes the XDG fallthrough that
+  # check-app-data-isolation.sh already exports XDG_DATA_HOME for. build.rs
+  # carries x86_64-unknown-linux-gnu assets for both PDFium and ffmpeg.
+  #
+  # release.yml must stay on macOS -- it codesigns the .app and the bundled
+  # dylibs. Only this job moves.
   verify:
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +38,25 @@ jobs:
         run: |
           scripts/ci/check-identifier.test.sh
           scripts/ci/check-identifier.sh
+
+      # The crate depends on tauri, which links webkit2gtk through pkg-config on
+      # Linux -- there is no vendored fallback, so this must run before any Rust
+      # step. This is Tauri's documented Ubuntu prerequisite list; several
+      # entries are already present on ubuntu-latest and no-op quickly, kept
+      # whole so a runner image change cannot quietly remove one.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
 
       - uses: actions/setup-node@v4
         with:
