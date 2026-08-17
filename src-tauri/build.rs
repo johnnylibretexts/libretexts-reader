@@ -461,6 +461,13 @@ fn extract_ffmpeg_tar<R: Read>(
                 .expect("unpack ffmpeg executable");
             found_executable = true;
         } else if path_text.contains("/lib/") && path_text.contains(".so") {
+            // `tar::Entry::unpack` does not create parent directories, unlike
+            // the zip branch's copy_reader_to_path -- and extract_ffmpeg only
+            // ever removes libs_dir, never creates it. Idempotent and cheap, so
+            // it stays next to the write that needs it rather than becoming a
+            // precondition somewhere the tar branch cannot see.
+            fs::create_dir_all(libs_dir).expect("create ffmpeg library directory");
+
             let file_name = path.file_name().expect("shared library file name");
             entry
                 .unpack(libs_dir.join(file_name))
