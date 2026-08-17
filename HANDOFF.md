@@ -8,6 +8,8 @@ This repo is an in-progress Tauri desktop app for reading and listening to OpenS
 
 **CI is green again.** It had been red on `main` since 2026-08-14 — not from any code defect, but because `check-app-data-isolation` wrapped `cargo test`, and the `ort` crate's build script caches a ~73MB `libonnxruntime.a` under `$HOME/Library/Caches`. That is a toolchain artifact, not app data, but a *cold* build inside the throwaway `$HOME` tripped the check. It reproduced only on machines that had never compiled before, so it was green for every developer and red on every runner, and the failure text blamed a `paths::` leak that did not exist. The script now compiles before creating the sandbox. **If this check ever fails again, read the leaked paths before believing the message** — it names `paths::` regardless of what actually wrote.
 
+**CI cannot currently run: the GitHub Actions spending limit is reached.** A job that fails in ~3 seconds with *"The job was not started because recent account payments have failed or your spending limit needs to be increased"* is billing, not code — check the run annotation before debugging. Raise the limit under Settings → Billing & plans. The cause is structural: `ci.yml` runs on `macos-14`, which bills at a **10× multiplier**, so each 4–13 minute run costs 40–130 billable minutes. See "Moving CI off macOS" below.
+
 ## Project Location
 
 Work from wherever you cloned the repo, for example:
@@ -449,6 +451,40 @@ For the LibreTexts image/layout feature:
    - Figures appear near the related paragraphs, not collected at the top.
 
 Important: any LibreTexts book imported before the image-anchor change should be deleted and reimported to test accurate placement.
+
+## Moving CI off macOS — scoped, not done
+
+`ci.yml` runs on `macos-14` at a 10× billing multiplier and exhausted the
+account's Actions minutes on 2026-08-16. Moving the `verify` job to
+`ubuntu-latest` cuts that roughly tenfold. `release.yml` must stay on macOS —
+it builds and signs the macOS app.
+
+Checked on 2026-08-16; **nothing in the verify suite is macOS-specific**:
+
+- Only three `cfg(target_os)` sites exist (`paths.rs` macOS + Windows,
+  `db/settings.rs` Windows). Linux falls through to the XDG branch, and
+  `check-app-data-isolation.sh` already exports `XDG_DATA_HOME`, so that guard
+  works on Linux by design rather than by accident.
+- `build.rs` carries Linux x86_64 assets for both PDFium
+  (`pdfium-linux-x64.tgz`) and ffmpeg
+  (`ffmpeg-master-latest-linux64-lgpl-shared.tar.xz`). `ubuntu-latest` is
+  x86_64.
+- The macOS paths in `db/migrations.rs` tests are SQL string fixtures, not
+  filesystem paths, so they are platform-independent.
+
+**What must be added:** the crate depends on `tauri`, which links webkit2gtk
+through pkg-config on Linux. Nothing in this repo documents that today, so the
+job needs an install step before the Rust steps:
+
+```bash
+sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential \
+  curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+**Still unproven:** that it compiles on Linux. It could not be verified — the
+only proofs available are a CI run (blocked by billing) or a local container
+(Docker is installed on the dev machine but was not running). Treat the package
+list as the documented requirement, not as a tested one.
 
 ## Known Limitations And Next Steps
 
