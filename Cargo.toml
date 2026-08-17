@@ -17,14 +17,14 @@ repository = "https://github.com/johnnylibretexts/libretexts-reader"
 # README and CLAUDE.md recommend for a quick run. Measured on an unchanged
 # model: 17.4s to speak a 58-character sentence at opt-level 0.
 #
-# opt-level 1 on this workspace keeps debug symbols and quick incremental
-# rebuilds; dependencies (ndarray, ort's glue, the audio encoders) get full
-# optimization because nobody steps through them.
+# opt-level 1 on this workspace is enough on its own. The hot code is generic
+# ndarray monomorphised into this crate, so optimizing dependencies as well
+# (`[profile.dev.package."*"]`) measured identically -- 2.09s against 2.08s --
+# while tripling a cold CI build from ~4m to ~13m. CI has no cargo cache, so
+# that cost would be paid on every run.
+
 [profile.dev]
 opt-level = 1
-
-[profile.dev.package."*"]
-opt-level = 3
 
 [profile.release]
 opt-level = 3
