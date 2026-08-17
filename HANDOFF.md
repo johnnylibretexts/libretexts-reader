@@ -100,7 +100,14 @@ Spec and plan: `docs/superpowers/specs/2026-08-13-durable-import-state-design.md
 
 **Two things were deliberately left open — pick these up before building on the store:**
 
-1. **No regression test on the final fix wave.** A reviewer mechanically reverted the store change and re-ran the suite: all 7 tests still passed. `beforeEach` resets the store to all-null, so `expect(error).toBeNull()` after a success asserts a value that was already null — it never exercises the stale-error interleaving. A mutation-killing test seeds a non-null `error` via `useImportsStore.setState(...)` before a resolving `start()` and asserts it clears, plus the mirror for `completed`. ~15 lines. Without it, deleting `error: null` ships green.
+1. ~~**No regression test on the final fix wave.**~~ **DONE** — `src/stores/imports.test.ts:132-200`
+   now carries four mutation-killing tests and the suite is 12, not 7. Keep the reasoning,
+   because it generalises: `beforeEach` resets the store to all-null, so
+   `expect(error).toBeNull()` after a fresh success asserts a value that was *already* null and
+   passes whether or not the code does anything. Each test now seeds a non-null value first —
+   two before `start()` to pin the entry clear, two from inside `run()` so only the success and
+   failure paths can satisfy them. **Verified by mutation on 2026-08-17**: each of the three
+   `set` clears in `imports.ts` was deleted in turn and a test failed every time.
 2. **A spec requirement no task implemented.** The spec requires an in-library card to show "In library" **with an Open action in place of + Add**; both browsers render a static span. Tell-tale: `findImportedBook` returns a full `Document` but both call sites use only its truthiness. Either implement Open or amend the spec.
 
 Also carried, each belonging with other work: `active` has no user-clearable escape if `run()` never settles (mitigated by 15–20s request timeouts; belongs with cancellation), and quitting mid-import orphans image files (belongs with the deterministic-filenames follow-on — see `6c1262c`).
@@ -274,7 +281,11 @@ Design and plan: `docs/superpowers/specs/2026-08-13-rename-libretexts-reader-des
 
 **Not verified, and worth doing on the next import:** cover and figure rendering. There was no library on this machine, so the identifier/`$APPDATA` coupling has not been exercised end to end with real images. That is the one failure mode that produces no error — see `check-identifier.sh` and the asset-protocol gotcha.
 
-**Open issues** on `johnnylibretexts/libretexts-reader` as of 2026-08-13: **#1** (harden the `check-identifier.sh` scope guard against two false-pass paths) and **#2** (the Rust test suite writes into the real macOS app-data directory — `cache_path_for_chapter` creates dirs as a side effect). **#3** (model precision is a one-way door) was closed as obsolete: the Kokoro removal deleted the setting it described.
+**Open issues** on `johnnylibretexts/libretexts-reader`: **none as of 2026-08-17.** #1 (the
+`check-identifier.sh` scope guard) closed via PR #15, #12 (ffmpeg SONAME symlinks) via PR #16.
+#2 (the Rust suite writing into the real app-data directory) was fixed on 2026-08-13, and #3
+(model precision is a one-way door) was closed as obsolete when the Kokoro removal deleted the
+setting it described.
 
 An empty `~/Library/Application Support/dev.johnnyrobot.reader` may still exist; it holds nothing and can be deleted.
 
@@ -492,14 +503,38 @@ execution coverage 0% — the shape that survives code review indefinitely.
    writes through `copy_reader_to_path` and calls `create_dir_all` itself. Two
    extraction paths, only one with the safety built in.
 
-A third defect in the same branch is **filed, not fixed: issue #12.** The tar
-loop skips every non-regular-file entry, and ffmpeg's `lib/` is 14 symlinks to 7
-real files, so the SONAME links (`libavdevice.so.63` → `libavdevice.so.63.2.100`)
-are dropped and the extracted Linux ffmpeg cannot resolve its own libraries. It
-is latent: nothing under `src-tauri/src` references ffmpeg at all — it appears
-only in `build.rs` and `tauri.conf.json` — so no test executes it, and Linux is
-not a shipping target. **It was left unfixed deliberately, because nothing in
-this pipeline can verify a fix.** Issue #12 records how to verify one.
+A third defect in the same branch was issue #12, **fixed on 2026-08-17 via PR #16.**
+The tar loop skipped every non-regular-file entry, and ffmpeg's `lib/` is 14
+symlinks to 7 real files, so the SONAME links (`libavdevice.so.63` →
+`libavdevice.so.63.2.100`) were dropped and the extracted Linux ffmpeg could not
+resolve a single one of its libraries.
+
+**Two things from that fix are worth carrying, and the second is a landmine.**
+
+**1. There is now a gate, and it is the only thing that executes the bundle.**
+`scripts/ci/check-ffmpeg-bundle.sh` runs `ldd` against the extracted sidecar with
+`LD_LIBRARY_PATH` pointed at the extracted libs, and fails if any `DT_NEEDED`
+entry is unresolved. It asks the dynamic loader rather than counting files —
+a count passes on the 7 real `.so` files while the names the loader actually
+wants are missing. Nothing else touches ffmpeg at runtime: it appears only in
+`build.rs` and `tauri.conf.json`, with **zero** references anywhere under
+`src-tauri/src`.
+
+**2. Changing how an archive is extracted means bumping its `*_EXTRACT_VERSION`
+in `build.rs`.** The symlink fix was committed, was correct, and did *nothing* —
+CI reported the identical seven unresolvable libraries against it. `ensure_pdfium`
+and `ensure_ffmpeg` early-return when the output exists and a `.sha256` marker
+matches, and that marker recorded only `archive_sha256`, which identifies the
+bytes downloaded and says nothing about what was unpacked from them. CI restored
+a cached tree extracted by the *old* logic through the
+`restore-keys: native-assets-<os>-` prefix fallback, the marker matched, and
+extraction was skipped. The markers now record an extraction version too
+(`<sha> extract2`), per asset. If you change an extractor and see no effect,
+this is why.
+
+The general lesson, stated because it cost two CI rounds to see: a cache keyed on
+an *input* cannot detect a change in the *code that consumes it*. The ci.yml
+comment used to assert the opposite outright.
 
 **Timing, measured 2026-08-17.** Warm Linux is **5m39s**; cold was 17m25s. Do
 not read the runs immediately after a merge as the steady state: `save-if`/`if:`
