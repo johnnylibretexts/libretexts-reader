@@ -604,3 +604,75 @@ mod tests {
         assert!(long.len() > short.len());
     }
 }
+
+/// Latency measurement against the real 394 MB model. Ignored by default:
+/// it loads the model bundle from the app-data directory, so it needs a real
+/// install and is not part of the normal suite.
+///
+///   cargo test -p libretexts-reader supertonic_latency -- --ignored --nocapture
+#[cfg(test)]
+mod latency_bench {
+    use super::synthesize_samples_blocking;
+    use crate::tts::supertonic::audio::SUPERTONIC_SAMPLE_RATE;
+    use std::time::Instant;
+
+    struct Timing {
+        elapsed: f32,
+        realtime_ratio: f32,
+    }
+
+    fn report(label: &str, text: &str) -> Timing {
+        let started = Instant::now();
+        let samples = synthesize_samples_blocking(text, "M1", "en", 1.0).expect("synthesis");
+        let elapsed = started.elapsed().as_secs_f32();
+        let audio_seconds = samples.len() as f32 / SUPERTONIC_SAMPLE_RATE as f32;
+        let realtime_ratio = audio_seconds / elapsed;
+
+        println!(
+            "{label:<28} {elapsed:>7.2}s wall  {audio_seconds:>6.2}s audio  \
+             {realtime_ratio:>5.2}x realtime  ({} chars)",
+            text.chars().count()
+        );
+
+        Timing {
+            elapsed,
+            realtime_ratio,
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn supertonic_latency() {
+        let sentence = "The mitochondrion is the powerhouse of the cell.";
+
+        // First call pays the model load; the engine is cached after it.
+        let cold = report("cold (first sentence)", sentence);
+        let warm = report("warm (same sentence)", sentence);
+        report(
+            "warm (second sentence)",
+            "Photosynthesis converts light energy into chemical energy.",
+        );
+
+        let paragraph = "Cells are the basic unit of life. Every living organism is made of \
+             one or more cells. Some organisms consist of a single cell, while others contain \
+             trillions. The cell theory states that all cells arise from pre-existing cells.";
+        let paragraph = report("warm (paragraph)", paragraph);
+        let paragraph_ratio = paragraph.realtime_ratio;
+
+        println!(
+            "\nmodel load cost: ~{:.2}s (cold minus warm)",
+            (cold.elapsed - warm.elapsed).max(0.0)
+        );
+
+        // Playback has to outrun the listener or it stalls forever. At
+        // opt-level 0 this ran at 0.19x -- five times slower than realtime --
+        // which is what "Supertonic takes forever" was. The dev profile now
+        // sets opt-level 1 (and 3 for dependencies) precisely so a debug build
+        // stays usable; if someone removes that, this is what catches it.
+        assert!(
+            paragraph_ratio > 1.0,
+            "synthesis must outrun realtime, got {paragraph_ratio:.2}x -- \
+             check [profile.dev] opt-level in the workspace Cargo.toml"
+        );
+    }
+}
