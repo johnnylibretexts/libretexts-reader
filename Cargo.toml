@@ -19,9 +19,11 @@ repository = "https://github.com/johnnylibretexts/libretexts-reader"
 #
 # opt-level 1 on this workspace is enough on its own. The hot code is generic
 # ndarray monomorphised into this crate, so optimizing dependencies as well
-# (`[profile.dev.package."*"]`) measured identically -- 2.09s against 2.08s --
-# while tripling a cold CI build from ~4m to ~13m. CI has no cargo cache, so
-# that cost would be paid on every run.
+# (`[profile.dev.package."*"]`) measured identically -- 2.09s against 2.08s.
+# It is dropped because it bought nothing, not because of its build cost: CI
+# has cached cargo builds since PR #8, so the cold-build argument that was
+# recorded here no longer holds. Re-adding it still needs a measurement showing
+# it helps, which the one taken here did not.
 
 [profile.dev]
 opt-level = 1
