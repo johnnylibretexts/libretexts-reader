@@ -12,6 +12,24 @@ use zip::ZipArchive;
 const PDFIUM_RELEASE: &str = "chromium/7789";
 const PDFIUM_RELEASE_URL_COMPONENT: &str = "chromium%2F7789";
 
+// Bump when the *extraction* changes, not when the archive does.
+//
+// The `.sha256` markers used to record only archive_sha256, which identifies
+// the bytes downloaded and says nothing about what was unpacked from them. A
+// CI cache holding a tree extracted by older logic therefore satisfied the
+// check and was reused verbatim -- which is exactly how the dropped-symlink
+// fix below first landed with no observable effect: the gate kept reporting
+// the same seven unresolvable libraries against a cached, stale extraction.
+//
+// Kept per asset so bumping one does not force the other to re-download.
+const PDFIUM_EXTRACT_VERSION: u32 = 1;
+const FFMPEG_EXTRACT_VERSION: u32 = 2;
+
+/// Marker contents: which archive, and which extraction produced this tree.
+fn marker_value(archive_sha256: &str, extract_version: u32) -> String {
+    format!("{archive_sha256} extract{extract_version}")
+}
+
 // A dated BtbN release, never the rolling `latest`. BtbN rebuilds `latest`
 // daily under unchanged `ffmpeg-master-latest-*` filenames, so a pinned SHA
 // against it goes stale within a day and fails every build until someone
@@ -148,8 +166,9 @@ fn ensure_pdfium() -> PathBuf {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", marker_path.display());
 
+    let expected_marker = marker_value(asset.archive_sha256, PDFIUM_EXTRACT_VERSION);
     if library_path.exists()
-        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == asset.archive_sha256)
+        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == expected_marker)
     {
         return library_path;
     }
@@ -160,7 +179,7 @@ fn ensure_pdfium() -> PathBuf {
     verify_sha256(&archive, asset.archive_sha256, asset.asset_name);
     extract_library(&archive, &asset, &library_path);
     extract_license_files(&archive, &manifest_dir);
-    fs::write(marker_path, format!("{}\n", asset.archive_sha256)).expect("write PDFium marker");
+    fs::write(marker_path, format!("{expected_marker}\n")).expect("write PDFium marker");
 
     library_path
 }
@@ -283,8 +302,9 @@ fn ensure_ffmpeg() -> PathBuf {
 
     println!("cargo:rerun-if-changed={}", marker_path.display());
 
+    let expected_marker = marker_value(asset.archive_sha256, FFMPEG_EXTRACT_VERSION);
     if sidecar_path.exists()
-        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == asset.archive_sha256)
+        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == expected_marker)
     {
         return sidecar_path;
     }
@@ -295,7 +315,7 @@ fn ensure_ffmpeg() -> PathBuf {
     verify_sha256(&archive, asset.archive_sha256, asset.asset_name);
     extract_ffmpeg(&archive, &asset, &binaries_dir, &sidecar_path);
     write_ffmpeg_license(&manifest_dir);
-    fs::write(marker_path, format!("{}\n", asset.archive_sha256)).expect("write ffmpeg marker");
+    fs::write(marker_path, format!("{expected_marker}\n")).expect("write ffmpeg marker");
 
     sidecar_path
 }
