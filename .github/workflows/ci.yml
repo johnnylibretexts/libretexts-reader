@@ -26,7 +26,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Cheap, needs no toolchain -- run it before anything that takes minutes.
       - name: Error kind sync check
@@ -58,7 +58,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.20.0'
           cache: npm
@@ -91,7 +91,7 @@ jobs:
       # archive_sha256, and rewrite in place when it differs.
       - name: Restore bundled native assets
         id: native-assets
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             src-tauri/resources/pdfium
@@ -129,7 +129,7 @@ jobs:
       # not the action.
       - name: Save bundled native assets
         if: github.ref == 'refs/heads/main' && steps.native-assets.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             src-tauri/resources/pdfium
