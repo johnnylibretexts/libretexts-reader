@@ -52,13 +52,23 @@ jobs:
       # directories outside target/, so rust-cache does not cover them and they
       # were re-downloaded on every run. build.rs pins the asset versions, so
       # hashing it is what expires this.
-      - name: Cache bundled native assets
-        uses: actions/cache@v4
+      #
+      # Split restore/save rather than `actions/cache`, for the same reason the
+      # step above sets save-if: the save is limited to main. `restore-keys`
+      # makes an edit to build.rs that does not touch an asset pin -- a comment,
+      # a new target arm -- reuse the existing ~60MB rather than refetch it. A
+      # stale entry cannot produce a wrong binary: ensure_pdfium and
+      # ensure_ffmpeg both gate on a `.sha256` marker equal to the pinned
+      # archive_sha256, and rewrite in place when it differs.
+      - name: Restore bundled native assets
+        id: native-assets
+        uses: actions/cache/restore@v4
         with:
           path: |
             src-tauri/resources/pdfium
             src-tauri/binaries
           key: native-assets-${{ runner.os }}-${{ hashFiles('src-tauri/build.rs') }}
+          restore-keys: native-assets-${{ runner.os }}-
 
       - name: Install npm dependencies
         run: npm ci
@@ -82,3 +92,17 @@ jobs:
         run: |
           scripts/ci/check-app-data-isolation.test.sh
           scripts/ci/check-app-data-isolation.sh
+
+      # Last, and only once the build that populated these has actually passed.
+      # Steps skip by default when an earlier one fails, which is the same
+      # guarantee `actions/cache`'s `post-if: success()` gives -- stated here
+      # because with a split save it is this step's placement that provides it,
+      # not the action.
+      - name: Save bundled native assets
+        if: github.ref == 'refs/heads/main' && steps.native-assets.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            src-tauri/resources/pdfium
+            src-tauri/binaries
+          key: native-assets-${{ runner.os }}-${{ hashFiles('src-tauri/build.rs') }}
