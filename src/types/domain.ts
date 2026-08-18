@@ -30,7 +30,6 @@ export type LibreTextsBook = { bookId: string, title: string, author: string, af
 /** One Pressbooks Catalog on offer. Pressbooks calls these "networks" and the picker uses that word, because it is the publisher's own; the type is not named after it. `bookCount` conveys scale in the picker -- the live count comes from the Catalog at browse time. */
 export type PressbooksCatalog = { host: string, name: string, bookCount: number, isDefault: boolean, };
 
-/** `bookUrl` is the book's canonical URL and its identity everywhere: the catalog row key, the value `sourceMetadata` carries on an imported Document, and what the browser matches on to tell an imported book from a new one. */
 /**
  * A Catalog as the browser shows it. `totalBooks` is what the Catalog says it
  * holds, not what arrived — the two differ while a crawl is unfinished, and a
@@ -41,6 +40,7 @@ export type PressbooksCatalogListing = { books: PressbooksBook[], totalBooks: nu
 /** Payload of the `catalog-progress` event. Pages fetched against pages needed. */
 export type PressbooksCatalogProgress = { host: string, current: number, total: number, };
 
+/** `bookUrl` is the book's canonical URL and its identity everywhere: the catalog row key, the value `sourceMetadata` carries on an imported Document, and what the browser matches on to tell an imported book from a new one. */
 export type PressbooksBook = { bookUrl: string, title: string, subtitle: string | null, coverUrl: string | null, thumbnailUrl: string | null, authors: string, licenseName: string, licenseUrl: string | null, wordCount: number, };
 
 export type LibreTextsLibrary = { subdomain: string, title: string, };
