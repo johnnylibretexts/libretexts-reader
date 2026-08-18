@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BookOpen, ExternalLink, Loader2, Plus } from "lucide-react";
+import { BookOpen, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import { api } from "../../lib/tauri";
 import type * as Domain from "../../types/domain";
 import { displayError } from "../../lib/errors";
@@ -13,16 +13,25 @@ interface PressbooksBrowserProps {
 }
 
 /**
- * One Catalog at a time, listed whole. Pressbooks ignores its own `search`
- * parameter and caps a page at ten books, so searching means enumerating
- * first — that is a separate ticket. "Network" is Pressbooks' own word for a
- * Catalog and appears in the picker label for that reason; nothing here is
- * typed after it.
+ * One Catalog at a time, listed whole and searched locally. Pressbooks ignores
+ * its own `search` parameter and caps a page at ten books, so a Catalog is
+ * enumerated into the local cache once and every search after that reads the
+ * cache — which is why typing costs no request. "Network" is Pressbooks' own
+ * word for a Catalog and appears in the picker label for that reason; nothing
+ * here is typed after it.
  */
 export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
   const [catalogs, setCatalogs] = useState<Domain.PressbooksCatalog[]>([]);
   const [host, setHost] = useState<string | null>(null);
   const [books, setBooks] = useState<Domain.PressbooksBook[]>([]);
+  // The Catalog whose books are in the local cache. Searching reads that cache,
+  // so this is what says a search can be answered at all.
+  const [listedHost, setListedHost] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  // null means "not searching", which is what distinguishes an unsearched
+  // Catalog from a search that matched none of its books.
+  const [matches, setMatches] = useState<Domain.PressbooksBook[] | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const activeImport = useImportsStore((state) => state.active);
@@ -67,13 +76,16 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
     setLoading(true);
     setError(null);
     // Cleared on every switch: leaving the previous Catalog's books on screen
-    // under a new Catalog's name would misattribute them.
+    // under a new Catalog's name would misattribute them. Matches go with
+    // them -- they are the previous Catalog's books too.
     setBooks([]);
+    setMatches(null);
     api
       .listPressbooksBooks(host)
       .then((catalog) => {
         if (active) {
           setBooks(catalog);
+          setListedHost(host);
         }
       })
       .catch((error) => {
@@ -93,6 +105,49 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
     };
   }, [host]);
 
+  // Undebounced on purpose: this reads the local cache listing the Catalog
+  // filled, so a keystroke costs a SQL LIKE rather than a request. The `active`
+  // flag is what keeps a slower earlier answer from landing on a later one.
+  useEffect(() => {
+    const term = query.trim();
+    if (!host || term === "") {
+      setMatches(null);
+      setSearchError(null);
+      return;
+    }
+
+    // Held until this Catalog is in the cache. Searching sooner asks an empty
+    // cache, and answering "no matches" for a Catalog that has not arrived
+    // would then stand even once it had.
+    if (listedHost !== host) {
+      return;
+    }
+
+    let active = true;
+    api
+      .searchPressbooksBooks(host, term)
+      .then((found) => {
+        if (active) {
+          setMatches(found);
+          setSearchError(null);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setMatches([]);
+          setSearchError(displayError(error));
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [host, listedHost, query]);
+
+  const searchTerm = query.trim();
+  const visible = matches ?? books;
+  const failure = error ?? searchError;
+
   async function importBook(book: Domain.PressbooksBook) {
     await startImport({
       bookId: book.bookUrl,
@@ -103,7 +158,21 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
 
   return (
     <section className="flex flex-col gap-4">
-      <div className="grid gap-3 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900 md:grid-cols-[minmax(14rem,1fr)]">
+      <div className="grid gap-3 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900 md:grid-cols-[minmax(14rem,1fr)_14rem]">
+        <label className="flex min-w-0 flex-col gap-2 text-sm font-medium">
+          Search
+          <span className="relative">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400"
+              aria-hidden="true"
+            />
+            <input
+              className="h-10 w-full rounded-md border border-neutral-200 bg-white pl-9 pr-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+              onChange={(event) => setQuery(event.target.value)}
+              value={query}
+            />
+          </span>
+        </label>
         <label className="flex min-w-0 flex-col gap-2 text-sm font-medium">
           Network
           <select
@@ -120,9 +189,9 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
         </label>
       </div>
 
-      {error ? (
+      {failure ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">
-          {error}
+          {failure}
         </p>
       ) : null}
 
@@ -133,16 +202,22 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
         </div>
       ) : null}
 
-      {!loading && books.length === 0 && !error ? (
+      {!loading && visible.length === 0 && !failure ? (
         <div className="rounded-md border border-neutral-200 bg-white px-4 py-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
-          {catalogs.length === 0
-            ? "No Pressbooks networks are available."
-            : "This Pressbooks network has no books to show."}
+          {/* Three different nothings, and a reader has to be able to tell
+              them apart: a term that found nothing, a Catalog with nothing in
+              it, and no Catalogs at all. A Catalog that failed to load is the
+              fourth and is reported above as an error, not here. */}
+          {searchTerm
+            ? `No books match “${searchTerm}”.`
+            : catalogs.length === 0
+              ? "No Pressbooks networks are available."
+              : "This Pressbooks network has no books to show."}
         </div>
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {books.map((book) => {
+        {visible.map((book) => {
           const imported = findImportedBook(
             documents,
             "pressbooks",

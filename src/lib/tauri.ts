@@ -177,6 +177,13 @@ export const api = {
       "list_pressbooks_books",
       { host },
     ),
+  /** Local, over the cache `listPressbooksBooks` filled. No network. */
+  searchPressbooksBooks: (host: string, query: string) =>
+    invokeWithBrowserFallback<Domain.PressbooksBook[]>(
+      [],
+      "search_pressbooks_books",
+      { host, query },
+    ),
 
   savePlaybackState: (playback: Domain.PlaybackState) =>
     invokeDesktop<void>("save_playback_state", { playback }),

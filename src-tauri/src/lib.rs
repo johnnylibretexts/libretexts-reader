@@ -37,6 +37,7 @@ pub fn run() {
             commands::content::list_libretexts_libraries,
             commands::content::list_pressbooks_catalogs,
             commands::content::list_pressbooks_books,
+            commands::content::search_pressbooks_books,
             commands::playback::save_playback_state,
             commands::settings::get_setting,
             commands::settings::set_setting,

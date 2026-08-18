@@ -5,6 +5,7 @@ import type * as Domain from "../../types/domain";
 
 const listPressbooksCatalogs = vi.fn();
 const listPressbooksBooks = vi.fn();
+const searchPressbooksBooks = vi.fn();
 const importPressbooks = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
@@ -15,6 +16,9 @@ vi.mock("../../lib/tauri", () => ({
     },
     get listPressbooksBooks() {
       return listPressbooksBooks;
+    },
+    get searchPressbooksBooks() {
+      return searchPressbooksBooks;
     },
     get importPressbooks() {
       return importPressbooks;
@@ -89,6 +93,7 @@ describe("PressbooksBrowser", () => {
     listPressbooksBooks.mockImplementation((host: string) =>
       Promise.resolve(host === "oer.pressbooks.pub" ? [OTHER_BOOK] : [BOOK]),
     );
+    searchPressbooksBooks.mockResolvedValue([]);
     importPressbooks.mockResolvedValue("doc-1");
     useImportsStore.setState({ active: null, completed: null, error: null });
     useLibraryStore.setState({ documents: [] });
@@ -294,5 +299,138 @@ describe("PressbooksBrowser", () => {
     expect(
       screen.queryByText("This Pressbooks network has no books to show."),
     ).not.toBeInTheDocument();
+  });
+
+  describe("search", () => {
+    /** A Catalog holding `books`, searched the way the Rust side searches it. */
+    function withCatalog(books: Domain.PressbooksBook[]) {
+      listPressbooksBooks.mockResolvedValue(books);
+      searchPressbooksBooks.mockImplementation((_host: string, query: string) =>
+        Promise.resolve(
+          books.filter((book) =>
+            [book.title, book.subtitle ?? "", book.authors].some((field) =>
+              field.toLowerCase().includes(query.trim().toLowerCase()),
+            ),
+          ),
+        ),
+      );
+    }
+
+    function searchBox() {
+      return screen.getByRole("textbox", { name: /search/i });
+    }
+
+    it("narrows the listing to the books that match what is typed", async () => {
+      withCatalog([BOOK, OTHER_BOOK]);
+      await renderBrowser();
+
+      await userEvent.type(searchBox(), "openteach");
+
+      await waitFor(() =>
+        expect(
+          screen.queryByText("A Concise Introduction to Logic"),
+        ).not.toBeInTheDocument(),
+      );
+      expect(screen.getByText("Openteach")).toBeInTheDocument();
+    });
+
+    it("searches the cache rather than re-listing the catalog", async () => {
+      // Re-listing would put the Catalog's freshness check -- a network
+      // request -- behind every keystroke.
+      withCatalog([BOOK, OTHER_BOOK]);
+      await renderBrowser();
+
+      await userEvent.type(searchBox(), "logic");
+
+      await waitFor(() =>
+        expect(searchPressbooksBooks).toHaveBeenLastCalledWith(
+          "milnepublishing.geneseo.edu",
+          "logic",
+        ),
+      );
+      expect(listPressbooksBooks).toHaveBeenCalledTimes(1);
+    });
+
+    it("restores the whole catalog when the search is cleared", async () => {
+      withCatalog([BOOK, OTHER_BOOK]);
+      await renderBrowser();
+      await userEvent.type(searchBox(), "openteach");
+      await waitFor(() =>
+        expect(
+          screen.queryByText("A Concise Introduction to Logic"),
+        ).not.toBeInTheDocument(),
+      );
+
+      await userEvent.clear(searchBox());
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("A Concise Introduction to Logic"),
+        ).toBeInTheDocument(),
+      );
+      expect(screen.getByText("Openteach")).toBeInTheDocument();
+    });
+
+    it("searches again once a newly chosen catalog has been listed", async () => {
+      // The cache a search reads is the one listing the Catalog fills, so a
+      // search issued before the listing lands asks an empty cache. Keeping
+      // that answer would leave the reader on "no matches" after the Catalog
+      // they switched to had arrived.
+      const listed = new Set<string>(["milnepublishing.geneseo.edu"]);
+      let release: (books: Domain.PressbooksBook[]) => void = () => {};
+      listPressbooksBooks.mockImplementation((host: string) =>
+        host === "oer.pressbooks.pub"
+          ? new Promise<Domain.PressbooksBook[]>((resolve) => {
+              release = (books) => {
+                listed.add(host);
+                resolve(books);
+              };
+            })
+          : Promise.resolve([BOOK]),
+      );
+      searchPressbooksBooks.mockImplementation((host: string, query: string) => {
+        const cached = listed.has(host)
+          ? host === "oer.pressbooks.pub"
+            ? [OTHER_BOOK]
+            : [BOOK]
+          : [];
+        return Promise.resolve(
+          cached.filter((book) =>
+            book.title.toLowerCase().includes(query.trim().toLowerCase()),
+          ),
+        );
+      });
+
+      await renderBrowser();
+      await userEvent.type(searchBox(), "openteach");
+      await waitFor(() =>
+        expect(screen.getByText(/No books match/i)).toBeInTheDocument(),
+      );
+
+      await userEvent.selectOptions(
+        screen.getByRole("combobox", { name: /network/i }),
+        "oer.pressbooks.pub",
+      );
+      release([OTHER_BOOK]);
+
+      await waitFor(() => expect(screen.getByText("Openteach")).toBeInTheDocument());
+    });
+
+    it("says a search matched nothing, distinctly from a catalog with no books", async () => {
+      withCatalog([BOOK]);
+      await renderBrowser();
+
+      await userEvent.type(searchBox(), "thermodynamics");
+
+      await waitFor(() =>
+        expect(screen.getByText(/No books match/i)).toBeInTheDocument(),
+      );
+      // The reader has to be able to tell "your term found nothing" from
+      // "this Catalog is empty" and from "this Catalog would not load".
+      expect(
+        screen.queryByText("This Pressbooks network has no books to show."),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/failed with HTTP/)).not.toBeInTheDocument();
+    });
   });
 });

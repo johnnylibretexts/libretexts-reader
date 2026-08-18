@@ -219,3 +219,14 @@ pub async fn list_pressbooks_books(
 ) -> AppResult<Vec<PressbooksBook>> {
     content::pressbooks::list_books(state.inner().clone(), &host).await
 }
+
+/// Filter an already-listed Catalog. Local, so it costs no request -- which is
+/// what lets the webview call it on every keystroke.
+#[tauri::command]
+pub async fn search_pressbooks_books(
+    state: State<'_, DbPool>,
+    host: String,
+    query: String,
+) -> AppResult<Vec<PressbooksBook>> {
+    content::pressbooks::search_books(state.inner().clone(), &host, &query)
+}

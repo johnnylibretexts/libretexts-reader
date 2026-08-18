@@ -402,16 +402,40 @@ impl PressbooksClient {
         Ok(total.unwrap_or(0))
     }
 
+    /// The cached Catalog, narrowed to the books whose title, subtitle or
+    /// author contain `query`.
+    ///
+    /// Cache-only, and deliberately so. Pressbooks ignores its own `search`
+    /// parameter and returns the whole Catalog whatever is asked of it, so the
+    /// local enumeration is the only searchable copy -- and reading it costs no
+    /// request, which is what lets results follow the reader's typing.
+    pub fn search_catalog(&self, query: &str) -> AppResult<Vec<PressbooksBook>> {
+        self.cached_books_matching(query.trim())
+    }
+
     fn cached_books(&self) -> AppResult<Vec<PressbooksBook>> {
+        self.cached_books_matching("")
+    }
+
+    fn cached_books_matching(&self, query: &str) -> AppResult<Vec<PressbooksBook>> {
         let conn = self.db.get()?;
+        // A plain LIKE, per the design: at a few thousand rows this is
+        // sub-millisecond, so no full-text search extension is introduced and
+        // no build configuration changes. LIKE also ignores case for ASCII on
+        // its own, which is the behaviour a reader typing a title expects.
         let mut statement = conn.prepare(
             "SELECT book_url, title, subtitle, cover_url, thumbnail_url,
                     authors, license_name, license_url, word_count
-             FROM pressbooks_book WHERE host = ?1
+             FROM pressbooks_book
+             WHERE host = ?1
+               AND (?2 = ''
+                    OR title LIKE ?3 ESCAPE '\\'
+                    OR subtitle LIKE ?3 ESCAPE '\\'
+                    OR authors LIKE ?3 ESCAPE '\\')
              ORDER BY menu_position",
         )?;
         let books = statement
-            .query_map(params![self.host], |row| {
+            .query_map(params![self.host, query, like_pattern(query)], |row| {
                 Ok(PressbooksBook {
                     book_url: row.get(0)?,
                     title: row.get(1)?,
@@ -614,6 +638,20 @@ fn book_host(book_url: &str) -> AppResult<String> {
         .ok_or_else(|| AppError::Pressbooks(format!("{book_url} is not a usable book URL")))
 }
 
+/// A contains-match pattern for LIKE.
+///
+/// `%` and `_` are wildcards to LIKE, so a reader typing one would otherwise
+/// widen their own search instead of narrowing it -- `%` alone would match the
+/// whole Catalog. The backslash escapes itself first, or escaping the wildcards
+/// would introduce escapes the reader could then break.
+fn like_pattern(query: &str) -> String {
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
 fn clean(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -674,6 +712,16 @@ pub async fn list_books(db: DbPool, host: &str) -> AppResult<Vec<PressbooksBook>
     PressbooksClient::with_network_base_url(db, format!("https://{host}"))
         .list_catalog()
         .await
+}
+
+/// Search a Catalog the reader has already opened.
+///
+/// Separate from [`list_books`] because that one checks the Catalog against the
+/// network before answering. Searching must not: it runs on every keystroke,
+/// and the enumerated cache is exactly what makes that affordable.
+pub fn search_books(db: DbPool, host: &str, query: &str) -> AppResult<Vec<PressbooksBook>> {
+    let host = offered_host(host)?;
+    PressbooksClient::with_network_base_url(db, format!("https://{host}")).search_catalog(query)
 }
 
 pub async fn import_book<F>(
@@ -1015,6 +1063,147 @@ mod tests {
             after_second - after_crawl,
             1,
             "a fresh Catalog should cost only the count check"
+        );
+    }
+
+    /// Three books that differ in title, subtitle and author, so a match can
+    /// be attributed to exactly one field rather than to any of them.
+    const SEARCHABLE_CATALOG: &str = r#"[
+        {"id": 1, "link": "https://books.test/openteach/", "metadata": {
+            "name": "Openteach", "alternateName": "A Guide for Teaching Online",
+            "author": [{"@type": "Person", "name": "Orna Farrell"}]}},
+        {"id": 2, "link": "https://books.test/geology/", "metadata": {
+            "name": "Physical Geology",
+            "author": [{"@type": "Person", "name": "Steven Earle"}]}},
+        {"id": 3, "link": "https://books.test/logic/", "metadata": {
+            "name": "A Concise Introduction to Logic",
+            "author": [{"@type": "Person", "name": "Craig DeLancey"}]}}
+    ]"#;
+
+    /// A Catalog of [`SEARCHABLE_CATALOG`], already crawled into the cache.
+    async fn crawled_searchable_catalog() -> (tempfile::TempDir, MockServer, PressbooksClient) {
+        let (dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/wp-json/pressbooks/v2/books"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-wp-total", "3")
+                    .set_body_string(SEARCHABLE_CATALOG),
+            )
+            .mount(&server)
+            .await;
+
+        let client = PressbooksClient::with_network_base_url(pool, server.uri());
+        client
+            .list_catalog()
+            .await
+            .expect("the Catalog should list");
+        (dir, server, client)
+    }
+
+    #[tokio::test]
+    async fn a_search_matches_title_subtitle_and_author_without_asking_the_network() {
+        let (_dir, server, client) = crawled_searchable_catalog().await;
+        let after_crawl = server
+            .received_requests()
+            .await
+            .expect("mock server should record requests")
+            .len();
+
+        // Each term is lower case and each field is not, so a match is also a
+        // match on case having been ignored.
+        let by_title = client.search_catalog("logic").expect("title search");
+        let by_subtitle = client.search_catalog("teaching").expect("subtitle search");
+        let by_author = client.search_catalog("earle").expect("author search");
+
+        assert_eq!(
+            by_title
+                .iter()
+                .map(|book| book.book_url.as_str())
+                .collect::<Vec<_>>(),
+            ["https://books.test/logic/"]
+        );
+        assert_eq!(
+            by_subtitle
+                .iter()
+                .map(|book| book.book_url.as_str())
+                .collect::<Vec<_>>(),
+            ["https://books.test/openteach/"]
+        );
+        assert_eq!(
+            by_author
+                .iter()
+                .map(|book| book.book_url.as_str())
+                .collect::<Vec<_>>(),
+            ["https://books.test/geology/"]
+        );
+
+        // Every keystroke would otherwise cost the freshness check, which is
+        // the whole reason the Catalog was enumerated locally in the first
+        // place.
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            after_crawl,
+            "searching the local cache should cost no request"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_search_lists_the_whole_catalog_in_its_own_order() {
+        // What clearing the search box has to restore.
+        let (_dir, _server, client) = crawled_searchable_catalog().await;
+
+        let all = client.search_catalog("").expect("empty search");
+        let blank = client.search_catalog("   ").expect("whitespace search");
+
+        assert_eq!(
+            all.iter()
+                .map(|book| book.title.as_str())
+                .collect::<Vec<_>>(),
+            // The Catalog's own order, which is not alphabetical.
+            [
+                "Openteach",
+                "Physical Geology",
+                "A Concise Introduction to Logic"
+            ]
+        );
+        assert_eq!(blank.len(), 3, "whitespace is not a search term");
+    }
+
+    #[tokio::test]
+    async fn a_term_no_book_matches_finds_nothing_rather_than_everything() {
+        let (_dir, _server, client) = crawled_searchable_catalog().await;
+
+        let found = client
+            .search_catalog("thermodynamics")
+            .expect("unmatched search");
+
+        assert!(found.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_in_the_term_matches_that_character_rather_than_every_book() {
+        // `%` and `_` mean something to LIKE and nothing to a reader, who is
+        // typing characters they expect to find in a title.
+        let (_dir, _server, client) = crawled_searchable_catalog().await;
+
+        let percent = client.search_catalog("%").expect("percent search");
+        let underscore = client
+            .search_catalog("Physical_Geology")
+            .expect("underscore search");
+
+        assert!(
+            percent.is_empty(),
+            "no book has a percent sign in its title, subtitle or author"
+        );
+        assert!(
+            underscore.is_empty(),
+            "an underscore should not stand in for the space in a title"
         );
     }
 
