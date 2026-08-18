@@ -7,6 +7,7 @@ use crate::db::models::{
     LibreTextsBook, LibreTextsLibrary, OpenStaxBook, PressbooksBook, PressbooksCatalog,
 };
 use crate::error::AppResult;
+use crate::paths;
 
 #[tauri::command]
 pub async fn import_openstax<R: Runtime>(
@@ -97,19 +98,23 @@ pub async fn import_pressbooks<R: Runtime>(
     let pool = state.inner().clone();
     let progress_window = window.clone();
     let progress_book_url = book_url.clone();
-    let document = content::pressbooks::import_book(pool, &book_url, move |current, total| {
-        let _ = progress_window.emit(
-            "import-progress",
-            json!({
-                "documentId": progress_book_url,
-                "stage": "fetching",
-                "current": current,
-                "total": total,
-                "message": null
-            }),
-        );
-    })
-    .await?;
+    // The one place the real covers directory is named. `paths::covers_dir`
+    // creates it, which is why `import_book` takes it rather than resolving it.
+    let covers_dir = paths::covers_dir()?;
+    let document =
+        content::pressbooks::import_book(pool, &book_url, &covers_dir, move |current, total| {
+            let _ = progress_window.emit(
+                "import-progress",
+                json!({
+                    "documentId": progress_book_url,
+                    "stage": "fetching",
+                    "current": current,
+                    "total": total,
+                    "message": null
+                }),
+            );
+        })
+        .await?;
 
     // Persisted only after the whole book has been assembled. A failure above
     // returns before this line, so the Library is never left holding half a

@@ -97,6 +97,36 @@ pub async fn download_images(
     Ok(images)
 }
 
+/// Download a book's cover into `covers_dir`, returning where it was stored.
+///
+/// The same download as a Figure's -- same size cap, same content-type and
+/// extension rules, same client -- because a cover is one more image from the
+/// same host, and a second request path would be a second place for those
+/// rules to drift. What differs is only where it lands and that it carries no
+/// caption or anchor.
+///
+/// `covers_dir` is passed in rather than resolved here: `paths::covers_dir`
+/// creates every directory it resolves, so resolving it inside this function
+/// would make a test of a cover indistinguishable from real usage on disk.
+///
+/// `None` means no cover, never a failed Import. A book is readable without
+/// its cover, so nothing here is worth failing an Import over.
+pub async fn download_cover(http: &Client, covers_dir: &Path, url: &str) -> Option<String> {
+    download_image(
+        http,
+        covers_dir,
+        SourceImage {
+            url: url.to_string(),
+            alt_text: None,
+            caption: None,
+            content_type_hint: None,
+            anchor_paragraph_ordinal: None,
+        },
+    )
+    .await
+    .map(|cover| cover.local_path)
+}
+
 async fn download_image(
     http: &Client,
     images_dir: &Path,

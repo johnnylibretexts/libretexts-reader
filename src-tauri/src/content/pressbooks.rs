@@ -10,6 +10,7 @@
 //! locally, which is why `pressbooks_book` exists and why listing a Catalog is
 //! a crawl-once-then-read rather than a query.
 
+use std::path::Path;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -20,7 +21,7 @@ use serde_json::json;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
 use crate::content::html_section::{section_content_from_html, SectionSource};
-use crate::content::images::download_images;
+use crate::content::images::{download_cover, download_images};
 use crate::content::remote;
 use crate::db::connection::DbPool;
 use crate::db::models::{PressbooksBook, PressbooksCatalog, SourceType};
@@ -736,9 +737,15 @@ pub fn search_books(db: DbPool, host: &str, query: &str) -> AppResult<Vec<Pressb
     PressbooksClient::with_network_base_url(db, format!("https://{host}")).search_catalog(query)
 }
 
+/// Import a book, keeping its cover in `covers_dir`.
+///
+/// The directory is a parameter because `paths::covers_dir` creates what it
+/// resolves, so a test importing a book with a cover would otherwise write into
+/// the real application data directory and be indistinguishable from use.
 pub async fn import_book<F>(
     db: DbPool,
     book_url: &str,
+    covers_dir: &Path,
     mut on_progress: F,
 ) -> AppResult<DocumentBuilder>
 where
@@ -791,6 +798,15 @@ where
         )));
     }
 
+    // Fetched last, so a book that failed to assemble leaves no cover behind,
+    // and a book that names no cover makes no request for one. A cover that
+    // will not download is `None`, never an Import failure: the book is
+    // readable without it.
+    let cover_image_path = match clean(metadata.image) {
+        Some(url) => download_cover(client.fetcher.http(), covers_dir, &url).await,
+        None => None,
+    };
+
     let license = metadata.license.unwrap_or_default();
     let authors = metadata
         .author
@@ -807,7 +823,7 @@ where
             "book_url": book_url,
             "imported_at": Utc::now().to_rfc3339(),
         }),
-        cover_image_path: None,
+        cover_image_path,
         license: clean(Some(license.name)),
         attribution: clean(Some(authors)),
         sections,
@@ -882,14 +898,34 @@ mod tests {
         );
     }
 
-    const METADATA_JSON: &str = r#"{
+    /// A book's metadata, with `cover` as its `image` -- the field Pressbooks
+    /// puts the cover URL in. Taken as a parameter rather than fixed, so the
+    /// cover points at the mock server instead of at a host nothing serves.
+    fn metadata_json(cover: Option<&str>) -> String {
+        let image = match cover {
+            Some(url) => format!(r#", "image": "{url}""#),
+            None => String::new(),
+        };
+        format!(
+            r#"{{
         "name": "A Concise Introduction to Logic",
-        "author": [{"@type": "Person", "name": "Craig DeLancey"},
-                   {"@type": "Person", "name": "  "}],
-        "license": {"@type": "CreativeWork", "name": "CC BY-NC-SA (Attribution NonCommercial ShareAlike)",
-                    "url": "https://creativecommons.org/licenses/by-nc-sa/4.0/"},
-        "image": "https://books.test/cover.png"
-    }"#;
+        "author": [{{"@type": "Person", "name": "Craig DeLancey"}},
+                   {{"@type": "Person", "name": "  "}}],
+        "license": {{"@type": "CreativeWork", "name": "CC BY-NC-SA (Attribution NonCommercial ShareAlike)",
+                    "url": "https://creativecommons.org/licenses/by-nc-sa/4.0/"}}{image}
+    }}"#
+        )
+    }
+
+    /// A throwaway directory for covers. Never `paths::covers_dir` -- that one
+    /// creates what it resolves, in the real application data directory.
+    fn covers_dir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("temporary covers directory")
+    }
+
+    /// Stands in for a cover image. `download_image` stores what it is given
+    /// and does not decode it, so the bytes only have to be recognisable.
+    const COVER_BYTES: &[u8] = b"\x89PNG\r\n\x1a\n-- a concise cover --";
 
     fn content_body(id: u64, html: &str) -> String {
         format!(
@@ -901,12 +937,36 @@ mod tests {
     /// A whole book, served the way the API serves one: metadata, a table of
     /// contents, then one collection endpoint per kind of entry.
     async fn server_with_book() -> MockServer {
+        server_with_book_cover(Some(200)).await
+    }
+
+    /// The same book, differing only in what it says about its cover: `None`
+    /// names no cover at all, `Some(status)` names one the server answers with
+    /// `status`.
+    async fn server_with_book_cover(cover: Option<u16>) -> MockServer {
         let server = server_with_toc().await;
+        let cover_url = cover.map(|_| format!("{}/cover.png", server.uri()));
         Mock::given(method("GET"))
             .and(path("/book/wp-json/pressbooks/v2/metadata"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(METADATA_JSON))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(metadata_json(cover_url.as_deref())),
+            )
             .mount(&server)
             .await;
+        if let Some(status) = cover {
+            let response = if status == 200 {
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(COVER_BYTES)
+            } else {
+                ResponseTemplate::new(status)
+            };
+            Mock::given(method("GET"))
+                .and(path("/cover.png"))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+        }
         Mock::given(method("GET"))
             .and(path("/book/wp-json/pressbooks/v2/front-matter"))
             .respond_with(
@@ -937,11 +997,17 @@ mod tests {
     #[tokio::test]
     async fn an_imported_book_becomes_a_document_in_table_of_contents_order() {
         let (_dir, pool) = temporary_pool();
+        let covers = covers_dir();
         let server = server_with_book().await;
 
-        let document = super::import_book(pool, &format!("{}/book", server.uri()), |_, _| {})
-            .await
-            .expect("a readable book should import");
+        let document = super::import_book(
+            pool,
+            &format!("{}/book", server.uri()),
+            covers.path(),
+            |_, _| {},
+        )
+        .await
+        .expect("a readable book should import");
 
         assert_eq!(document.title, "A Concise Introduction to Logic");
         assert_eq!(document.source_type, SourceType::Pressbooks);
@@ -961,12 +1027,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_book_cover_is_downloaded_and_kept_with_the_document() {
+        let (_dir, pool) = temporary_pool();
+        let covers = covers_dir();
+        let server = server_with_book().await;
+
+        let document = super::import_book(
+            pool,
+            &format!("{}/book", server.uri()),
+            covers.path(),
+            |_, _| {},
+        )
+        .await
+        .expect("the book should import");
+
+        let cover = document
+            .cover_image_path
+            .expect("the Document should carry its cover");
+        assert!(
+            std::path::Path::new(&cover).starts_with(covers.path()),
+            "the cover should be stored where it was told to, got {cover}"
+        );
+        assert_eq!(
+            std::fs::read(&cover).expect("the cover should be on disk"),
+            COVER_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cover_that_will_not_download_does_not_fail_the_import() {
+        // A book is readable without its cover. Failing the Import over one
+        // would cost the reader the whole book to save them a thumbnail.
+        let (_dir, pool) = temporary_pool();
+        let covers = covers_dir();
+        let server = server_with_book_cover(Some(404)).await;
+
+        let document = super::import_book(
+            pool,
+            &format!("{}/book", server.uri()),
+            covers.path(),
+            |_, _| {},
+        )
+        .await
+        .expect("a book whose cover 404s should still import");
+
+        assert!(document.cover_image_path.is_none());
+        assert!(
+            !document.sections.is_empty(),
+            "the book should still arrive"
+        );
+        assert_eq!(
+            std::fs::read_dir(covers.path())
+                .expect("the covers directory should be readable")
+                .count(),
+            0,
+            "a failed download should leave nothing behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_book_that_names_no_cover_imports_without_one() {
+        let (_dir, pool) = temporary_pool();
+        let covers = covers_dir();
+        let server = server_with_book_cover(None).await;
+
+        let document = super::import_book(
+            pool,
+            &format!("{}/book", server.uri()),
+            covers.path(),
+            |_, _| {},
+        )
+        .await
+        .expect("a book with no cover should still import");
+
+        assert!(document.cover_image_path.is_none());
+        assert!(
+            !document.sections.is_empty(),
+            "the book should still arrive"
+        );
+    }
+
+    #[tokio::test]
     async fn the_licence_attribution_and_book_url_travel_with_the_document() {
         let (_dir, pool) = temporary_pool();
+        let covers = covers_dir();
         let server = server_with_book().await;
         let book_url = format!("{}/book", server.uri());
 
-        let document = super::import_book(pool, &book_url, |_, _| {})
+        let document = super::import_book(pool, &book_url, covers.path(), |_, _| {})
             .await
             .expect("a readable book should import");
 
@@ -983,10 +1131,11 @@ mod tests {
     #[tokio::test]
     async fn a_book_with_nothing_readable_fails_rather_than_importing_empty() {
         let (_dir, pool) = temporary_pool();
+        let covers = covers_dir();
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/book/wp-json/pressbooks/v2/metadata"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(METADATA_JSON))
+            .respond_with(ResponseTemplate::new(200).set_body_string(metadata_json(None)))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -999,8 +1148,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let Err(error) =
-            super::import_book(pool, &format!("{}/book", server.uri()), |_, _| {}).await
+        let Err(error) = super::import_book(
+            pool,
+            &format!("{}/book", server.uri()),
+            covers.path(),
+            |_, _| {},
+        )
+        .await
         else {
             panic!("a book with no readable entries should fail");
         };
@@ -1308,7 +1462,7 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/book/wp-json/pressbooks/v2/metadata"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(METADATA_JSON))
+            .respond_with(ResponseTemplate::new(200).set_body_string(metadata_json(None)))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -1346,11 +1500,17 @@ mod tests {
     #[tokio::test]
     async fn a_collection_longer_than_one_page_is_fetched_whole() {
         let (_dir, pool) = temporary_pool();
+        let covers = covers_dir();
         let server = server_with_a_paged_collection().await;
 
-        let document = super::import_book(pool, &format!("{}/book", server.uri()), |_, _| {})
-            .await
-            .expect("a book whose chapters span two pages should import");
+        let document = super::import_book(
+            pool,
+            &format!("{}/book", server.uri()),
+            covers.path(),
+            |_, _| {},
+        )
+        .await
+        .expect("a book whose chapters span two pages should import");
 
         assert_eq!(
             document
@@ -1708,6 +1868,7 @@ mod tests {
     #[ignore]
     async fn live_imports_a_small_pressbooks_book() {
         let (dir, pool) = temporary_pool();
+        let covers = covers_dir();
         let client = PressbooksClient::new(pool.clone());
 
         let books = client
@@ -1725,11 +1886,12 @@ mod tests {
         );
 
         let book_url = "https://milnepublishing.geneseo.edu/concise-introduction-to-logic/";
-        let document = super::import_book(pool.clone(), book_url, |current, total| {
-            eprintln!("Pressbooks smoke import progress: {current}/{total}");
-        })
-        .await
-        .expect("a small public Pressbooks book should import");
+        let document =
+            super::import_book(pool.clone(), book_url, covers.path(), |current, total| {
+                eprintln!("Pressbooks smoke import progress: {current}/{total}");
+            })
+            .await
+            .expect("a small public Pressbooks book should import");
 
         assert_eq!(document.title, "A Concise Introduction to Logic");
         assert!(!document.sections.is_empty());

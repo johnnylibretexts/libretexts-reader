@@ -95,10 +95,10 @@ impl Fetcher {
     /// A client that sends `user_agent` on every request it makes.
     ///
     /// Per-request headers reach only the requests a Source builds itself.
-    /// Figure downloads go through `Fetcher::http` and build their own, so a
-    /// Source whose host rejects an unidentified client needs the header on the
-    /// client rather than on the request -- otherwise the API works and every
-    /// Figure silently 403s away.
+    /// Image downloads -- Figures and covers -- go through `Fetcher::http` and
+    /// build their own, so a Source whose host rejects an unidentified client
+    /// needs the header on the client rather than on the request: otherwise the
+    /// API works and every Figure and cover silently 403s away.
     pub fn with_user_agent(timeout: Duration, user_agent: &str) -> Self {
         Self::build(timeout, Some(user_agent))
     }
@@ -116,10 +116,10 @@ impl Fetcher {
 
     /// The underlying client, for work that streams rather than retries.
     ///
-    /// Figure downloads are the only such caller: they tolerate a miss, and
-    /// retrying each one three times would multiply the slowest part of an
-    /// Import. Sharing the client rather than building a second one also keeps
-    /// a Source to a single connection pool.
+    /// Image downloads are the callers -- Figures, and a book's cover. Both
+    /// tolerate a miss, and retrying each one three times would multiply the
+    /// slowest part of an Import. Sharing the client rather than building a
+    /// second one also keeps a Source to a single connection pool.
     pub fn http(&self) -> &reqwest::Client {
         &self.http
     }
