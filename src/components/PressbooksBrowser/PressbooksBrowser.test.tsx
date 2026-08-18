@@ -572,14 +572,20 @@ describe("PressbooksBrowser", () => {
       await userEvent.type(searchBox(), "logic");
       release([BOOK, OTHER_BOOK]);
 
-      await waitFor(() =>
+      // Both assertions belong inside the same waitFor: the catalog's arrival
+      // renders both books from the raw listing for one tick before the
+      // search resolves and narrows them, and "A Concise Introduction to
+      // Logic" is present in both states. Polling for it alone lets waitFor
+      // resolve on that transient tick and race the synchronous check below
+      // against the search's promise -- flaky under load, not deterministic.
+      await waitFor(() => {
         expect(
           screen.getByText("A Concise Introduction to Logic"),
-        ).toBeInTheDocument(),
-      );
-      // The Catalog arriving must not wash the search out: the book that does
-      // not match has to stay gone.
-      expect(screen.queryByText("Openteach")).not.toBeInTheDocument();
+        ).toBeInTheDocument();
+        // The Catalog arriving must not wash the search out: the book that
+        // does not match has to stay gone.
+        expect(screen.queryByText("Openteach")).not.toBeInTheDocument();
+      });
       expect(screen.queryByText(/No books match/i)).not.toBeInTheDocument();
       // One search, issued after the Catalog was listed. A search sent while
       // the cache was still empty would answer "nothing" about a Catalog that
@@ -630,10 +636,16 @@ describe("PressbooksBrowser", () => {
       );
       release([OTHER_BOOK, BOOK]);
 
-      await waitFor(() => expect(screen.getByText("Openteach")).toBeInTheDocument());
-      expect(
-        screen.queryByText("A Concise Introduction to Logic"),
-      ).not.toBeInTheDocument();
+      // Same reasoning as the sibling test above: the new catalog's arrival
+      // renders both its books for one tick before the search narrows them,
+      // so the negative assertion has to be inside the same waitFor as the
+      // positive one or it can race the search's promise.
+      await waitFor(() => {
+        expect(screen.getByText("Openteach")).toBeInTheDocument();
+        expect(
+          screen.queryByText("A Concise Introduction to Logic"),
+        ).not.toBeInTheDocument();
+      });
     });
 
     it("says a search matched nothing, distinctly from a catalog with no books", async () => {
