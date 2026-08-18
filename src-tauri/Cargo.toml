@@ -71,3 +71,17 @@ unicode-segmentation = "1.12"
 unicode-normalization = "0.1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 async-trait = "0.1"
+
+# Test-only. Neither crate is reachable from the built application: cargo does
+# not compile dev-dependencies into the lib or bin targets, so nothing here
+# ships in a bundle.
+#
+# `wiremock` stands in for a remote Source so the retry, backoff and cache
+# behaviour every remote Import depends on can be exercised without the network.
+# `tempfile` exists because the connection pool takes a file path and has no
+# in-memory constructor -- and an in-memory pool is a trap, since each pooled
+# connection would open its own separate database unless a shared-cache URI is
+# used. A throwaway directory per test is the honest version.
+[dev-dependencies]
+tempfile = "3.27.0"
+wiremock = "0.6.5"

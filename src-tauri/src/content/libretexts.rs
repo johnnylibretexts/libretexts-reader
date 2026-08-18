@@ -1092,9 +1092,222 @@ fn license_label(value: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
     use uuid::Uuid;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::db::{connection, library};
+    use super::{LibreTextsClient, LibreTextsTocEntry};
+    use crate::db::connection::{self, DbPool};
+    use crate::db::library;
+    use crate::error::AppError;
+
+    /// A LibreTexts public page, reduced to the parts the importer reads.
+    const PUBLIC_PAGE_HTML: &str = r#"
+        <html>
+            <body>
+                <span id="pageIDHolder">4211</span>
+                <h1 id="title">Cell Structure</h1>
+                <span id="modifiedHolder">2026-01-17</span>
+                <section class="mt-content-container">
+                    <p>Cells store information in DNA.</p>
+                </section>
+            </body>
+        </html>
+    "#;
+
+    /// One book, in the shape the Commons search endpoint returns.
+    const SEARCH_RESPONSE_JSON: &str = r#"{
+        "results": [
+            {
+                "bookID": "bio-15711",
+                "title": "Cell Biology",
+                "library": "bio",
+                "author": "A. Author"
+            }
+        ]
+    }"#;
+
+    /// A database in a throwaway directory.
+    ///
+    /// The pool takes a file path and has no in-memory constructor, and an
+    /// in-memory one would not do: each pooled connection opens its own
+    /// separate database unless a shared-cache URI is used, so a page stored
+    /// through one connection would be invisible to the next. The returned
+    /// `TempDir` must outlive the pool -- dropping it deletes the database.
+    fn temporary_pool() -> (TempDir, DbPool) {
+        let dir = tempfile::tempdir().expect("temporary directory should be created");
+        let pool = connection::init_pool(&dir.path().join("library.sqlite"))
+            .expect("temporary database should initialize");
+        (dir, pool)
+    }
+
+    fn public_entry(server: &MockServer, page_id: &str) -> LibreTextsTocEntry {
+        LibreTextsTocEntry {
+            page_id: page_id.to_string(),
+            title: "Table-of-contents title".to_string(),
+            url: Some(format!("{}/chapter/{page_id}", server.uri())),
+            chapter_number: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cached_page_survives_a_store_and_read_round_trip() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/chapter/4211"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(PUBLIC_PAGE_HTML))
+            .mount(&server)
+            .await;
+
+        let client = LibreTextsClient::with_commons_base_url(pool, server.uri());
+        let entry = public_entry(&server, "4211");
+
+        let fetched = client
+            .fetch_page("bio-15711", "bio", &entry)
+            .await
+            .expect("first read should fetch the page");
+        let cached = client
+            .fetch_page("bio-15711", "bio", &entry)
+            .await
+            .expect("second read should come back from the cache");
+
+        // A cache hit, and only that. `content_revision` and `fetched_at` are
+        // written by `store_page` and read by nothing, so a stored page is
+        // returned forever with no revalidation and no TTL. This assertion
+        // pins the hit; it is not a statement that never revalidating is
+        // right.
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            1,
+            "the second read should not reach the network"
+        );
+        assert_eq!(cached.page_id, fetched.page_id);
+        assert_eq!(cached.title, fetched.title);
+        assert_eq!(cached.html, fetched.html);
+        assert_eq!(cached.revision, fetched.revision);
+        assert_eq!(cached.title, "Cell Structure");
+        assert_eq!(cached.revision.as_deref(), Some("2026-01-17"));
+        assert!(
+            cached.html.contains("Cells store information in DNA."),
+            "cached content should survive the gzip round trip intact, got: {}",
+            cached.html
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retryable_failure_followed_by_a_success_returns_the_successful_body() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/search/books-v2"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/search/books-v2"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(SEARCH_RESPONSE_JSON))
+            .mount(&server)
+            .await;
+
+        let client = LibreTextsClient::with_commons_base_url(pool, server.uri());
+        let books = client
+            .search_books(Some("cell"), None)
+            .await
+            .expect("a retried request should return the successful body");
+
+        // Ordering, not duration: the failure was answered before the success,
+        // and the two attempts were separate requests. Asserting how long the
+        // backoff slept would be asserting the clock, not the behaviour.
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            2,
+            "the client should have retried the failure exactly once"
+        );
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].book_id, "bio-15711");
+        assert_eq!(books[0].title, "Cell Biology");
+        assert_eq!(books[0].library, "bio");
+    }
+
+    #[tokio::test]
+    async fn exhausting_the_retry_limit_returns_the_source_error_with_the_failing_status() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/commons/libraries"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let client = LibreTextsClient::with_commons_base_url(pool, server.uri());
+        let error = client
+            .list_libraries()
+            .await
+            .expect_err("a request that never succeeds should fail");
+
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            3,
+            "the client should stop after three attempts"
+        );
+        match error {
+            AppError::LibreTexts(message) => assert!(
+                message.contains("HTTP 503"),
+                "the failure should carry the status it gave up on, got: {message}"
+            ),
+            other => panic!("expected the LibreTexts error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_non_retryable_status_fails_on_the_first_attempt() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/commons/book/bio-15711"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = LibreTextsClient::with_commons_base_url(pool, server.uri());
+        let error = client
+            .fetch_book_detail("bio-15711")
+            .await
+            .expect_err("a missing book should fail");
+
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            1,
+            "a status that cannot be retried should not be retried"
+        );
+        match error {
+            AppError::LibreTexts(message) => assert!(
+                message.contains("HTTP 404"),
+                "the failure should carry the status it stopped on, got: {message}"
+            ),
+            other => panic!("expected the LibreTexts error, got: {other:?}"),
+        }
+    }
 
     #[test]
     fn paragraphs_ignore_libretexts_navigation_listings() {
