@@ -26,8 +26,13 @@ use crate::db::connection::DbPool;
 use crate::db::models::{PressbooksBook, PressbooksCatalog, SourceType};
 use crate::error::{AppError, AppResult};
 
-/// The Catalog the browser opens on: the smallest bundled one, so a first
-/// visit is nine requests rather than three hundred.
+/// The Catalog the browser opens on.
+///
+/// Ninety books, so a first visit costs nine requests. The bundled list is
+/// ordered by size and its largest Catalog holds three thousand, which is three
+/// hundred requests with no progress indicator behind them -- so which Catalog
+/// this is matters, and it is named here rather than inferred from the list's
+/// order. `catalogs` marks it on the payload for the browser.
 pub const DEFAULT_NETWORK_HOST: &str = "milnepublishing.geneseo.edu";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -686,7 +691,14 @@ pub fn catalogs() -> AppResult<Vec<PressbooksCatalog>> {
     let bundled: BundledCatalogs = serde_json::from_str(include_str!(
         "../../resources/catalog/pressbooks-networks.json"
     ))?;
-    Ok(bundled.networks)
+    Ok(bundled
+        .networks
+        .into_iter()
+        .map(|mut catalog| {
+            catalog.is_default = catalog.host == DEFAULT_NETWORK_HOST;
+            catalog
+        })
+        .collect())
 }
 
 /// Reject a host the application does not offer.
@@ -1433,6 +1445,53 @@ mod tests {
         let unique = hosts.len();
         hosts.dedup();
         assert_eq!(hosts.len(), unique, "a Catalog is listed twice");
+    }
+
+    #[test]
+    fn exactly_one_offered_catalog_is_the_one_the_browser_opens_on() {
+        let offered = super::catalogs().expect("the bundled list should parse");
+
+        let default = offered
+            .iter()
+            .filter(|catalog| catalog.is_default)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            default.len(),
+            1,
+            "the browser opens on exactly one Catalog, not {}",
+            default.len()
+        );
+    }
+
+    #[test]
+    fn the_catalog_the_browser_opens_on_is_a_small_one() {
+        // The point of naming a default at all. Opening on the largest bundled
+        // Catalog costs three hundred requests before the reader has asked for
+        // anything, and there is no progress indicator yet to carry that.
+        let offered = super::catalogs().expect("the bundled list should parse");
+        let largest = offered
+            .iter()
+            .map(|catalog| catalog.book_count)
+            .max()
+            .expect("the bundled list should offer a Catalog");
+
+        let default = offered
+            .iter()
+            .find(|catalog| catalog.is_default)
+            .expect("one Catalog should be the one the browser opens on");
+
+        assert!(
+            default.book_count <= 100,
+            "{} holds {} books, so a first visit crawls {} pages",
+            default.host,
+            default.book_count,
+            default.book_count.div_ceil(super::PER_PAGE as u32)
+        );
+        assert!(
+            default.book_count < largest,
+            "the default should not be the largest Catalog on offer"
+        );
     }
 
     #[test]

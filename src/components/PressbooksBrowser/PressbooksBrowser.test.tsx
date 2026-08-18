@@ -31,8 +31,27 @@ const { useImportsStore } = await import("../../stores/imports");
 const { useLibraryStore } = await import("../../stores/library");
 
 const CATALOGS: Domain.PressbooksCatalog[] = [
-  { host: "milnepublishing.geneseo.edu", name: "Milne Publishing", bookCount: 90 },
-  { host: "oer.pressbooks.pub", name: "PressbooksOER", bookCount: 43 },
+  // Ordered as the bundled resource is, largest first, with the default
+  // neither first nor last. A fixture that put the default first would let a
+  // component that opens on `[0]` pass while crawling three thousand books.
+  {
+    host: "ecampusontario.pressbooks.pub",
+    name: "eCampusOntario",
+    bookCount: 3033,
+    isDefault: false,
+  },
+  {
+    host: "milnepublishing.geneseo.edu",
+    name: "Milne Publishing",
+    bookCount: 90,
+    isDefault: true,
+  },
+  {
+    host: "oer.pressbooks.pub",
+    name: "PressbooksOER",
+    bookCount: 43,
+    isDefault: false,
+  },
 ];
 
 const OTHER_BOOK: Domain.PressbooksBook = {
@@ -187,17 +206,30 @@ describe("PressbooksBrowser", () => {
     expect(onOpenDocument).toHaveBeenCalledTimes(1);
   });
 
-  it("offers every bundled catalog in the picker and opens on the first", async () => {
+  it("offers every bundled catalog in the picker", async () => {
     await renderBrowser();
 
-    const picker = screen.getByRole("combobox", { name: /network/i });
-    expect(picker).toHaveValue("milnepublishing.geneseo.edu");
+    expect(
+      screen.getByRole("option", { name: /eCampusOntario \(3033 books\)/ }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("option", { name: /Milne Publishing \(90 books\)/ }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("option", { name: /PressbooksOER \(43 books\)/ }),
     ).toBeInTheDocument();
+  });
+
+  it("opens on the catalog marked as the default, not the first offered", async () => {
+    // Opening a Catalog crawls it, and the offered list is ordered by size, so
+    // opening on the first one costs a three-hundred-request crawl before the
+    // reader has asked for anything.
+    await renderBrowser();
+
+    expect(screen.getByRole("combobox", { name: /network/i })).toHaveValue(
+      "milnepublishing.geneseo.edu",
+    );
+    expect(listPressbooksBooks).toHaveBeenCalledTimes(1);
     expect(listPressbooksBooks).toHaveBeenCalledWith("milnepublishing.geneseo.edu");
   });
 

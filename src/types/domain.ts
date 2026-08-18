@@ -28,7 +28,7 @@ export type OpenStaxBook = { uuid: string, slug: string, title: string, subject:
 export type LibreTextsBook = { bookId: string, title: string, author: string, affiliation: string, library: string, subject: string, license: string, summary: string, thumbnail: string | null, onlineUrl: string | null, lastUpdated: string | null, location: string, program: string, };
 
 /** One Pressbooks Catalog on offer. Pressbooks calls these "networks" and the picker uses that word, because it is the publisher's own; the type is not named after it. `bookCount` conveys scale in the picker -- the live count comes from the Catalog at browse time. */
-export type PressbooksCatalog = { host: string, name: string, bookCount: number, };
+export type PressbooksCatalog = { host: string, name: string, bookCount: number, isDefault: boolean, };
 
 /** `bookUrl` is the book's canonical URL and its identity everywhere: the catalog row key, the value `sourceMetadata` carries on an imported Document, and what the browser matches on to tell an imported book from a new one. */
 export type PressbooksBook = { bookUrl: string, title: string, subtitle: string | null, coverUrl: string | null, thumbnailUrl: string | null, authors: string, licenseName: string, licenseUrl: string | null, wordCount: number, };

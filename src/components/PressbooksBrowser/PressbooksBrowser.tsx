@@ -47,7 +47,11 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
       .then((offered) => {
         if (active) {
           setCatalogs(offered);
-          setHost((current) => current ?? offered[0]?.host ?? null);
+          // The marked Catalog, not the first one. The list is ordered by size
+          // and opening a Catalog crawls it, so `[0]` would spend three hundred
+          // requests before the reader had asked for anything.
+          const opensOn = offered.find((catalog) => catalog.isDefault) ?? offered[0];
+          setHost((current) => current ?? opensOn?.host ?? null);
           // With no Catalog to open there is no second fetch to end the
           // spinner, so it is ended here rather than left running forever.
           if (offered.length === 0) {

@@ -124,12 +124,21 @@ pub struct LibreTextsBook {
 /// `book_count` is what was observed when the bundled list was probed. It
 /// conveys scale in the picker; the live count comes from the Catalog itself at
 /// browse time.
+///
+/// `is_default` marks the one Catalog the browser opens on. It is carried on
+/// the payload rather than left to the browser to infer from position, because
+/// opening a Catalog crawls it: reading the default off the list's order makes
+/// reordering that list silently cost a reader three hundred requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PressbooksCatalog {
     pub host: String,
     pub name: String,
     pub book_count: u32,
+    /// Set by `content::pressbooks::catalogs`, not by the bundled resource --
+    /// `DEFAULT_NETWORK_HOST` is the single place the default is named.
+    #[serde(default)]
+    pub is_default: bool,
 }
 
 /// One book in a Pressbooks Catalog, as the browser shows it.
