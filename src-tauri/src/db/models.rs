@@ -141,6 +141,24 @@ pub struct PressbooksCatalog {
     pub is_default: bool,
 }
 
+/// A Catalog as the browser shows it: the books it holds locally, and how that
+/// compares with the Catalog itself.
+///
+/// The counts are not decoration. The largest bundled Catalog is three hundred
+/// requests, so an interruption is normal rather than exceptional, and a
+/// partial Catalog that reported only its books would be indistinguishable from
+/// a small complete one -- the reader would take a fifth of eCampusOntario for
+/// all of it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PressbooksCatalogListing {
+    pub books: Vec<PressbooksBook>,
+    /// What the Catalog says it holds, from its own count header -- not
+    /// `books.len()`, which is what arrived.
+    pub total_books: u32,
+    pub is_complete: bool,
+}
+
 /// One book in a Pressbooks Catalog, as the browser shows it.
 ///
 /// `book_url` is the book's canonical URL. It is the identity everywhere: the

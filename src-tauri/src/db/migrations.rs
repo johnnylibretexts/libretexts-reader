@@ -43,6 +43,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0010_documents_allow_pressbooks",
         include_str!("../../resources/migrations/0010_documents_allow_pressbooks.sql"),
     ),
+    (
+        "0011_pressbooks_partial_crawl",
+        include_str!("../../resources/migrations/0011_pressbooks_partial_crawl.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {

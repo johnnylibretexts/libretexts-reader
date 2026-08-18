@@ -31,6 +31,16 @@ export type LibreTextsBook = { bookId: string, title: string, author: string, af
 export type PressbooksCatalog = { host: string, name: string, bookCount: number, isDefault: boolean, };
 
 /** `bookUrl` is the book's canonical URL and its identity everywhere: the catalog row key, the value `sourceMetadata` carries on an imported Document, and what the browser matches on to tell an imported book from a new one. */
+/**
+ * A Catalog as the browser shows it. `totalBooks` is what the Catalog says it
+ * holds, not what arrived — the two differ while a crawl is unfinished, and a
+ * partial Catalog reporting only its books would read as a small complete one.
+ */
+export type PressbooksCatalogListing = { books: PressbooksBook[], totalBooks: number, isComplete: boolean, };
+
+/** Payload of the `catalog-progress` event. Pages fetched against pages needed. */
+export type PressbooksCatalogProgress = { host: string, current: number, total: number, };
+
 export type PressbooksBook = { bookUrl: string, title: string, subtitle: string | null, coverUrl: string | null, thumbnailUrl: string | null, authors: string, licenseName: string, licenseUrl: string | null, wordCount: number, };
 
 export type LibreTextsLibrary = { subdomain: string, title: string, };

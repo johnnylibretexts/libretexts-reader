@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { BookOpen, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import { api } from "../../lib/tauri";
 import type * as Domain from "../../types/domain";
@@ -23,7 +24,17 @@ interface PressbooksBrowserProps {
 export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
   const [catalogs, setCatalogs] = useState<Domain.PressbooksCatalog[]>([]);
   const [host, setHost] = useState<string | null>(null);
-  const [books, setBooks] = useState<Domain.PressbooksBook[]>([]);
+  const [listing, setListing] = useState<Domain.PressbooksCatalogListing | null>(
+    null,
+  );
+  // Pages fetched against pages needed, while a crawl is running. The largest
+  // bundled Catalog is three hundred requests, which without this reads as a
+  // frozen application.
+  const [progress, setProgress] =
+    useState<Domain.PressbooksCatalogProgress | null>(null);
+  // Bumped to ask for the Catalog again, which is what continues an unfinished
+  // crawl -- the Rust side resumes from the page it stopped on.
+  const [continueToken, setContinueToken] = useState(0);
   // The Catalog whose books are in the local cache. Searching reads that cache,
   // so this is what says a search can be answered at all.
   const [listedHost, setListedHost] = useState<string | null>(null);
@@ -82,20 +93,21 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
     // Cleared on every switch: leaving the previous Catalog's books on screen
     // under a new Catalog's name would misattribute them. Matches go with
     // them -- they are the previous Catalog's books too.
-    setBooks([]);
+    setListing(null);
     setMatches(null);
+    setProgress(null);
     api
       .listPressbooksBooks(host)
       .then((catalog) => {
         if (active) {
-          setBooks(catalog);
+          setListing(catalog);
           setListedHost(host);
         }
       })
       .catch((error) => {
         if (active) {
           setError(displayError(error));
-          setBooks([]);
+          setListing(null);
         }
       })
       .finally(() => {
@@ -106,6 +118,42 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
 
     return () => {
       active = false;
+    };
+  }, [host, continueToken]);
+
+  // Scoped to this component, unlike the Import listener: a crawl is awaited by
+  // the call this component made, so a subscription outliving the component
+  // would have nothing to report to.
+  useEffect(() => {
+    // Nothing to report on until a Catalog is chosen, and a subscription made
+    // before then could only ever compare against a host of `null`.
+    if (!host) {
+      return;
+    }
+
+    let active = true;
+    let dispose: (() => void) | undefined;
+
+    void listen<Domain.PressbooksCatalogProgress>("catalog-progress", (event) => {
+      // A crawl the reader has navigated away from keeps running and keeps
+      // reporting. Its progress must not drive the indicator for the Catalog
+      // they are looking at now.
+      if (event.payload.host === host) {
+        setProgress(event.payload);
+      }
+    })
+      .then((unlisten) => {
+        if (active) {
+          dispose = unlisten;
+        } else {
+          unlisten();
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+      dispose?.();
     };
   }, [host]);
 
@@ -149,7 +197,9 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
   }, [host, listedHost, query]);
 
   const searchTerm = query.trim();
+  const books = listing?.books ?? [];
   const visible = matches ?? books;
+  const incomplete = Boolean(listing && !listing.isComplete);
   const failure = error ?? searchError;
 
   async function importBook(book: Domain.PressbooksBook) {
@@ -200,9 +250,39 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
       ) : null}
 
       {loading ? (
-        <div className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
-          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          Loading Pressbooks catalog
+        <div className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+          <span className="flex items-center gap-2">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            {progress
+              ? `Loading Pressbooks catalog: page ${progress.current} of ${progress.total}`
+              : "Loading Pressbooks catalog"}
+          </span>
+          {progress && progress.total > 0 ? (
+            <progress
+              className="h-1.5 w-full"
+              max={progress.total}
+              value={progress.current}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
+      {!loading && incomplete && listing ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          {/* Counted rather than described: "incomplete" alone leaves a reader
+              unable to tell a Catalog missing one page from one missing three
+              hundred. */}
+          <span>
+            Showing {books.length} of {listing.totalBooks} books. This catalog
+            did not finish loading.
+          </span>
+          <button
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-amber-300 px-3 text-sm font-medium hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-amber-800 dark:hover:bg-amber-900/40"
+            onClick={() => setContinueToken((token) => token + 1)}
+            type="button"
+          >
+            Continue loading
+          </button>
         </div>
       ) : null}
 

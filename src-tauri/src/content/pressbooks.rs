@@ -24,7 +24,7 @@ use crate::content::html_section::{section_content_from_html, SectionSource};
 use crate::content::images::{download_cover, download_images};
 use crate::content::remote;
 use crate::db::connection::DbPool;
-use crate::db::models::{PressbooksBook, PressbooksCatalog, SourceType};
+use crate::db::models::{PressbooksBook, PressbooksCatalog, PressbooksCatalogListing, SourceType};
 use crate::error::{AppError, AppResult};
 
 /// The Catalog the browser opens on.
@@ -257,24 +257,37 @@ impl PressbooksClient {
     /// changed", not "there are no books" -- so a cached Catalog is served
     /// rather than an error. Only an empty cache makes the failure fatal,
     /// because then there is genuinely nothing to show.
-    pub async fn list_catalog(&self) -> AppResult<Vec<PressbooksBook>> {
-        let cached = self.cached_books()?;
+    pub async fn list_catalog(
+        &self,
+        mut on_progress: impl FnMut(u32, u32),
+    ) -> AppResult<PressbooksCatalogListing> {
+        let cached = self.cached_listing()?;
 
         let outcome: AppResult<()> = match self.live_book_count().await {
-            Ok(live_total) if live_total != self.cached_book_count()? => {
-                self.crawl_catalog(live_total).await
+            // Two reasons to crawl: the Catalog changed size, or the last
+            // crawl did not finish. The second is what makes reopening a
+            // Catalog resume it, with no separate action for the reader.
+            Ok(live_total) if live_total != cached.total_books || !cached.is_complete => {
+                self.crawl_catalog(live_total, &mut on_progress).await
             }
             Ok(_) => return Ok(cached),
             Err(error) => Err(error),
         };
 
         match outcome {
-            Ok(()) => self.cached_books(),
-            // A crawl that gave up part-way opens no transaction, so whatever
-            // was cached is still on disk and still worth showing. Only an
-            // empty cache makes the failure fatal.
-            Err(_) if !cached.is_empty() => Ok(cached),
-            Err(error) => Err(error),
+            Ok(()) => self.cached_listing(),
+            // Read again rather than falling back to `cached`: a crawl that
+            // stopped part-way still committed the pages it did fetch, so the
+            // listing on disk is now better than the one this started with.
+            // Only a Catalog with nothing in it at all makes the failure fatal.
+            Err(error) => {
+                let partial = self.cached_listing()?;
+                if partial.books.is_empty() {
+                    Err(error)
+                } else {
+                    Ok(partial)
+                }
+            }
         }
     }
 
@@ -304,15 +317,29 @@ impl PressbooksClient {
         })
     }
 
-    async fn crawl_catalog(&self, total_books: u32) -> AppResult<()> {
-        let mut network_name = None;
+    /// Fetch the Catalog's pages and write them as they arrive.
+    ///
+    /// Ordered rather than all-at-once so that stopping leaves a position:
+    /// pages land in request order, so what is written is always a contiguous
+    /// prefix and `synced_pages` is a page number a later run can carry on
+    /// from. The concurrency cap is a politeness limit on a third party, not a
+    /// throughput dial -- the ten-books-per-page limit it works around is the
+    /// publisher's own tightening of their platform default.
+    async fn crawl_catalog(
+        &self,
+        total_books: u32,
+        on_progress: &mut impl FnMut(u32, u32),
+    ) -> AppResult<()> {
         let total_pages = total_books.div_ceil(PER_PAGE as u32).max(1);
-        let pages = (1..=total_pages).collect::<Vec<_>>();
+        let start = self.crawl_position(total_books, total_pages)?;
+        let pages = (start.first_page..=total_pages).collect::<Vec<_>>();
+        let done_before = start.first_page - 1;
 
-        let fetched = remote::fetch_all(
+        on_progress(done_before, total_pages);
+        let (fetched, failure) = remote::fetch_prefix(
             &pages,
             CATALOG_CONCURRENCY,
-            |_| {},
+            |done| on_progress(done_before + done as u32, total_pages),
             |page: u32| async move {
                 let request = self.request(self.books_url()).query(&[
                     ("per_page", PER_PAGE.to_string()),
@@ -321,91 +348,184 @@ impl PressbooksClient {
                 self.fetch_json::<Vec<ApiCatalogBook>>(&request).await
             },
         )
-        .await?;
+        .await;
 
+        let synced_pages = done_before + fetched.len() as u32;
+        let mut network_name = None;
         let mut conn = self.db.get()?;
         let tx = conn.transaction()?;
-        // Replaced wholesale rather than merged: a book withdrawn from the
-        // Catalog should leave the reader's view of it, and the crawl just
-        // established what the Catalog currently holds.
-        tx.execute(
-            "DELETE FROM pressbooks_book WHERE host = ?1",
-            params![self.host],
-        )?;
 
-        let mut position = 0_i64;
-        for book in fetched.into_iter().flatten() {
-            if book.link.trim().is_empty() {
-                continue;
-            }
-            let metadata = book.metadata;
-            if network_name.is_none() {
-                network_name = metadata
-                    .network
-                    .as_ref()
-                    .map(|network| network.name.trim().to_string())
-                    .filter(|name| !name.is_empty());
-            }
-            let authors = metadata
-                .author
-                .iter()
-                .map(|person| person.name.trim())
-                .filter(|name| !name.is_empty())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let license = metadata.license.unwrap_or_default();
+        for (offset, page_books) in fetched.into_iter().enumerate() {
+            // Position is derived from the page rather than counted, so a
+            // resumed crawl numbers its books the same as an uninterrupted one
+            // would have.
+            let page = start.first_page + offset as u32;
+            let mut position = (page as i64 - 1) * PER_PAGE as i64;
 
-            tx.execute(
-                "INSERT OR REPLACE INTO pressbooks_book (
-                    host, book_url, title, subtitle, cover_url, thumbnail_url,
-                    authors, license_name, license_url, word_count, menu_position
-                 )
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    self.host,
-                    book.link.trim(),
-                    metadata.name.trim(),
-                    clean(metadata.alternate_name),
-                    clean(metadata.image),
-                    clean(metadata.thumbnail_url),
-                    authors,
-                    license.name.trim(),
-                    clean(license.url),
-                    metadata.word_count,
-                    position,
-                ],
-            )?;
-            position += 1;
+            for book in page_books {
+                if book.link.trim().is_empty() {
+                    continue;
+                }
+                let metadata = book.metadata;
+                if network_name.is_none() {
+                    network_name = metadata
+                        .network
+                        .as_ref()
+                        .map(|network| network.name.trim().to_string())
+                        .filter(|name| !name.is_empty());
+                }
+                let authors = metadata
+                    .author
+                    .iter()
+                    .map(|person| person.name.trim())
+                    .filter(|name| !name.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let license = metadata.license.unwrap_or_default();
+
+                tx.execute(
+                    "INSERT OR REPLACE INTO pressbooks_book (
+                        host, book_url, title, subtitle, cover_url, thumbnail_url,
+                        authors, license_name, license_url, word_count, menu_position,
+                        seen_at
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        self.host,
+                        book.link.trim(),
+                        metadata.name.trim(),
+                        clean(metadata.alternate_name),
+                        clean(metadata.image),
+                        clean(metadata.thumbnail_url),
+                        authors,
+                        license.name.trim(),
+                        clean(license.url),
+                        metadata.word_count,
+                        position,
+                        start.stamp,
+                    ],
+                )?;
+                position += 1;
+            }
         }
 
         tx.execute(
             "INSERT OR REPLACE INTO pressbooks_network
-                 (host, name, total_books, synced_pages, total_pages, synced_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 (host, name, total_books, synced_pages, total_pages, synced_at, crawl_stamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 self.host,
-                network_name.unwrap_or_else(|| self.host.clone()),
+                network_name
+                    .or(start.name)
+                    .unwrap_or_else(|| self.host.clone()),
                 total_books,
+                synced_pages,
                 total_pages,
-                total_pages,
-                Utc::now().to_rfc3339()
+                Utc::now().to_rfc3339(),
+                start.stamp,
             ],
         )?;
+
+        // Only a crawl that reached the last page knows what the Catalog no
+        // longer holds. Deleting earlier would take books this crawl has not
+        // reached yet, which is the whole listing on its first page.
+        if synced_pages >= total_pages {
+            tx.execute(
+                "DELETE FROM pressbooks_book
+                 WHERE host = ?1 AND (seen_at IS NULL OR seen_at <> ?2)",
+                params![self.host, start.stamp],
+            )?;
+        }
+
         tx.commit()?;
 
-        Ok(())
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
-    fn cached_book_count(&self) -> AppResult<u32> {
+    /// Where a crawl of this Catalog should start, and under whose stamp.
+    ///
+    /// Resumes only into a Catalog of the same size. One that has grown or
+    /// shrunk renumbers its pages, so continuing into it would interleave two
+    /// different listings under one set of positions.
+    fn crawl_position(&self, total_books: u32, total_pages: u32) -> AppResult<CrawlStart> {
         let conn = self.db.get()?;
-        let total = conn
+        let stored = conn
             .query_row(
-                "SELECT total_books FROM pressbooks_network WHERE host = ?1",
+                "SELECT name, total_books, synced_pages, total_pages, crawl_stamp
+                 FROM pressbooks_network WHERE host = ?1",
                 params![self.host],
-                |row| row.get::<_, u32>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u32>(1)?,
+                        row.get::<_, u32>(2)?,
+                        row.get::<_, u32>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
             )
             .optional()?;
-        Ok(total.unwrap_or(0))
+
+        let Some((name, stored_books, synced_pages, stored_pages, stamp)) = stored else {
+            return Ok(CrawlStart {
+                first_page: 1,
+                stamp: Utc::now().to_rfc3339(),
+                name: None,
+            });
+        };
+
+        match stamp {
+            Some(stamp)
+                if stored_books == total_books
+                    && stored_pages == total_pages
+                    && synced_pages < total_pages =>
+            {
+                Ok(CrawlStart {
+                    first_page: synced_pages + 1,
+                    stamp,
+                    name: Some(name),
+                })
+            }
+            _ => Ok(CrawlStart {
+                first_page: 1,
+                stamp: Utc::now().to_rfc3339(),
+                name: Some(name),
+            }),
+        }
+    }
+
+    /// The Catalog as it stands on disk, with how far its crawl got.
+    fn cached_listing(&self) -> AppResult<PressbooksCatalogListing> {
+        let books = self.cached_books()?;
+        let conn = self.db.get()?;
+        let progress = conn
+            .query_row(
+                "SELECT total_books, synced_pages, total_pages
+                 FROM pressbooks_network WHERE host = ?1",
+                params![self.host],
+                |row| {
+                    Ok((
+                        row.get::<_, u32>(0)?,
+                        row.get::<_, u32>(1)?,
+                        row.get::<_, u32>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .unwrap_or((0, 0, 0));
+
+        let (total_books, synced_pages, total_pages) = progress;
+
+        Ok(PressbooksCatalogListing {
+            books,
+            total_books,
+            // A Catalog crawled before crawls could stop part-way recorded
+            // equal page counts, so it reads as complete -- which it is.
+            is_complete: total_pages > 0 && synced_pages >= total_pages,
+        })
     }
 
     /// The cached Catalog, narrowed to the books whose title, subtitle or
@@ -569,6 +689,15 @@ impl PressbooksClient {
     }
 }
 
+/// Where a crawl begins: its first page, the stamp its rows carry, and the
+/// Catalog's name as already recorded -- kept because a resumed crawl may fetch
+/// no page that carries the name.
+struct CrawlStart {
+    first_page: u32,
+    stamp: String,
+    name: Option<String>,
+}
+
 struct CollectionPage {
     total_pages: u32,
     pages: Vec<Page>,
@@ -720,10 +849,19 @@ fn offered_host(host: &str) -> AppResult<String> {
         })
 }
 
-pub async fn list_books(db: DbPool, host: &str) -> AppResult<Vec<PressbooksBook>> {
+/// List a Catalog, crawling or resuming it if the local copy is not current.
+///
+/// `on_progress` reports pages fetched against pages needed. The largest
+/// bundled Catalog is three hundred requests, so a first open without it reads
+/// as a frozen application.
+pub async fn list_books(
+    db: DbPool,
+    host: &str,
+    on_progress: impl FnMut(u32, u32),
+) -> AppResult<PressbooksCatalogListing> {
     let host = offered_host(host)?;
     PressbooksClient::with_network_base_url(db, format!("https://{host}"))
-        .list_catalog()
+        .list_catalog(on_progress)
         .await
 }
 
@@ -1191,7 +1329,7 @@ mod tests {
 
         let client = PressbooksClient::with_network_base_url(pool, server.uri());
         let first = client
-            .list_catalog()
+            .list_catalog(|_, _| {})
             .await
             .expect("the Catalog should list");
         let after_crawl = server
@@ -1200,7 +1338,7 @@ mod tests {
             .expect("mock server should record requests")
             .len();
         let second = client
-            .list_catalog()
+            .list_catalog(|_, _| {})
             .await
             .expect("the Catalog should list again");
         let after_second = server
@@ -1209,19 +1347,19 @@ mod tests {
             .expect("mock server should record requests")
             .len();
 
-        assert_eq!(first.len(), 1);
-        assert_eq!(first[0].title, "Openteach");
-        assert_eq!(first[0].book_url, "https://books.test/openteach/");
-        assert_eq!(first[0].subtitle.as_deref(), Some("A subtitle"));
-        assert_eq!(first[0].authors, "Orna Farrell");
-        assert_eq!(first[0].license_name, "CC BY (Attribution)");
-        assert_eq!(first[0].word_count, 25637);
+        assert_eq!(first.books.len(), 1);
+        assert_eq!(first.books[0].title, "Openteach");
+        assert_eq!(first.books[0].book_url, "https://books.test/openteach/");
+        assert_eq!(first.books[0].subtitle.as_deref(), Some("A subtitle"));
+        assert_eq!(first.books[0].authors, "Orna Farrell");
+        assert_eq!(first.books[0].license_name, "CC BY (Attribution)");
+        assert_eq!(first.books[0].word_count, 25637);
 
         // The second visit costs one request -- the freshness check -- not a
         // second crawl. Re-enumerating on every visit is what the local cache
         // exists to avoid.
         assert_eq!(
-            second.len(),
+            second.books.len(),
             1,
             "the cached Catalog should still list its books"
         );
@@ -1262,7 +1400,7 @@ mod tests {
 
         let client = PressbooksClient::with_network_base_url(pool, server.uri());
         client
-            .list_catalog()
+            .list_catalog(|_, _| {})
             .await
             .expect("the Catalog should list");
         (dir, server, client)
@@ -1539,7 +1677,7 @@ mod tests {
             .await;
 
         let client = PressbooksClient::with_network_base_url(pool, server.uri());
-        let Err(error) = client.list_catalog().await else {
+        let Err(error) = client.list_catalog(|_, _| {}).await else {
             panic!("a Catalog with no count should fail rather than look ten books long");
         };
 
@@ -1563,19 +1701,19 @@ mod tests {
 
         let client = PressbooksClient::with_network_base_url(pool, server.uri());
         client
-            .list_catalog()
+            .list_catalog(|_, _| {})
             .await
             .expect("the Catalog should list");
         drop(mock);
 
         // Every later request now 404s -- the freshness check cannot run.
         let books = client
-            .list_catalog()
+            .list_catalog(|_, _| {})
             .await
             .expect("a Catalog already on disk should still list with no network");
 
-        assert_eq!(books.len(), 1);
-        assert_eq!(books[0].title, "Openteach");
+        assert_eq!(books.books.len(), 1);
+        assert_eq!(books.books[0].title, "Openteach");
     }
 
     #[test]
@@ -1691,6 +1829,205 @@ mod tests {
         }
     }
 
+    /// One page of a Catalog: `count` books, numbered from `first`.
+    fn catalog_books(first: u32, count: u32) -> String {
+        let books = (first..first + count)
+            .map(|n| {
+                format!(
+                    r#"{{"id": {n}, "link": "https://books.test/book-{n}/", "metadata": {{
+                        "name": "Book {n}",
+                        "author": [{{"@type": "Person", "name": "A Writer"}}]
+                    }}}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("[{books}]")
+    }
+
+    /// A Catalog of 25 books over three pages, whose third page fails.
+    ///
+    /// Three pages is more than one and fewer than the concurrency limit, so
+    /// every page is in flight at once -- which is exactly the case where a
+    /// crawl that stops has to decide what to keep.
+    async fn server_with_a_failing_third_page() -> (MockServer, wiremock::MockGuard) {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/wp-json/pressbooks/v2/books"))
+            .and(query_param("per_page", "1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-wp-total", "25")
+                    .set_body_string(catalog_books(1, 1)),
+            )
+            .mount(&server)
+            .await;
+        // Scoped, and mounted ahead of the working page below it: dropping the
+        // guard is what lets the same Catalog be resumed rather than mocked
+        // twice.
+        let failing = Mock::given(method("GET"))
+            .and(path("/wp-json/pressbooks/v2/books"))
+            .and(query_param("page", "3"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount_as_scoped(&server)
+            .await;
+        for page in [1_u32, 2, 3] {
+            Mock::given(method("GET"))
+                .and(path("/wp-json/pressbooks/v2/books"))
+                .and(query_param("page", page.to_string()))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("x-wp-total", "25")
+                        .set_body_string(catalog_books(
+                            (page - 1) * 10 + 1,
+                            if page == 3 { 5 } else { 10 },
+                        )),
+                )
+                .mount(&server)
+                .await;
+        }
+        (server, failing)
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_crawl_lists_what_it_fetched_and_says_it_is_incomplete() {
+        // Twenty books that arrived are worth more to a reader than an error
+        // about the five that did not -- as long as the Catalog does not then
+        // claim to hold twenty.
+        let (_dir, pool) = temporary_pool();
+        let (server, _failing) = server_with_a_failing_third_page().await;
+        let client = PressbooksClient::with_network_base_url(pool, server.uri());
+
+        let listing = client
+            .list_catalog(|_, _| {})
+            .await
+            .expect("a Catalog that stopped part way should still list");
+
+        assert_eq!(
+            listing.books.len(),
+            20,
+            "the pages that arrived should list"
+        );
+        assert_eq!(
+            listing.total_books, 25,
+            "the Catalog's real size, not the part that arrived"
+        );
+        assert!(
+            !listing.is_complete,
+            "a Catalog missing a page is not complete"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_crawl_reports_progress_that_advances_to_the_end() {
+        // Three hundred requests with no sign of movement is indistinguishable
+        // from a frozen application.
+        let (_dir, pool) = temporary_pool();
+        let (server, failing) = server_with_a_failing_third_page().await;
+        drop(failing);
+        let client = PressbooksClient::with_network_base_url(pool, server.uri());
+
+        let mut reported = Vec::new();
+        client
+            .list_catalog(|current, total| reported.push((current, total)))
+            .await
+            .expect("the Catalog should list");
+
+        assert_eq!(
+            reported.first(),
+            Some(&(0, 3)),
+            "progress should start from nothing done, got {reported:?}"
+        );
+        assert_eq!(
+            reported.last(),
+            Some(&(3, 3)),
+            "progress should finish at the last page, got {reported:?}"
+        );
+        assert!(
+            reported.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+            "progress should never go backwards, got {reported:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resumed_crawl_reports_progress_from_where_it_stopped() {
+        // A resume that reported from zero would show a reader work being
+        // redone that is not being redone.
+        let (_dir, pool) = temporary_pool();
+        let (server, failing) = server_with_a_failing_third_page().await;
+        let client = PressbooksClient::with_network_base_url(pool, server.uri());
+        client
+            .list_catalog(|_, _| {})
+            .await
+            .expect("the first attempt should list what it fetched");
+        drop(failing);
+
+        let mut reported = Vec::new();
+        client
+            .list_catalog(|current, total| reported.push((current, total)))
+            .await
+            .expect("the Catalog should finish");
+
+        assert_eq!(
+            reported.first(),
+            Some(&(2, 3)),
+            "a resume should start from the pages already fetched, got {reported:?}"
+        );
+        assert_eq!(reported.last(), Some(&(3, 3)));
+    }
+
+    #[tokio::test]
+    async fn a_resumed_crawl_asks_only_for_the_pages_it_is_missing() {
+        // The point of recording a position. Starting again would cost the
+        // largest bundled Catalog three hundred requests it has already made.
+        let (_dir, pool) = temporary_pool();
+        let (server, failing) = server_with_a_failing_third_page().await;
+        let client = PressbooksClient::with_network_base_url(pool, server.uri());
+        client
+            .list_catalog(|_, _| {})
+            .await
+            .expect("the first attempt should list what it fetched");
+        let before_resume = server
+            .received_requests()
+            .await
+            .expect("mock server should record requests")
+            .len();
+        drop(failing);
+
+        let listing = client
+            .list_catalog(|_, _| {})
+            .await
+            .expect("the Catalog should finish");
+
+        assert_eq!(listing.books.len(), 25, "the whole Catalog should be there");
+        assert!(listing.is_complete);
+        let resumed = server
+            .received_requests()
+            .await
+            .expect("mock server should record requests")
+            .split_off(before_resume);
+        let asked_for = resumed
+            .iter()
+            .filter_map(|request| request.url.query().map(str::to_string))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            asked_for.len(),
+            2,
+            "a resume should cost the count check and the one missing page, got {asked_for:?}"
+        );
+        // The freshness check is itself a page request -- `per_page=1&page=1`
+        // -- so the crawled pages are the ones asking for a full page.
+        let crawled = asked_for
+            .iter()
+            .filter(|query| query.contains(&format!("per_page={}", super::PER_PAGE)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            crawled,
+            [&format!("per_page={}&page=3", super::PER_PAGE)],
+            "only the page that was missing should be fetched"
+        );
+    }
+
     #[tokio::test]
     async fn a_crawl_that_fails_part_way_leaves_the_cached_catalog_listing() {
         let (_dir, pool) = temporary_pool();
@@ -1708,7 +2045,7 @@ mod tests {
             .await;
         let client = PressbooksClient::with_network_base_url(pool, server.uri());
         client
-            .list_catalog()
+            .list_catalog(|_, _| {})
             .await
             .expect("the Catalog should list");
         drop(first);
@@ -1733,14 +2070,14 @@ mod tests {
             .await;
 
         let books = client
-            .list_catalog()
+            .list_catalog(|_, _| {})
             .await
             .expect("a crawl that failed should leave the cached Catalog listing");
 
         // The crawl opens its transaction only after every page has arrived,
         // so the rows from the first visit are untouched on disk.
-        assert_eq!(books.len(), 1);
-        assert_eq!(books[0].title, "Openteach");
+        assert_eq!(books.books.len(), 1);
+        assert_eq!(books.books[0].title, "Openteach");
     }
 
     #[tokio::test]
@@ -1767,13 +2104,17 @@ mod tests {
         let one = PressbooksClient::with_network_base_url(pool.clone(), first.uri());
         let two = PressbooksClient::with_network_base_url(pool, second.uri());
 
-        one.list_catalog().await.expect("the first should list");
-        two.list_catalog().await.expect("the second should list");
+        one.list_catalog(|_, _| {})
+            .await
+            .expect("the first should list");
+        two.list_catalog(|_, _| {})
+            .await
+            .expect("the second should list");
 
         // Crawling the second must not have emptied the first: a reader
         // switching back and forth would otherwise pay a fresh crawl each way.
         let back = one
-            .list_catalog()
+            .list_catalog(|_, _| {})
             .await
             .expect("the first should still list after the second was crawled");
         let requests = first
@@ -1782,8 +2123,8 @@ mod tests {
             .expect("mock server should record requests")
             .len();
 
-        assert_eq!(back.len(), 1);
-        assert_eq!(back[0].title, "Openteach");
+        assert_eq!(back.books.len(), 1);
+        assert_eq!(back.books[0].title, "Openteach");
         assert_eq!(
             requests, 3,
             "returning to a Catalog should cost only its freshness check"
@@ -1824,7 +2165,7 @@ mod tests {
 
         // The host arrives from the webview and becomes part of every URL the
         // crawl requests, so it is checked rather than trusted.
-        let Err(error) = super::list_books(pool, "evil.example.com").await else {
+        let Err(error) = super::list_books(pool, "evil.example.com", |_, _| {}).await else {
             panic!("an unoffered host should be refused");
         };
 
@@ -1871,10 +2212,11 @@ mod tests {
         let covers = covers_dir();
         let client = PressbooksClient::new(pool.clone());
 
-        let books = client
-            .list_catalog()
+        let listing = client
+            .list_catalog(|_, _| {})
             .await
             .expect("the Milne Catalog should list");
+        let books = listing.books;
         assert!(
             books.len() > 50,
             "Milne should return a whole Catalog, got {}",

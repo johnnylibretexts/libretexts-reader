@@ -5,6 +5,7 @@ use crate::content;
 use crate::db::connection::DbPool;
 use crate::db::models::{
     LibreTextsBook, LibreTextsLibrary, OpenStaxBook, PressbooksBook, PressbooksCatalog,
+    PressbooksCatalogListing,
 };
 use crate::error::AppResult;
 use crate::paths;
@@ -217,12 +218,30 @@ pub async fn list_pressbooks_catalogs(
     content::pressbooks::catalogs()
 }
 
+/// List a Catalog, reporting crawl progress as `catalog-progress`.
+///
+/// Its own event rather than `import-progress`: a Catalog crawl and an Import
+/// can run at the same time, and they mean different things to a reader --
+/// folding them into one event would have a Catalog's pages overwrite a book's
+/// sections in the same indicator.
 #[tauri::command]
-pub async fn list_pressbooks_books(
+pub async fn list_pressbooks_books<R: Runtime>(
     state: State<'_, DbPool>,
+    window: Window<R>,
     host: String,
-) -> AppResult<Vec<PressbooksBook>> {
-    content::pressbooks::list_books(state.inner().clone(), &host).await
+) -> AppResult<PressbooksCatalogListing> {
+    let progress_host = host.clone();
+    content::pressbooks::list_books(state.inner().clone(), &host, move |current, total| {
+        let _ = window.emit(
+            "catalog-progress",
+            json!({
+                "host": progress_host.clone(),
+                "current": current,
+                "total": total,
+            }),
+        );
+    })
+    .await
 }
 
 /// Filter an already-listed Catalog. Local, so it costs no request -- which is

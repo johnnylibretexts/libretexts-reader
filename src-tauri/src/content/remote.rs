@@ -20,7 +20,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::db::connection::DbPool;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 /// How many times a request is attempted before the Source is told it failed.
 const MAX_ATTEMPTS: usize = 3;
@@ -257,6 +257,56 @@ impl PageCache {
 /// Results come back in item order however many run at once, and the first
 /// error in that order wins and abandons the rest -- again matching what a
 /// sequential `?` did.
+/// Fetch in order, keeping everything that arrived before the first failure.
+///
+/// [`fetch_all`] is all-or-nothing, which is right when a partial answer is
+/// useless -- half a book is not a book. It is wrong when the work is
+/// resumable: a Catalog crawl that loses its three-hundredth page should not
+/// throw away the two hundred and ninety-nine before it.
+///
+/// Results come back in request order even though requests overlap, so what is
+/// returned is a contiguous prefix rather than whichever pages happened to
+/// land. That is what makes the stopping point a position a later run can
+/// resume from, rather than a set of holes to track.
+///
+/// `on_done` fires as each item lands, with how many have landed, for progress.
+pub async fn fetch_prefix<I, T, F, Fut, P>(
+    items: &[I],
+    concurrency: usize,
+    mut on_done: P,
+    fetch_one: F,
+) -> (Vec<T>, Option<AppError>)
+where
+    I: Clone,
+    F: Fn(I) -> Fut,
+    Fut: Future<Output = AppResult<T>>,
+    P: FnMut(usize),
+{
+    // Same lifetime constraint as `fetch_all`: no closure here may take a
+    // reference in argument position, or the failure surfaces unexplained at
+    // the `generate_handler!` boundary.
+    let requests = (0..items.len()).map(|index| items[index].clone());
+    let mut stream = futures::stream::iter(requests)
+        .map(fetch_one)
+        .buffered(concurrency.max(1));
+
+    let mut fetched = Vec::new();
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(item) => {
+                fetched.push(item);
+                on_done(fetched.len());
+            }
+            // Everything after this is dropped even if it already succeeded:
+            // keeping it would leave a hole, and a prefix with a hole in it is
+            // not a position anything can resume from.
+            Err(error) => return (fetched, Some(error)),
+        }
+    }
+
+    (fetched, None)
+}
+
 pub async fn fetch_all<I, T, F, Fut, P>(
     items: &[I],
     concurrency: usize,

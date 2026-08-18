@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Domain from "../../types/domain";
@@ -7,6 +7,14 @@ const listPressbooksCatalogs = vi.fn();
 const listPressbooksBooks = vi.fn();
 const searchPressbooksBooks = vi.fn();
 const importPressbooks = vi.fn();
+
+const listen = vi.fn();
+
+// The crawl reports progress on its own Tauri event; the component subscribes.
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (name: string, handler: (event: unknown) => void) =>
+    listen(name, handler),
+}));
 
 vi.mock("../../lib/tauri", () => ({
   isTauriRuntime: () => true,
@@ -78,6 +86,19 @@ const BOOK: Domain.PressbooksBook = {
   wordCount: 90000,
 };
 
+/** A complete Catalog holding `books`. */
+function catalogListing(
+  books: Domain.PressbooksBook[],
+  overrides: Partial<Domain.PressbooksCatalogListing> = {},
+): Domain.PressbooksCatalogListing {
+  return {
+    books,
+    totalBooks: books.length,
+    isComplete: true,
+    ...overrides,
+  };
+}
+
 /** A library document that was imported from BOOK. */
 function importedDocument(overrides: Partial<Domain.Document> = {}): Domain.Document {
   return {
@@ -110,8 +131,11 @@ describe("PressbooksBrowser", () => {
     vi.clearAllMocks();
     listPressbooksCatalogs.mockResolvedValue(CATALOGS);
     listPressbooksBooks.mockImplementation((host: string) =>
-      Promise.resolve(host === "oer.pressbooks.pub" ? [OTHER_BOOK] : [BOOK]),
+      Promise.resolve(
+        catalogListing(host === "oer.pressbooks.pub" ? [OTHER_BOOK] : [BOOK]),
+      ),
     );
+    listen.mockResolvedValue(() => {});
     searchPressbooksBooks.mockResolvedValue([]);
     importPressbooks.mockResolvedValue("doc-1");
     useImportsStore.setState({ active: null, completed: null, error: null });
@@ -250,13 +274,13 @@ describe("PressbooksBrowser", () => {
     // arrives proves nothing -- the new list replaces the old either way. The
     // window this covers is the one where a reader would otherwise see one
     // Catalog's books sitting under another Catalog's name.
-    let release: (books: Domain.PressbooksBook[]) => void = () => {};
+    let release: (listing: Domain.PressbooksCatalogListing) => void = () => {};
     listPressbooksBooks.mockImplementation((host: string) =>
       host === "oer.pressbooks.pub"
         ? new Promise((resolve) => {
             release = resolve;
           })
-        : Promise.resolve([BOOK]),
+        : Promise.resolve(catalogListing([BOOK])),
     );
 
     await renderBrowser();
@@ -271,7 +295,7 @@ describe("PressbooksBrowser", () => {
       ).not.toBeInTheDocument(),
     );
 
-    release([OTHER_BOOK]);
+    release(catalogListing([OTHER_BOOK]));
     await waitFor(() => expect(screen.getByText("Openteach")).toBeInTheDocument());
   });
 
@@ -285,7 +309,7 @@ describe("PressbooksBrowser", () => {
             message: "request to https://milne.test failed with HTTP 503",
             retryable: true,
           })
-        : Promise.resolve([OTHER_BOOK]),
+        : Promise.resolve(catalogListing([OTHER_BOOK])),
     );
 
     render(<PressbooksBrowser onOpenDocument={vi.fn()} />);
@@ -333,10 +357,125 @@ describe("PressbooksBrowser", () => {
     ).not.toBeInTheDocument();
   });
 
+  describe("a large catalog", () => {
+    /** Hands back the handler the component registered for `catalog-progress`. */
+    function progressHandler() {
+      // The last one: the component re-subscribes when the Catalog changes, and
+      // only the live subscription knows which host it is reporting for.
+      const registrations = listen.mock.calls.filter(
+        ([event]) => event === "catalog-progress",
+      );
+      const registration = registrations[registrations.length - 1];
+      expect(registration).toBeDefined();
+      return registration![1] as (event: {
+        payload: Domain.PressbooksCatalogProgress;
+      }) => void;
+    }
+
+    it("shows how far a crawl has got while it runs", async () => {
+      // Three hundred requests with no sign of movement is indistinguishable
+      // from a frozen application.
+      let release: (listing: Domain.PressbooksCatalogListing) => void = () => {};
+      listPressbooksBooks.mockImplementation(
+        () =>
+          new Promise<Domain.PressbooksCatalogListing>((resolve) => {
+            release = resolve;
+          }),
+      );
+
+      render(<PressbooksBrowser onOpenDocument={vi.fn()} />);
+      await waitFor(() =>
+        expect(screen.getByText(/Loading Pressbooks catalog/)).toBeInTheDocument(),
+      );
+
+      act(() =>
+        progressHandler()({
+          payload: {
+            host: "milnepublishing.geneseo.edu",
+            current: 42,
+            total: 304,
+          },
+        }),
+      );
+
+      await waitFor(() =>
+        expect(screen.getByText(/page 42 of 304/)).toBeInTheDocument(),
+      );
+
+      release(catalogListing([BOOK]));
+      await waitFor(() =>
+        expect(screen.queryByText(/page 42 of 304/)).not.toBeInTheDocument(),
+      );
+    });
+
+    it("ignores progress reported for a catalog the reader is not looking at", async () => {
+      // A crawl the reader navigated away from keeps running and keeps
+      // reporting. Its pages must not drive this Catalog's indicator.
+      listPressbooksBooks.mockImplementation(
+        () => new Promise<Domain.PressbooksCatalogListing>(() => {}),
+      );
+
+      render(<PressbooksBrowser onOpenDocument={vi.fn()} />);
+      await waitFor(() =>
+        expect(screen.getByText(/Loading Pressbooks catalog/)).toBeInTheDocument(),
+      );
+
+      act(() =>
+        progressHandler()({
+          payload: { host: "oer.pressbooks.pub", current: 42, total: 304 },
+        }),
+      );
+
+      expect(screen.queryByText(/page 42 of 304/)).not.toBeInTheDocument();
+    });
+
+    it("says how much of an unfinished catalog it is showing", async () => {
+      // A partial Catalog that showed only its books would read as a small
+      // complete one, and the reader would take a fifth of it for all of it.
+      listPressbooksBooks.mockResolvedValue(
+        catalogListing([BOOK], { totalBooks: 3033, isComplete: false }),
+      );
+
+      await renderBrowser();
+
+      expect(screen.getByText(/Showing 1 of 3033 books/)).toBeInTheDocument();
+    });
+
+    it("continues an unfinished catalog without starting again", async () => {
+      listPressbooksBooks.mockResolvedValue(
+        catalogListing([BOOK], { totalBooks: 3033, isComplete: false }),
+      );
+      await renderBrowser();
+      listPressbooksBooks.mockResolvedValue(
+        catalogListing([BOOK, OTHER_BOOK], { totalBooks: 2, isComplete: true }),
+      );
+
+      await userEvent.click(
+        screen.getByRole("button", { name: /continue loading/i }),
+      );
+
+      // The Rust side resumes from the page it stopped on, so continuing is
+      // the same request again rather than a different one.
+      await waitFor(() =>
+        expect(screen.getByText("Openteach")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText(/did not finish loading/)).not.toBeInTheDocument();
+    });
+
+    it("says nothing about completeness for a catalog that loaded whole", async () => {
+      await renderBrowser();
+
+      expect(screen.queryByText(/did not finish loading/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /continue loading/i }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe("search", () => {
     /** A Catalog holding `books`, searched the way the Rust side searches it. */
     function withCatalog(books: Domain.PressbooksBook[]) {
-      listPressbooksBooks.mockResolvedValue(books);
+      listPressbooksBooks.mockResolvedValue(catalogListing(books));
       searchPressbooksBooks.mockImplementation((_host: string, query: string) =>
         Promise.resolve(
           books.filter((book) =>
@@ -410,11 +549,11 @@ describe("PressbooksBrowser", () => {
       const listed = new Set<string>();
       let release: (books: Domain.PressbooksBook[]) => void = () => {};
       listPressbooksBooks.mockImplementation(
-        (host: string) =>
-          new Promise<Domain.PressbooksBook[]>((resolve) => {
+        () =>
+          new Promise<Domain.PressbooksCatalogListing>((resolve) => {
             release = (books) => {
-              listed.add(host);
-              resolve(books);
+              listed.add("milnepublishing.geneseo.edu");
+              resolve(catalogListing(books));
             };
           }),
       );
@@ -457,13 +596,13 @@ describe("PressbooksBrowser", () => {
       let release: (books: Domain.PressbooksBook[]) => void = () => {};
       listPressbooksBooks.mockImplementation((host: string) =>
         host === "oer.pressbooks.pub"
-          ? new Promise<Domain.PressbooksBook[]>((resolve) => {
+          ? new Promise<Domain.PressbooksCatalogListing>((resolve) => {
               release = (books) => {
                 listed.add(host);
-                resolve(books);
+                resolve(catalogListing(books));
               };
             })
-          : Promise.resolve([BOOK]),
+          : Promise.resolve(catalogListing([BOOK])),
       );
       searchPressbooksBooks.mockImplementation((host: string, query: string) => {
         const cached = listed.has(host)

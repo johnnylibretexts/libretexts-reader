@@ -171,9 +171,11 @@ export const api = {
       [],
       "list_pressbooks_catalogs",
     ),
+  /** Crawls or resumes the Catalog if the local copy is not current, reporting
+   * progress on the `catalog-progress` event while it does. */
   listPressbooksBooks: (host: string) =>
-    invokeWithBrowserFallback<Domain.PressbooksBook[]>(
-      [],
+    invokeWithBrowserFallback<Domain.PressbooksCatalogListing>(
+      { books: [], totalBooks: 0, isComplete: true },
       "list_pressbooks_books",
       { host },
     ),
