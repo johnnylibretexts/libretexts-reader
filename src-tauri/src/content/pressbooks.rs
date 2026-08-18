@@ -808,15 +808,30 @@ fn push_readable(entries: &mut Vec<TocEntry>, entry: ApiTocEntry, kind: EntryKin
 /// rather than inside `import_book` so that `import_book` stays reachable from
 /// a mock server in tests.
 pub fn verify_offered_book_url(book_url: &str) -> AppResult<()> {
-    offered_host(&book_host(book_url)?).map(|_| ())
-}
+    let url = reqwest::Url::parse(book_url)
+        .map_err(|_| AppError::Pressbooks(format!("{book_url} is not a usable book URL")))?;
 
-/// The host part of a book's canonical URL.
-fn book_host(book_url: &str) -> AppResult<String> {
-    reqwest::Url::parse(book_url)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_string))
-        .ok_or_else(|| AppError::Pressbooks(format!("{book_url} is not a usable book URL")))
+    // The host check is the reason this guard exists, but the rest of the URL
+    // is no more trusted than the host is: `book_api_url` builds every
+    // request from it verbatim, scheme included.
+    if url.scheme() != "https" {
+        return Err(AppError::Pressbooks(format!("{book_url} must use https")));
+    }
+    if url.port().is_some() {
+        return Err(AppError::Pressbooks(format!(
+            "{book_url} must not name a port"
+        )));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(AppError::Pressbooks(format!(
+            "{book_url} must not carry userinfo"
+        )));
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| AppError::Pressbooks(format!("{book_url} is not a usable book URL")))?;
+    offered_host(host).map(|_| ())
 }
 
 /// One crawl at a time per Catalog.
@@ -2514,6 +2529,28 @@ mod tests {
             "https://milnepublishing.geneseo.edu/concise-introduction-to-logic/",
         )
         .expect("a book in an offered Catalog should be allowed");
+    }
+
+    #[test]
+    fn an_offered_host_with_a_disallowed_scheme_port_or_userinfo_is_refused() {
+        // The host check alone is not enough: every field of the URL becomes
+        // part of every request the Import makes, and none of them is any
+        // more trusted than the host is.
+        for url in [
+            "http://milnepublishing.geneseo.edu/concise-introduction-to-logic/",
+            "https://milnepublishing.geneseo.edu:8443/concise-introduction-to-logic/",
+            "https://user:pass@milnepublishing.geneseo.edu/concise-introduction-to-logic/",
+        ] {
+            let Err(error) = super::verify_offered_book_url(url) else {
+                panic!("{url} should be refused");
+            };
+            assert_eq!(error.kind(), "pressbooks");
+        }
+
+        super::verify_offered_book_url(
+            "https://milnepublishing.geneseo.edu/concise-introduction-to-logic/",
+        )
+        .expect("an https book URL on the default port with no userinfo should still be allowed");
     }
 
     /// The one test that proves the recorded wire format is still the real one.
