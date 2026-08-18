@@ -180,8 +180,11 @@ struct ApiTocEntry {
     /// own book.
     #[serde(default)]
     has_post_content: bool,
+    /// `None` when the Catalog never sent the field, distinct from a measured
+    /// `Some(0)` -- an absent count must not be treated as a publisher's
+    /// answer of "empty" when `has_post_content` already answered that.
     #[serde(default)]
-    word_count: u32,
+    word_count: Option<u32>,
     #[serde(default)]
     link: String,
 }
@@ -788,7 +791,9 @@ fn flatten_toc(toc: ApiToc) -> Vec<TocEntry> {
 }
 
 fn push_readable(entries: &mut Vec<TocEntry>, entry: ApiTocEntry, kind: EntryKind) {
-    if !entry.has_post_content || entry.word_count == 0 {
+    // `has_post_content` stands alone: a Catalog that never sends `word_count`
+    // must not fail closed. A measured zero still excludes the entry.
+    if !entry.has_post_content || entry.word_count == Some(0) {
         return;
     }
 
@@ -1759,6 +1764,67 @@ mod tests {
             "an entry with zero words should not become a Section"
         );
         assert_eq!(ids, vec![11, 21, 31]);
+    }
+
+    /// A Catalog whose table of contents never sends `word_count` at all --
+    /// distinct from sending `word_count: 0`. `has_post_content` alone must
+    /// decide, except where the publisher did send a measured zero.
+    const TOC_JSON_NO_WORD_COUNTS: &str = r#"{
+        "front-matter": [
+            {"id": 10, "title": "Title Page", "has_post_content": false,
+             "link": "https://books.test/logic/front-matter/title-page/"},
+            {"id": 11, "title": "About This Book", "has_post_content": true,
+             "link": "https://books.test/logic/front-matter/about/"}
+        ],
+        "parts": [
+            {"title": "Part I", "has_post_content": false, "chapters": [
+                {"id": 21, "title": "1. A Precise Language", "has_post_content": true,
+                 "link": "https://books.test/logic/chapter/precise/"},
+                {"id": 22, "title": "Measured Zero", "has_post_content": true, "word_count": 0,
+                 "link": "https://books.test/logic/chapter/measured-zero/"}
+            ]}
+        ],
+        "back-matter": [
+            {"id": 31, "title": "Glossary", "has_post_content": true,
+             "link": "https://books.test/logic/back-matter/glossary/"}
+        ]
+    }"#;
+
+    async fn server_with_toc_missing_word_counts() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/book/wp-json/pressbooks/v2/toc"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(TOC_JSON_NO_WORD_COUNTS))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn a_table_of_contents_that_omits_word_count_still_keeps_readable_entries() {
+        let (_dir, pool) = temporary_pool();
+        let server = server_with_toc_missing_word_counts().await;
+        let client = PressbooksClient::with_network_base_url(pool, server.uri());
+
+        let entries = client
+            .fetch_toc(&format!("{}/book", server.uri()))
+            .await
+            .expect("the table of contents should be readable");
+        let ids = entries.iter().map(|entry| entry.id).collect::<Vec<_>>();
+
+        assert!(
+            !ids.contains(&10),
+            "has_post_content: false must still drop the entry with no word_count field"
+        );
+        assert!(
+            !ids.contains(&22),
+            "a measured zero must still drop the entry when the field is present"
+        );
+        assert_eq!(
+            ids,
+            vec![11, 21, 31],
+            "has_post_content: true must keep an entry whose word_count was never sent"
+        );
     }
 
     /// A chapter collection larger than one page, where the entries the table
