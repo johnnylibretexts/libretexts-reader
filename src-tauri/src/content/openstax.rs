@@ -6,7 +6,6 @@ use chrono::Utc;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use reqwest::StatusCode;
 use rusqlite::{params, OptionalExtension};
 use scraper::{ElementRef, Html};
 use serde::de::DeserializeOwned;
@@ -16,16 +15,17 @@ use serde_json::json;
 use crate::content::document::{DocumentBuilder, SectionBuilder};
 use crate::content::html_section::{self, normalize_text, SectionSource};
 use crate::content::images::{download_images, SourceImage};
+use crate::content::remote;
 use crate::db::connection::DbPool;
 use crate::db::models::{OpenStaxBook, SourceType};
 use crate::error::{AppError, AppResult};
 
 const DEFAULT_OPENSTAX_BASE_URL: &str = "https://openstax.org";
-const MAX_RETRIES: usize = 3;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
 pub struct OpenStaxClient {
-    http: reqwest::Client,
+    fetcher: remote::Fetcher,
     db: DbPool,
     base_url: String,
     release: tokio::sync::OnceCell<ReleaseManifest>,
@@ -112,10 +112,7 @@ impl OpenStaxClient {
 
     pub fn with_base_url(db: DbPool, base_url: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .expect("valid OpenStax HTTP client"),
+            fetcher: remote::Fetcher::new(REQUEST_TIMEOUT),
             db,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             release: tokio::sync::OnceCell::new(),
@@ -234,37 +231,23 @@ impl OpenStaxClient {
     }
 
     async fn fetch_json<T: DeserializeOwned>(&self, url: &str) -> AppResult<T> {
-        let mut last_error = None;
+        let response = self
+            .fetcher
+            .send(&remote::Request::get(url))
+            .await
+            .map_err(Self::source_error)?;
+        Ok(response.json::<T>().await?)
+    }
 
-        for attempt in 0..MAX_RETRIES {
-            match self.http.get(url).send().await {
-                Ok(response) if response.status().is_success() => {
-                    return Ok(response.json::<T>().await?);
-                }
-                Ok(response) => {
-                    let status = response.status();
-                    if !should_retry_status(status) || attempt + 1 == MAX_RETRIES {
-                        return Err(AppError::OpenStax(format!(
-                            "request to {url} failed with HTTP {status}"
-                        )));
-                    }
-                    last_error = Some(format!("HTTP {status}"));
-                }
-                Err(error) => {
-                    if attempt + 1 == MAX_RETRIES {
-                        return Err(AppError::Http(error));
-                    }
-                    last_error = Some(error.to_string());
-                }
+    /// Name a shared-machinery failure as this Source's own error, using the
+    /// same wording the loop here produced before extraction.
+    fn source_error(error: remote::FetchError) -> AppError {
+        match error {
+            remote::FetchError::Status { url, status } => {
+                AppError::OpenStax(format!("request to {url} failed with HTTP {status}"))
             }
-
-            tokio::time::sleep(Duration::from_millis(500 * 2_u64.pow(attempt as u32))).await;
+            remote::FetchError::Transport(error) => AppError::Http(error),
         }
-
-        Err(AppError::OpenStax(format!(
-            "request to {url} failed: {}",
-            last_error.unwrap_or_else(|| "unknown error".to_string())
-        )))
     }
 
     fn cached_page(&self, cache_key: &str, release_key: &str) -> AppResult<Option<PageContent>> {
@@ -381,7 +364,7 @@ async fn sections_from_pages(
     for page in pages {
         let base_url = client.page_url(book_uuid, &page.page_uuid).await?;
         let (paragraphs, image_candidates) = section_content_from_html(&page.html, &base_url);
-        let images = download_images(&client.http, image_candidates).await?;
+        let images = download_images(client.fetcher.http(), image_candidates).await?;
         if paragraphs.is_empty() && images.is_empty() {
             continue;
         }
@@ -427,10 +410,6 @@ fn release_key(release: &ReleaseManifest, version: &str) -> String {
     format!("{}@{}", release.archive_url, version)
 }
 
-fn should_retry_status(status: StatusCode) -> bool {
-    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
-}
-
 /// OpenStax marks structure with `data-type` attributes. Figure captions,
 /// tables, worked examples and exercises are dropped from the reading flow —
 /// but a figure's *image* is kept, which is why only the paragraph rule applies.
@@ -470,7 +449,44 @@ fn html_fragment_to_text(html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{paragraphs_from_html, section_content_from_html};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::{paragraphs_from_html, section_content_from_html, OpenStaxClient};
+    use crate::db::connection::temporary_pool;
+    use crate::error::AppError;
+
+    /// The shared retry loop reports a failure without naming a Source, so this
+    /// Source's own error is now something this file decides. A copy-paste that
+    /// returned `AppError::LibreTexts` here would change the `kind` string the
+    /// webview switches on, with nothing else in the suite noticing.
+    ///
+    /// 404 rather than 503 on purpose: it is not retried, so the test pays no
+    /// backoff.
+    #[tokio::test]
+    async fn a_failed_request_surfaces_as_this_sources_own_error() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rex/release.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let error = OpenStaxClient::with_base_url(pool, server.uri())
+            .fetch_toc("00000000-0000-0000-0000-000000000000")
+            .await
+            .expect_err("an unreachable release manifest should fail");
+
+        assert_eq!(error.kind(), "openstax");
+        match error {
+            AppError::OpenStax(message) => assert!(
+                message.contains("HTTP 404"),
+                "the failure should carry the status it stopped on, got: {message}"
+            ),
+            other => panic!("expected the OpenStax error, got: {other:?}"),
+        }
+    }
 
     #[test]
     fn paragraphs_preserve_mathml_tokens_for_reader_rendering() {

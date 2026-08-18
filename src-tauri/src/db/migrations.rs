@@ -31,9 +31,19 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0007_drop_kokoro_voices",
         include_str!("../../resources/migrations/0007_drop_kokoro_voices.sql"),
     ),
+    (
+        "0008_source_page_cache",
+        include_str!("../../resources/migrations/0008_source_page_cache.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
+    apply_migration_list(conn, MIGRATIONS)
+}
+
+/// Apply a specific list, so a test can stop at the migration before the one
+/// it is exercising. Production always passes the whole of `MIGRATIONS`.
+fn apply_migration_list(conn: &mut Connection, migrations: &[(&str, &str)]) -> AppResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS _migrations (
             name TEXT PRIMARY KEY,
@@ -42,7 +52,7 @@ pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
         [],
     )?;
 
-    for (name, sql) in MIGRATIONS {
+    for (name, sql) in migrations {
         let already_applied: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM _migrations WHERE name = ?1)",
             params![name],
@@ -93,7 +103,7 @@ pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::apply_migrations;
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
 
     fn migrated_conn() -> Connection {
         let mut conn = Connection::open_in_memory().expect("open in-memory db");
@@ -109,6 +119,99 @@ mod tests {
             .find(|(n, _)| *n == name)
             .unwrap_or_else(|| panic!("migration {name} is registered"))
             .1
+    }
+
+    /// A connection with every migration up to and including `name` applied.
+    fn migrated_conn_through(name: &str) -> Connection {
+        let count = super::MIGRATIONS
+            .iter()
+            .position(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("migration {name} is registered"))
+            + 1;
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("enable foreign keys");
+        super::apply_migration_list(&mut conn, &super::MIGRATIONS[..count])
+            .expect("apply migrations");
+        conn
+    }
+
+    #[test]
+    fn source_page_cache_carries_the_libretexts_rows_across() {
+        let mut conn = migrated_conn_through("0007_drop_kokoro_voices");
+        conn.execute(
+            "INSERT INTO libretexts_cache
+                 (cache_key, book_id, page_id, content_gzip, content_revision, fetched_at)
+             VALUES ('bio-15711:4211', 'bio-15711', '4211', ?1, 'rev-9', '2026-01-17T00:00:00Z')",
+            params![b"gzipped page bytes".to_vec()],
+        )
+        .expect("seed a cached page from before the migration");
+
+        super::apply_migration_list(&mut conn, super::MIGRATIONS)
+            .expect("apply the source-keyed cache migration");
+
+        let (source, book_id, page_id, content, revision, fetched_at) = conn
+            .query_row(
+                "SELECT source, book_id, page_id, content_gzip, content_revision, fetched_at
+                 FROM source_page_cache WHERE cache_key = 'bio-15711:4211'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .expect("the cached page should survive the migration");
+
+        assert_eq!(source, "libretexts");
+        assert_eq!(book_id, "bio-15711");
+        assert_eq!(page_id, "4211");
+        assert_eq!(content, b"gzipped page bytes".to_vec());
+        assert_eq!(revision.as_deref(), Some("rev-9"));
+        assert_eq!(fetched_at, "2026-01-17T00:00:00Z");
+    }
+
+    #[test]
+    fn the_source_specific_cache_table_is_gone() {
+        let conn = migrated_conn();
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'libretexts_cache'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read the schema");
+
+        assert_eq!(remaining, 0, "libretexts_cache should have been replaced");
+    }
+
+    #[test]
+    fn two_sources_can_cache_the_same_page_id_without_collision() {
+        let conn = migrated_conn();
+        conn.execute_batch(
+            "INSERT INTO source_page_cache
+                 (source, cache_key, book_id, page_id, content_gzip, content_revision, fetched_at)
+             VALUES ('libretexts', 'book:1', 'book', '1', x'01', NULL, 'now'),
+                    ('pressbooks',  'book:1', 'book', '1', x'02', NULL, 'now');",
+        )
+        .expect("two Sources should be able to hold the same cache key");
+
+        let content: Vec<u8> = conn
+            .query_row(
+                "SELECT content_gzip FROM source_page_cache
+                 WHERE source = 'pressbooks' AND cache_key = 'book:1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read the second Source's row");
+
+        assert_eq!(content, vec![0x02]);
     }
 
     #[test]

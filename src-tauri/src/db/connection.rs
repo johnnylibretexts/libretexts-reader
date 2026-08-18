@@ -39,3 +39,22 @@ pub fn init_pool(db_path: &Path) -> AppResult<DbPool> {
 
     Ok(pool)
 }
+
+/// A database in a throwaway directory, for tests.
+///
+/// The pool takes a file path and has no in-memory constructor, and an
+/// in-memory one would not do: each pooled connection opens its own separate
+/// database unless a shared-cache URI is used, so a row written through one
+/// connection would be invisible to the next. The returned `TempDir` must
+/// outlive the pool -- dropping it deletes the database.
+///
+/// This lives here so no test reaches for `LIBRETEXTS_READER_APP_DATA_DIR`:
+/// `set_var` is process-global and Rust runs tests as threads in one process,
+/// so one test's override can race another's.
+#[cfg(test)]
+pub fn temporary_pool() -> (tempfile::TempDir, DbPool) {
+    let dir = tempfile::tempdir().expect("temporary directory should be created");
+    let pool = init_pool(&dir.path().join("library.sqlite"))
+        .expect("temporary database should initialize");
+    (dir, pool)
+}

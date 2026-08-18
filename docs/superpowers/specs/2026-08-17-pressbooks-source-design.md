@@ -150,22 +150,32 @@ by breaking the behaviour deliberately and watching the test fail before restori
 
 ### 2. Extract, behaviour-preserving
 
-New `src-tauri/src/content/remote/`:
+New `src-tauri/src/content/remote.rs`, holding three things:
 
-- `fetch.rs` — one retry/backoff path replacing both `fetch_json` and `fetch_html`, which
+- `Fetcher` — one retry/backoff path replacing both `fetch_json` and `fetch_html`, which
   are currently 43-line duplicates of each other differing only in an `accept` header and
-  the body decode. Carries `error: fn(String) -> AppError` so LibreTexts keeps producing
-  `AppError::LibreTexts` and Pressbooks produces `AppError::Pressbooks`; the `kind()`
-  strings the frontend sees do not change.
-- `cache.rs` — the gzip page cache, keyed by `(source, cache_key)`.
-- `pages.rs` — concurrent fetch with a progress callback. `buffer_unordered` returns out of
-  order, so results are re-sorted by index before returning, and the callback fires from
-  the driving task rather than from inside the futures.
+  the body decode. It returns the successful response and reports failures as its own
+  `FetchError`; each Source turns that into `AppError::LibreTexts` or `AppError::OpenStax`
+  and decodes the body itself, so the `kind()` strings the frontend sees do not change.
+- `PageCache` — the gzip page cache, keyed by `(source, cache_key)`.
+- `fetch_all` — concurrent fetch with a progress callback.
 
-Migration `0008` creates `remote_page_cache (source, cache_key, book_key, content_gzip,
-revision, fetched_at)`, copies existing `libretexts_cache` rows in with
-`source = 'libretexts'`, and drops the old table. Copying rather than discarding costs four
-lines of SQL and spares anyone with a cached book a full re-download.
+Migration `0008` creates `source_page_cache (source, cache_key, book_id, page_id,
+content_gzip, content_revision, fetched_at)`, copies existing `libretexts_cache` rows in
+with `source = 'libretexts'`, and drops the old table. Copying rather than discarding costs
+four lines of SQL and spares anyone with a cached book a full re-download.
+
+Three details settled differently once the code was written, and the shipped form is the
+one to trust:
+
+- **One file, not three.** `remote.rs` came to about 250 lines. Splitting it into
+  `fetch.rs`/`cache.rs`/`pages.rs` would have been three files with one item each.
+- **`buffered`, not `buffer_unordered` plus a re-sort.** `buffered` already yields in item
+  order, so the re-sort was solving a problem the right combinator does not have.
+- **No closure takes a reference.** `fetch_all` hands `on_start` an index and `fetch_one`
+  its item by value. A closure whose argument is `&I` inside an `async fn` cannot be proved
+  general enough over lifetimes, and the failure surfaces at the `#[tauri::command]`
+  boundary pointing at `generate_handler!`, naming neither the module nor the call site.
 
 **LibreTexts is wired to the new module at concurrency 1**, preserving its current
 sequential behaviour exactly. Raising its concurrency changes the load placed on
