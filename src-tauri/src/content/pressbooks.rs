@@ -864,9 +864,10 @@ fn clean(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// Pressbooks renders equations to QuickLaTeX images. Until they are decoded
-/// into speakable notation, importing them would produce mute figures a reader
-/// cannot hear, so they are dropped rather than kept as pictures.
+/// Pressbooks renders equations to QuickLaTeX images. Kept as figures they
+/// would be pictures of mathematics a reader cannot hear, so they are dropped —
+/// but QuickLaTeX writes the original LaTeX into the image's `alt`, and that is
+/// recovered as notation the reader can see and the speech path can say.
 struct PressbooksSource;
 
 impl SectionSource for PressbooksSource {
@@ -875,12 +876,45 @@ impl SectionSource for PressbooksSource {
     }
 
     fn should_skip_image(&self, element: &ElementRef<'_>) -> bool {
-        element
-            .value()
-            .attr("src")
-            .is_some_and(|src| src.contains("quicklatex.com"))
+        is_quicklatex_image(element)
+    }
+
+    fn math_from_image(&self, element: &ElementRef<'_>) -> Option<String> {
+        is_quicklatex_image(element)
+            .then(|| quicklatex_latex(element))
+            .flatten()
     }
 }
+
+/// QuickLaTeX marks every image it renders with a `ql-img-…` class, and serves
+/// it from a path naming `quicklatex.com`. The class is the reliable half:
+/// Pressbooks caches the images under its own host, where the class survives
+/// and the hostname does not — but the filename it caches them under still
+/// carries the name, so both are worth asking.
+fn is_quicklatex_image(element: &ElementRef<'_>) -> bool {
+    let attr = |name| element.value().attr(name).unwrap_or_default();
+
+    attr("class")
+        .split_whitespace()
+        .any(|class| class.starts_with("ql-img-"))
+        || attr("src").contains("quicklatex.com")
+}
+
+/// The LaTeX QuickLaTeX kept in the `alt`, already entity-decoded by the HTML
+/// parser. `None` when the image carries no notation to recover — an equation
+/// with nothing readable behind it is better dropped than turned into a token
+/// that renders as an empty box or as QuickLaTeX's own name.
+fn quicklatex_latex(element: &ElementRef<'_>) -> Option<String> {
+    element
+        .value()
+        .attr("alt")
+        .map(str::trim)
+        .filter(|alt| !alt.is_empty() && !alt.eq_ignore_ascii_case(QUICKLATEX_CREDIT))
+        .map(str::to_string)
+}
+
+/// What QuickLaTeX puts in the `alt` when it has no source to put there.
+const QUICKLATEX_CREDIT: &str = "Rendered by QuickLaTeX.com";
 
 /// The Catalogs the application offers.
 ///
@@ -1045,6 +1079,9 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use std::time::Duration;
+
+    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+    use regex::Regex;
 
     use super::{EntryKind, PressbooksClient};
     use crate::db::connection::temporary_pool;
@@ -1584,10 +1621,27 @@ mod tests {
         );
     }
 
+    /// The LaTeX inside every `[[latex:…]]` token in a piece of text.
+    fn decoded_latex(text: &str) -> Vec<String> {
+        Regex::new(r"\[\[latex:([A-Za-z0-9+/=]+)\]\]")
+            .expect("valid token regex")
+            .captures_iter(text)
+            .map(|captures| {
+                String::from_utf8(
+                    BASE64_STANDARD
+                        .decode(captures[1].as_bytes())
+                        .expect("the token payload should be base64"),
+                )
+                .expect("the token payload should be UTF-8")
+            })
+            .collect()
+    }
+
     #[test]
-    fn quicklatex_equations_are_dropped_while_real_figures_keep_their_captions() {
+    fn quicklatex_equations_become_mathematics_while_real_figures_keep_their_captions() {
         // Pressbooks renders equations to QuickLaTeX PNGs. Imported as figures
-        // they would be pictures of mathematics a reader cannot hear.
+        // they would be pictures of mathematics a reader cannot hear; the LaTeX
+        // the alt carries is what makes them readable and speakable instead.
         let html = r#"
             <p>The density ratio follows.</p>
             <p><img src="https://quicklatex.com/cache3/9210efab_l3.png"
@@ -1605,13 +1659,14 @@ mod tests {
             &super::PressbooksSource,
         );
 
+        assert_eq!(paragraphs.len(), 3, "{paragraphs:?}");
+        assert_eq!(paragraphs[0], "The density ratio follows.");
         assert_eq!(
-            paragraphs,
-            vec![
-                "The density ratio follows.",
-                "Sampling follows the same rule."
-            ]
+            decoded_latex(&paragraphs[1]),
+            vec![r"\[ \Theta=\Theta_g \]"]
         );
+        assert_eq!(paragraphs[2], "Sampling follows the same rule.");
+
         assert_eq!(images.len(), 1, "the equation image should be dropped");
         assert_eq!(images[0].url, "https://books.test/uploads/soil-profile.jpg");
         assert_eq!(
@@ -1620,8 +1675,64 @@ mod tests {
         );
         assert_eq!(
             images[0].anchor_paragraph_ordinal,
-            Some(0),
+            Some(1),
             "a Figure is anchored to the Paragraph it followed"
+        );
+    }
+
+    #[test]
+    fn an_entity_encoded_alt_decodes_to_the_publishers_latex() {
+        // This is how the alt actually arrives on the wire: every backslash and
+        // bracket written as a numeric character reference.
+        let html = concat!(
+            r#"<p>Given <img src="https://books.test/wp-content/ql-cache/quicklatex.com-a_l3.png""#,
+            r#" class="ql-img-inline-formula" "#,
+            r#"alt="&#92;&#040;&#92;&#84;&#104;&#101;&#116;&#97;&#61;&#50;&#92;&#041;" /> exactly.</p>"#
+        );
+
+        let paragraphs =
+            super::section_content_from_html(html, "https://books.test/", &super::PressbooksSource)
+                .0;
+
+        assert_eq!(decoded_latex(&paragraphs[0]), vec![r"\(\Theta=2\)"]);
+        assert!(paragraphs[0].starts_with("Given"), "{paragraphs:?}");
+        assert!(paragraphs[0].ends_with("exactly."), "{paragraphs:?}");
+    }
+
+    #[test]
+    fn a_locally_cached_equation_is_recognised_by_its_class() {
+        // Pressbooks serves QuickLaTeX images from its own host. Recognising
+        // them only by a `quicklatex.com` src would miss the cached copies.
+        let html = r#"<p><img src="https://books.test/wp-content/uploads/eq.png"
+                              class="ql-img-displayed-formula quicklatex-auto-format"
+                              alt="\[ E=mc^2 \]" /></p>"#;
+
+        let (paragraphs, images) =
+            super::section_content_from_html(html, "https://books.test/", &super::PressbooksSource);
+
+        assert_eq!(decoded_latex(&paragraphs[0]), vec![r"\[ E=mc^2 \]"]);
+        assert!(images.is_empty(), "{images:?}");
+    }
+
+    #[test]
+    fn an_equation_image_carrying_no_latex_yields_no_token() {
+        // QuickLaTeX writes its own name into the alt when it has no source to
+        // put there. Encoding that would hand the reader a token that renders
+        // as an advertisement.
+        let html = r#"
+            <p>Before. <img src="https://quicklatex.com/cache3/empty_l3.png"
+                            class="ql-img-inline-formula" alt="" /></p>
+            <p>After. <img src="https://quicklatex.com/cache3/boiler_l3.png"
+                           class="ql-img-inline-formula" alt="Rendered by QuickLaTeX.com" /></p>
+        "#;
+
+        let (paragraphs, images) =
+            super::section_content_from_html(html, "https://books.test/", &super::PressbooksSource);
+
+        assert_eq!(paragraphs, vec!["Before.", "After."]);
+        assert!(
+            images.is_empty(),
+            "the images are still dropped: {images:?}"
         );
     }
 
@@ -2455,6 +2566,28 @@ mod tests {
         assert!(
             document.attribution.is_some(),
             "the attribution should travel with the Document"
+        );
+
+        // This book is full of QuickLaTeX equations, which is the whole reason
+        // it is the one imported live: they must arrive as notation, and none
+        // of them may arrive as a picture.
+        let paragraphs = document
+            .sections
+            .iter()
+            .flat_map(|section| &section.paragraphs)
+            .filter(|paragraph| paragraph.contains("[[latex:"))
+            .count();
+        assert!(
+            paragraphs > 10,
+            "the book's equations should reach the reader as notation, got {paragraphs}"
+        );
+        assert!(
+            document
+                .sections
+                .iter()
+                .flat_map(|section| &section.images)
+                .all(|image| !image.source_url.contains("quicklatex")),
+            "no equation should be imported as a Figure"
         );
 
         for image in document.sections.iter().flat_map(|section| &section.images) {
