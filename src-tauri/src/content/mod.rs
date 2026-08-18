@@ -7,6 +7,7 @@ pub mod libretexts;
 pub mod normalize;
 pub mod openstax;
 pub mod pdf;
+pub mod pressbooks;
 pub mod remote;
 pub mod tokenize;
 

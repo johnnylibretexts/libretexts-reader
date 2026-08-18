@@ -160,6 +160,7 @@ fn source_type_str(source_type: SourceType) -> &'static str {
     match source_type {
         SourceType::Openstax => "openstax",
         SourceType::Libretexts => "libretexts",
+        SourceType::Pressbooks => "pressbooks",
         SourceType::Epub => "epub",
         SourceType::Pdf => "pdf",
         SourceType::Pasted => "pasted",

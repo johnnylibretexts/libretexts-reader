@@ -35,6 +35,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0008_source_page_cache",
         include_str!("../../resources/migrations/0008_source_page_cache.sql"),
     ),
+    (
+        "0009_pressbooks_catalog",
+        include_str!("../../resources/migrations/0009_pressbooks_catalog.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {

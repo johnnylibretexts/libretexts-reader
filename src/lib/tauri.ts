@@ -138,6 +138,8 @@ export const api = {
     invokeDesktop<string>("import_openstax", { bookUuid }),
   importLibreTexts: (bookId: string) =>
     invokeDesktop<string>("import_libretexts", { bookId }),
+  importPressbooks: (bookUrl: string) =>
+    invokeDesktop<string>("import_pressbooks", { bookUrl }),
   importEpub: (filePath: string) =>
     invokeDesktop<string>("import_epub", { filePath }),
   importPdf: (filePath: string) =>
@@ -163,6 +165,11 @@ export const api = {
     invokeWithBrowserFallback<Domain.LibreTextsLibrary[]>(
       [],
       "list_libretexts_libraries",
+    ),
+  listPressbooksCatalog: () =>
+    invokeWithBrowserFallback<Domain.PressbooksBook[]>(
+      [],
+      "list_pressbooks_catalog",
     ),
 
   savePlaybackState: (playback: Domain.PlaybackState) =>

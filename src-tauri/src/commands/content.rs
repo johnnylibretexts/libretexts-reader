@@ -3,7 +3,7 @@ use tauri::{AppHandle, Emitter, Runtime, State, Window};
 
 use crate::content;
 use crate::db::connection::DbPool;
-use crate::db::models::{LibreTextsBook, LibreTextsLibrary, OpenStaxBook};
+use crate::db::models::{LibreTextsBook, LibreTextsLibrary, OpenStaxBook, PressbooksBook};
 use crate::error::AppResult;
 
 #[tauri::command]
@@ -68,6 +68,48 @@ pub async fn import_libretexts<R: Runtime>(
     })
     .await?;
 
+    let mut conn = state.get()?;
+    let document_id = document.persist(&mut conn)?;
+    window.emit("library-changed", json!({}))?;
+    window.emit(
+        "import-progress",
+        json!({
+            "documentId": document_id,
+            "stage": "complete",
+            "current": 1,
+            "total": 1,
+            "message": null
+        }),
+    )?;
+    Ok(document_id)
+}
+
+#[tauri::command]
+pub async fn import_pressbooks<R: Runtime>(
+    state: State<'_, DbPool>,
+    window: Window<R>,
+    book_url: String,
+) -> AppResult<String> {
+    let pool = state.inner().clone();
+    let progress_window = window.clone();
+    let progress_book_url = book_url.clone();
+    let document = content::pressbooks::import_book(pool, &book_url, move |current, total| {
+        let _ = progress_window.emit(
+            "import-progress",
+            json!({
+                "documentId": progress_book_url,
+                "stage": "fetching",
+                "current": current,
+                "total": total,
+                "message": null
+            }),
+        );
+    })
+    .await?;
+
+    // Persisted only after the whole book has been assembled. A failure above
+    // returns before this line, so the Library is never left holding half a
+    // Document.
     let mut conn = state.get()?;
     let document_id = document.persist(&mut conn)?;
     window.emit("library-changed", json!({}))?;
@@ -156,4 +198,9 @@ pub async fn list_libretexts_libraries(
     state: State<'_, DbPool>,
 ) -> AppResult<Vec<LibreTextsLibrary>> {
     content::libretexts::list_libraries(state.inner().clone()).await
+}
+
+#[tauri::command]
+pub async fn list_pressbooks_catalog(state: State<'_, DbPool>) -> AppResult<Vec<PressbooksBook>> {
+    content::pressbooks::list_catalog(state.inner().clone()).await
 }

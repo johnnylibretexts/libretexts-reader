@@ -35,6 +35,7 @@ const importRoutes: Array<{
 }> = [
   { id: "openstax", label: "OpenStax", icon: BookOpen },
   { id: "libretexts", label: "LibreTexts", icon: BookOpen },
+  { id: "pressbooks", label: "Pressbooks", icon: BookOpen },
   { id: "epub", label: "EPUB", icon: Upload },
   { id: "pdf", label: "PDF", icon: FileText },
   { id: "paste", label: "Paste", icon: Clipboard },

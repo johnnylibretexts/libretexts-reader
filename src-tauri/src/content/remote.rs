@@ -89,11 +89,28 @@ pub struct Fetcher {
 impl Fetcher {
     /// `timeout` applies to each attempt, not to the sequence.
     pub fn new(timeout: Duration) -> Self {
+        Self::build(timeout, None)
+    }
+
+    /// A client that sends `user_agent` on every request it makes.
+    ///
+    /// Per-request headers reach only the requests a Source builds itself.
+    /// Figure downloads go through `Fetcher::http` and build their own, so a
+    /// Source whose host rejects an unidentified client needs the header on the
+    /// client rather than on the request -- otherwise the API works and every
+    /// Figure silently 403s away.
+    pub fn with_user_agent(timeout: Duration, user_agent: &str) -> Self {
+        Self::build(timeout, Some(user_agent))
+    }
+
+    fn build(timeout: Duration, user_agent: Option<&str>) -> Self {
+        let mut builder = reqwest::Client::builder().timeout(timeout);
+        if let Some(user_agent) = user_agent {
+            builder = builder.user_agent(user_agent);
+        }
+
         Self {
-            http: reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .expect("valid remote HTTP client"),
+            http: builder.build().expect("valid remote HTTP client"),
         }
     }
 

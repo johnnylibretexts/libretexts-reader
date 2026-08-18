@@ -113,6 +113,7 @@ function sourceIcon(sourceType: Domain.SourceType) {
   switch (sourceType) {
     case "openstax":
     case "libretexts":
+    case "pressbooks":
       return BookOpen;
     case "epub":
     case "pdf":
@@ -132,6 +133,8 @@ function sourceLabel(sourceType: Domain.SourceType) {
       return "OpenStax";
     case "libretexts":
       return "LibreTexts";
+    case "pressbooks":
+      return "Pressbooks";
     case "epub":
       return "EPUB";
     case "pdf":

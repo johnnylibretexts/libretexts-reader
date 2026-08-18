@@ -72,6 +72,15 @@ pub async fn download_images(
     http: &Client,
     candidates: Vec<SourceImage>,
 ) -> AppResult<Vec<ImageBuilder>> {
+    // Resolve nothing when there is nothing to download. `paths::images_dir`
+    // calls `create_dir_all`, so asking for it materialises the real app-data
+    // tree -- which a Source importing a book with no figures should not do,
+    // and which makes any test of such an Import indistinguishable from real
+    // usage on disk.
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let images_dir = paths::images_dir()?;
     let mut seen = HashSet::new();
     let mut images = Vec::new();

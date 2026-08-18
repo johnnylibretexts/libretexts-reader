@@ -23,6 +23,7 @@ pub struct Document {
 pub enum SourceType {
     Openstax,
     Libretexts,
+    Pressbooks,
     Epub,
     Pdf,
     Pasted,
@@ -112,6 +113,25 @@ pub struct LibreTextsBook {
     pub last_updated: Option<String>,
     pub location: String,
     pub program: String,
+}
+
+/// One book in a Pressbooks Catalog, as the browser shows it.
+///
+/// `book_url` is the book's canonical URL. It is the identity everywhere: the
+/// row key, the value `source_metadata` carries on an imported Document, and
+/// what the browser matches on to tell an already-imported book from a new one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PressbooksBook {
+    pub book_url: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub cover_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub authors: String,
+    pub license_name: String,
+    pub license_url: Option<String>,
+    pub word_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

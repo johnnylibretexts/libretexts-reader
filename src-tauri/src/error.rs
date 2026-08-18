@@ -34,6 +34,9 @@ pub enum AppError {
     #[error("libretexts error: {0}")]
     LibreTexts(String),
 
+    #[error("pressbooks error: {0}")]
+    Pressbooks(String),
+
     #[error("model error: {0}")]
     Model(String),
 
@@ -82,6 +85,7 @@ impl AppError {
             Self::Pdf(_) => "pdf",
             Self::OpenStax(_) => "openstax",
             Self::LibreTexts(_) => "libretexts",
+            Self::Pressbooks(_) => "pressbooks",
             Self::Model(_) => "model",
             Self::Voice(_) => "voice",
             Self::Auth(_) => "auth",
@@ -111,6 +115,7 @@ impl AppError {
             Self::Pdf(message)
             | Self::OpenStax(message)
             | Self::LibreTexts(message)
+            | Self::Pressbooks(message)
             | Self::Model(message)
             | Self::Voice(message)
             | Self::Auth(message)
@@ -139,6 +144,7 @@ impl AppError {
             | Self::Pdf(_)
             | Self::OpenStax(_)
             | Self::LibreTexts(_)
+            | Self::Pressbooks(_)
             | Self::Model(_)
             | Self::Voice(_)
             | Self::Auth(_)
