@@ -39,6 +39,11 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
         if (active) {
           setCatalogs(offered);
           setHost((current) => current ?? offered[0]?.host ?? null);
+          // With no Catalog to open there is no second fetch to end the
+          // spinner, so it is ended here rather than left running forever.
+          if (offered.length === 0) {
+            setLoading(false);
+          }
         }
       })
       .catch((error) => {
@@ -130,7 +135,9 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
 
       {!loading && books.length === 0 && !error ? (
         <div className="rounded-md border border-neutral-200 bg-white px-4 py-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
-          This Pressbooks network has no books to show.
+          {catalogs.length === 0
+            ? "No Pressbooks networks are available."
+            : "This Pressbooks network has no books to show."}
         </div>
       ) : null}
 

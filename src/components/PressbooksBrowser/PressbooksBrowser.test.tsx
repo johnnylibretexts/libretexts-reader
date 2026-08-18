@@ -265,6 +265,19 @@ describe("PressbooksBrowser", () => {
     expect(screen.queryByText(/failed with HTTP 503/)).not.toBeInTheDocument();
   });
 
+  it("says so rather than spinning forever when no catalogs are on offer", async () => {
+    listPressbooksCatalogs.mockResolvedValue([]);
+
+    render(<PressbooksBrowser onOpenDocument={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("No Pressbooks networks are available."),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Loading Pressbooks catalog/)).not.toBeInTheDocument();
+  });
+
   it("reports a catalog that cannot be reached rather than showing it as empty", async () => {
     listPressbooksBooks.mockRejectedValue({
       kind: "pressbooks",

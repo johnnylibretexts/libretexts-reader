@@ -39,6 +39,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0009_pressbooks_catalog",
         include_str!("../../resources/migrations/0009_pressbooks_catalog.sql"),
     ),
+    (
+        "0010_documents_allow_pressbooks",
+        include_str!("../../resources/migrations/0010_documents_allow_pressbooks.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {

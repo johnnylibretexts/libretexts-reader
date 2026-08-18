@@ -92,6 +92,8 @@ pub async fn import_pressbooks<R: Runtime>(
     window: Window<R>,
     book_url: String,
 ) -> AppResult<String> {
+    content::pressbooks::verify_offered_book_url(&book_url)?;
+
     let pool = state.inner().clone();
     let progress_window = window.clone();
     let progress_book_url = book_url.clone();

@@ -13,12 +13,25 @@
 # string. This catches the other half -- a variant added in Rust but never
 # mirrored on the frontend.
 #
+# It also checks `parse_source_type` in db/library.rs, which is the inverse and
+# matches on `&str`, so the compiler does *not* refuse a new variant there. That
+# gap shipped once: Pressbooks was added to the enum, to `source_type_str` and to
+# the TypeScript union, and reading a Pressbooks row back then failed -- and
+# because the parse runs inside `query_map`, it took the whole Library listing
+# down rather than one row.
+#
+# The SQL `CHECK (source_type IN (...))` constraint is a fourth place naming the
+# same set. It is not greppable across migrations, so the round-trip test in
+# db/library.rs covers it instead: that test persists and lists one Document per
+# variant and fails if any of the four is missed.
+#
 # Usage: check-source-types.sh
 # Env:   ROOT  repo root (default: git rev-parse --show-toplevel)
 set -euo pipefail
 
 ROOT="${ROOT:-$(git rev-parse --show-toplevel)}"
 rust_file="$ROOT/src-tauri/src/content/document.rs"
+parse_file="$ROOT/src-tauri/src/db/library.rs"
 ts_file="$ROOT/src/types/domain.ts"
 
 for f in "$rust_file" "$ts_file"; do
@@ -44,6 +57,25 @@ fi
 if [ -z "$ts_types" ]; then
   echo "check-source-types: found no SourceType union in $ts_file" >&2
   exit 1
+fi
+
+# Match arms inside `fn parse_source_type`: `"x" => Ok(SourceType::X),`. Absent
+# in a stripped test root, which is fine -- the check below skips it then.
+if [ -f "$parse_file" ]; then
+  parse_types="$(
+    awk '/fn parse_source_type\(/{f=1} f && /^}$/{exit} f' "$parse_file" \
+      | sed -n 's/.*"\([a-z_]*\)" *=> *Ok(.*/\1/p' | sort
+  )"
+  if [ -n "$parse_types" ] && [ "$rust_types" != "$parse_types" ]; then
+    echo "Source types are out of sync inside Rust:" >&2
+    diff <(echo "$rust_types") <(echo "$parse_types") \
+      --label "src-tauri/src/content/document.rs (writes)" \
+      --label "src-tauri/src/db/library.rs (reads back)" -u >&2 || true
+    echo "" >&2
+    echo "A Source that can be written but not read back fails the whole Library" >&2
+    echo "listing, not just its own row." >&2
+    exit 1
+  fi
 fi
 
 if [ "$rust_types" != "$ts_types" ]; then

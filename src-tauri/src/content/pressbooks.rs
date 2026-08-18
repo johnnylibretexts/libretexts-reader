@@ -254,14 +254,19 @@ impl PressbooksClient {
     pub async fn list_catalog(&self) -> AppResult<Vec<PressbooksBook>> {
         let cached = self.cached_books()?;
 
-        match self.live_book_count().await {
-            Ok(live_total) => {
-                if live_total != self.cached_book_count()? {
-                    self.crawl_catalog(live_total).await?;
-                    return self.cached_books();
-                }
-                Ok(cached)
+        let outcome: AppResult<()> = match self.live_book_count().await {
+            Ok(live_total) if live_total != self.cached_book_count()? => {
+                self.crawl_catalog(live_total).await
             }
+            Ok(_) => return Ok(cached),
+            Err(error) => Err(error),
+        };
+
+        match outcome {
+            Ok(()) => self.cached_books(),
+            // A crawl that gave up part-way opens no transaction, so whatever
+            // was cached is still on disk and still worth showing. Only an
+            // empty cache makes the failure fatal.
             Err(_) if !cached.is_empty() => Ok(cached),
             Err(error) => Err(error),
         }
@@ -588,6 +593,25 @@ fn push_readable(entries: &mut Vec<TocEntry>, entry: ApiTocEntry, kind: EntryKin
         kind,
         link: entry.link,
     });
+}
+
+/// Refuse a book URL that does not belong to a Catalog the application offers.
+///
+/// Every request an Import makes is built from this URL, and it arrives from
+/// the webview, so it is checked at the boundary rather than trusted -- the
+/// same guard `list_books` applies to the host it is given. It lives here
+/// rather than inside `import_book` so that `import_book` stays reachable from
+/// a mock server in tests.
+pub fn verify_offered_book_url(book_url: &str) -> AppResult<()> {
+    offered_host(&book_host(book_url)?).map(|_| ())
+}
+
+/// The host part of a book's canonical URL.
+fn book_host(book_url: &str) -> AppResult<String> {
+    reqwest::Url::parse(book_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .ok_or_else(|| AppError::Pressbooks(format!("{book_url} is not a usable book URL")))
 }
 
 fn clean(value: Option<String>) -> Option<String> {
@@ -1260,6 +1284,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_crawl_that_fails_part_way_leaves_the_cached_catalog_listing() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+
+        // First visit: one book, crawled and cached.
+        let first = Mock::given(method("GET"))
+            .and(path("/wp-json/pressbooks/v2/books"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-wp-total", "1")
+                    .set_body_string(catalog_page("https://books.test/openteach/", "Openteach")),
+            )
+            .mount_as_scoped(&server)
+            .await;
+        let client = PressbooksClient::with_network_base_url(pool, server.uri());
+        client
+            .list_catalog()
+            .await
+            .expect("the Catalog should list");
+        drop(first);
+
+        // The Catalog has grown, so a crawl starts -- and then falls over. The
+        // count check succeeding is what makes this different from having no
+        // network at all.
+        Mock::given(method("GET"))
+            .and(path("/wp-json/pressbooks/v2/books"))
+            .and(query_param("per_page", "1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-wp-total", "2")
+                    .set_body_string(catalog_page("https://books.test/openteach/", "Openteach")),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/wp-json/pressbooks/v2/books"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let books = client
+            .list_catalog()
+            .await
+            .expect("a crawl that failed should leave the cached Catalog listing");
+
+        // The crawl opens its transaction only after every page has arrived,
+        // so the rows from the first visit are untouched on disk.
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].title, "Openteach");
+    }
+
+    #[tokio::test]
     async fn each_catalog_caches_independently() {
         let (_dir, pool) = temporary_pool();
         let first = MockServer::start().await;
@@ -1348,6 +1424,27 @@ mod tests {
         assert!(error.message().contains("evil.example.com"));
     }
 
+    #[test]
+    fn a_book_url_outside_the_offered_catalogs_is_refused() {
+        // The Import path builds every request from this URL, so the same
+        // guard the listing path applies has to cover it.
+        for url in [
+            "http://internal-host/secret",
+            "https://evil.example.com/book/",
+            "not-a-url",
+        ] {
+            let Err(error) = super::verify_offered_book_url(url) else {
+                panic!("{url} should be refused");
+            };
+            assert_eq!(error.kind(), "pressbooks");
+        }
+
+        super::verify_offered_book_url(
+            "https://milnepublishing.geneseo.edu/concise-introduction-to-logic/",
+        )
+        .expect("a book in an offered Catalog should be allowed");
+    }
+
     /// The one test that proves the recorded wire format is still the real one.
     ///
     /// Excluded from the default run: it reaches Milne over the network. Run it
@@ -1380,7 +1477,7 @@ mod tests {
         );
 
         let book_url = "https://milnepublishing.geneseo.edu/concise-introduction-to-logic/";
-        let document = super::import_book(pool, book_url, |current, total| {
+        let document = super::import_book(pool.clone(), book_url, |current, total| {
             eprintln!("Pressbooks smoke import progress: {current}/{total}");
         })
         .await
@@ -1400,6 +1497,22 @@ mod tests {
         for image in document.sections.iter().flat_map(|section| &section.images) {
             let _ = std::fs::remove_file(&image.local_path);
         }
+
+        // Persisted and listed back, not just built. Stopping at the
+        // `DocumentBuilder` is how this test previously missed that
+        // `documents.source_type` carries a CHECK constraint naming every
+        // Source: the Import assembled fine and could not be saved at all.
+        let mut conn = pool.get().expect("a connection should be available");
+        let document_id = document
+            .persist(&mut conn)
+            .expect("the Document should persist");
+        let listed = crate::db::library::list_documents(&conn)
+            .expect("the Library should list after a Pressbooks Import");
+        assert!(listed.iter().any(|d| d.id == document_id));
+
+        crate::db::library::delete_document(&conn, &document_id)
+            .expect("the temporary Document should delete");
+        drop(conn);
         drop(dir);
     }
 }

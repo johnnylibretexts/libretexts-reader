@@ -198,10 +198,15 @@ fn document_from_row(row: &rusqlite::Row<'_>) -> Result<Document, rusqlite::Erro
     })
 }
 
+/// The inverse of `source_type_str`, and the one direction the compiler cannot
+/// check: this matches on `&str`, so a Source added to the enum still compiles
+/// here. Getting it wrong is not a per-row problem -- `document_from_row` runs
+/// inside `query_map`, so one unreadable row fails the entire Library listing.
 fn parse_source_type(value: &str) -> AppResult<SourceType> {
     match value {
         "openstax" => Ok(SourceType::Openstax),
         "libretexts" => Ok(SourceType::Libretexts),
+        "pressbooks" => Ok(SourceType::Pressbooks),
         "epub" => Ok(SourceType::Epub),
         "pdf" => Ok(SourceType::Pdf),
         "pasted" => Ok(SourceType::Pasted),
@@ -229,5 +234,54 @@ fn to_sql_conversion_error(column: usize) -> impl FnOnce(AppError) -> rusqlite::
             rusqlite::types::Type::Text,
             Box::new(error),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::content::document::{DocumentBuilder, SectionBuilder};
+    use crate::db::connection::temporary_pool;
+    use crate::db::models::SourceType;
+
+    /// Every Source must survive a persist-and-list round trip.
+    ///
+    /// `source_type_str` writes the string and `parse_source_type` reads it
+    /// back, and neither is checked against the other by the compiler --
+    /// `parse_source_type` matches on `&str`. A Source added to one and not the
+    /// other persists fine and then fails to list, and because the failure is
+    /// per-row inside `query_map` it takes the *whole* Library listing down,
+    /// not just its own row.
+    #[test]
+    fn every_source_type_survives_a_persist_and_list_round_trip() {
+        for source_type in [
+            SourceType::Openstax,
+            SourceType::Libretexts,
+            SourceType::Pressbooks,
+            SourceType::Epub,
+            SourceType::Pdf,
+            SourceType::Pasted,
+            SourceType::Url,
+        ] {
+            let (_dir, pool) = temporary_pool();
+            let mut conn = pool.get().expect("a connection should be available");
+
+            DocumentBuilder {
+                title: "A Book".to_string(),
+                source_type,
+                source_metadata: serde_json::json!({}),
+                cover_image_path: None,
+                license: None,
+                attribution: None,
+                sections: vec![SectionBuilder::text("One", vec!["A sentence.".to_string()])],
+            }
+            .persist(&mut conn)
+            .expect("the document should persist");
+
+            let documents = super::list_documents(&conn)
+                .unwrap_or_else(|error| panic!("{source_type:?} should list back: {error}"));
+
+            assert_eq!(documents.len(), 1);
+            assert_eq!(documents[0].source_type, source_type);
+        }
     }
 }
