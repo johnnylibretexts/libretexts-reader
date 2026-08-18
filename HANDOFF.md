@@ -1,10 +1,22 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-17
+Last updated: 2026-08-18
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
-**There is no work in progress. `main` is the whole picture.** The Fish Audio provider (spec B) merged on 2026-08-16 via [PR #4](https://github.com/johnnylibretexts/libretexts-reader/pull/4) — 39 commits, merge commit `64ead91`, reviewed with all 15 findings resolved. Everything described below is on `main` and the working tree is clean. The standing caution against `git reset --hard` still applies to any new WIP; there is none as of this update.
+**Pressbooks is a third content Source, shipped 2026-08-18.** [PR #35](https://github.com/johnnylibretexts/libretexts-reader/pull/35) merged 15 commits as `aaf0e7d`, closing the epic #19 and all eight of its children. A reader can browse Pressbooks Catalogs with a picker, search a crawled cache as they type, add a book in one click, see its cover in the Library, and hear its equations — Pressbooks renders those to images and keeps the LaTeX in the `alt`, which import recovers as a `[[latex:<base64>]]` token that KaTeX typesets and the speech path says aloud.
+
+One follow-up fix merged behind it: [PR #36](https://github.com/johnnylibretexts/libretexts-reader/pull/36) (`0532eb3`) names the SQLite busy timeout the app relies on rather than inheriting it from rusqlite.
+
+And [PR #37](https://github.com/johnnylibretexts/libretexts-reader/pull/37) (`0a6ea2d`) closed #31. An image download used to accept a response if *either* its content type or its URL extension looked like an image, so a WAF block page served `200 text/html` for `.../cover.png` was written to disk as a PNG and hung on the Library card. It now decides on the body — sniffed magic bytes — or on what the server said, never on the URL alone. Both signals have to stay, and the PR body says why: servers that will not guess send a genuine PNG as `application/octet-stream`, and a format the sniffer does not know is still an image when the server says so.
+
+**There is no work in progress as of this update.** The standing caution against `git reset --hard` applies to any new WIP.
+
+The Fish Audio provider (spec B) merged on 2026-08-16 via [PR #4](https://github.com/johnnylibretexts/libretexts-reader/pull/4) — 39 commits, merge commit `64ead91`, reviewed with all 15 findings resolved.
+
+**Open tickets, all `ready-for-agent`, in the order worth taking them:** **#33** (a Catalog whose table of contents omits `word_count` imports as an empty book — the field is `#[serde(default)]`, so an absent value reads as a measured zero and every entry is dropped), **#29** (a book URL is checked for host but not scheme, port or userinfo), **#28** (the LibreTexts page cache never expires or revalidates), then **#34** (the first crawl progress event is lost — cosmetic) and **#32** (a frontend test failed once, name never captured).
+
+**#30 is closed as not reproducible**, and the reasoning is worth not repeating: it asserted that no `busy_timeout` was set, but `rusqlite` applies 5000ms to every connection it opens, and the test the ticket demanded passed against unmodified code. **Reproduce a ticket's defect before building for it** — write the test it asks for and watch it fail first. `/code-review` findings on this repo have twice been wrong about their own premise.
 
 **CI is green again.** It had been red on `main` since 2026-08-14 — not from any code defect, but because `check-app-data-isolation` wrapped `cargo test`, and the `ort` crate's build script caches a ~73MB `libonnxruntime.a` under `$HOME/Library/Caches`. That is a toolchain artifact, not app data, but a *cold* build inside the throwaway `$HOME` tripped the check. It reproduced only on machines that had never compiled before, so it was green for every developer and red on every runner, and the failure text blamed a `paths::` leak that did not exist. The script now compiles before creating the sandbox. **If this check ever fails again, read the leaked paths before believing the message** — it names `paths::` regardless of what actually wrote.
 
