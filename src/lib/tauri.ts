@@ -138,6 +138,8 @@ export const api = {
     invokeDesktop<string>("import_openstax", { bookUuid }),
   importLibreTexts: (bookId: string) =>
     invokeDesktop<string>("import_libretexts", { bookId }),
+  importPressbooks: (bookUrl: string) =>
+    invokeDesktop<string>("import_pressbooks", { bookUrl }),
   importEpub: (filePath: string) =>
     invokeDesktop<string>("import_epub", { filePath }),
   importPdf: (filePath: string) =>
@@ -163,6 +165,26 @@ export const api = {
     invokeWithBrowserFallback<Domain.LibreTextsLibrary[]>(
       [],
       "list_libretexts_libraries",
+    ),
+  listPressbooksCatalogs: () =>
+    invokeWithBrowserFallback<Domain.PressbooksCatalog[]>(
+      [],
+      "list_pressbooks_catalogs",
+    ),
+  /** Crawls or resumes the Catalog if the local copy is not current, reporting
+   * progress on the `catalog-progress` event while it does. */
+  listPressbooksBooks: (host: string) =>
+    invokeWithBrowserFallback<Domain.PressbooksCatalogListing>(
+      { books: [], totalBooks: 0, isComplete: true },
+      "list_pressbooks_books",
+      { host },
+    ),
+  /** Local, over the cache `listPressbooksBooks` filled. No network. */
+  searchPressbooksBooks: (host: string, query: string) =>
+    invokeWithBrowserFallback<Domain.PressbooksBook[]>(
+      [],
+      "search_pressbooks_books",
+      { host, query },
     ),
 
   savePlaybackState: (playback: Domain.PlaybackState) =>

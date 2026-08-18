@@ -4,20 +4,25 @@ export type MathSegment =
   | { kind: "mathml"; markup: string; display: boolean };
 
 const MATHML_TOKEN_RE = /\[\[mathml:([A-Za-z0-9+/=]+)\]\]/g;
+const LATEX_TOKEN_RE = /\[\[latex:([A-Za-z0-9+/=]+)\]\]/g;
+const LATEX_ENVIRONMENT_RE = /\\begin\s*\{/;
+
+/**
+ * A stretch of `text` that is mathematics rather than prose, and how it is
+ * written: as a MathML token, as a LaTeX token, or as LaTeX the source served
+ * inline between delimiters.
+ */
+type MathCandidate =
+  | { kind: "mathml"; start: number; end: number; markup: string }
+  | { kind: "latex"; start: number; end: number; latex: string | null }
+  | { kind: "tex"; start: number; end: number; text: string; display: boolean };
 
 export function parseMathContent(text: string): MathSegment[] {
   const segments: MathSegment[] = [];
   let cursor = 0;
 
   while (cursor < text.length) {
-    const mathml = findNextMathmlToken(text, cursor);
-    const tex = findNextTexSegment(text, cursor);
-    const next =
-      mathml && tex
-        ? mathml.start <= tex.start
-          ? mathml
-          : tex
-        : mathml ?? tex;
+    const next = nextMathCandidate(text, cursor);
 
     if (!next) {
       pushTextSegment(segments, text.slice(cursor));
@@ -34,6 +39,16 @@ export function parseMathContent(text: string): MathSegment[] {
         markup: next.markup,
         display: mathmlDisplayMode(next.markup),
       });
+    } else if (next.kind === "latex") {
+      const math = next.latex === null ? null : texFromSource(next.latex);
+      if (math) {
+        segments.push({ kind: "tex", text: math.text, display: math.display });
+      } else {
+        // The token is consumed either way. A payload that will not decode is
+        // a defect in the import, and showing the reader its markup makes a
+        // silent one loud without making it any more legible.
+        pushTextSegment(segments, "equation");
+      }
     } else {
       segments.push({ kind: "tex", text: next.text, display: next.display });
     }
@@ -65,6 +80,24 @@ export function sanitizeMathml(markup: string): string | null {
   return new XMLSerializer().serializeToString(root);
 }
 
+/**
+ * The earliest mathematics at or after `start`. Ties go to the token forms,
+ * whose payloads are opaque and so cannot be scanned for delimiters.
+ */
+function nextMathCandidate(text: string, start: number): MathCandidate | null {
+  const candidates = [
+    findNextMathmlToken(text, start),
+    findNextLatexToken(text, start),
+    findNextTexSegment(text, start),
+  ].filter((candidate): candidate is MathCandidate => candidate !== null);
+
+  return candidates.reduce<MathCandidate | null>(
+    (earliest, candidate) =>
+      earliest === null || candidate.start < earliest.start ? candidate : earliest,
+    null,
+  );
+}
+
 function findNextMathmlToken(text: string, start: number) {
   MATHML_TOKEN_RE.lastIndex = start;
   const match = MATHML_TOKEN_RE.exec(text);
@@ -83,6 +116,45 @@ function findNextMathmlToken(text: string, start: number) {
     end: match.index + match[0].length,
     markup,
   };
+}
+
+/**
+ * Unlike the MathML token, this is returned even when its payload will not
+ * decode, so that the token is always consumed rather than left in the prose.
+ */
+function findNextLatexToken(text: string, start: number) {
+  LATEX_TOKEN_RE.lastIndex = start;
+  const match = LATEX_TOKEN_RE.exec(text);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    kind: "latex" as const,
+    start: match.index,
+    end: match.index + match[0].length,
+    latex: decodeBase64(match[1]),
+  };
+}
+
+/**
+ * LaTeX as the publisher wrote it, read for the mode it asks to be set in.
+ */
+function texFromSource(latex: string) {
+  const source = latex.trim();
+  if (!source) {
+    return null;
+  }
+
+  const delimited = texSegmentAt(source, 0);
+  if (delimited && delimited.end === source.length) {
+    return { text: delimited.text, display: delimited.display };
+  }
+
+  // Nothing delimits it, so nothing states the mode. A named environment is
+  // displayed mathematics; anything else is a fragment sitting in a line of
+  // prose, and setting it on its own line would break the sentence in half.
+  return { text: source, display: LATEX_ENVIRONMENT_RE.test(source) };
 }
 
 function findNextTexSegment(text: string, start: number) {

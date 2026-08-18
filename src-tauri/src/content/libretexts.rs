@@ -1,16 +1,10 @@
 use std::collections::HashSet;
-use std::io::{Read, Write};
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::Utc;
-use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use regex::Regex;
-use reqwest::StatusCode;
 use reqwest::Url;
-use rusqlite::{params, OptionalExtension};
 use scraper::{ElementRef, Html, Selector};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -19,19 +13,30 @@ use serde_json::json;
 use crate::content::document::{DocumentBuilder, SectionBuilder};
 use crate::content::html_section::{self, normalize_text, SectionSource};
 use crate::content::images::{download_images, source_images_from_html, SourceImage};
+use crate::content::remote;
 use crate::db::connection::DbPool;
 use crate::db::models::{LibreTextsBook, LibreTextsLibrary, SourceType};
 use crate::error::{AppError, AppResult};
 
 const DEFAULT_COMMONS_BASE_URL: &str = "https://commons.libretexts.org";
-const MAX_RETRIES: usize = 3;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const USER_AGENT: &str = "libretexts-reader-libretexts-importer";
+
+/// This Source's name in the shared page cache.
+const SOURCE: &str = "libretexts";
+
+/// LibreTexts fetches its pages one at a time, as it always has. Pressbooks is
+/// what the shared fetcher's concurrency exists for; raising this would change
+/// how hard an Import leans on commons.libretexts.org, which is a decision
+/// about someone else's servers rather than a refactor.
+const PAGE_CONCURRENCY: usize = 1;
 
 static BOOK_ID_RE: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct LibreTextsClient {
-    http: reqwest::Client,
-    db: DbPool,
+    fetcher: remote::Fetcher,
+    cache: remote::PageCache,
     commons_base_url: String,
 }
 
@@ -202,12 +207,23 @@ impl LibreTextsClient {
 
     pub fn with_commons_base_url(db: DbPool, commons_base_url: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(20))
-                .build()
-                .expect("valid LibreTexts HTTP client"),
-            db,
+            fetcher: remote::Fetcher::new(REQUEST_TIMEOUT),
+            cache: remote::PageCache::new(db, SOURCE),
             commons_base_url: commons_base_url.into().trim_end_matches('/').to_string(),
+        }
+    }
+
+    /// Name a shared-machinery failure as this Source's own error.
+    ///
+    /// The strings are the ones the retry loops produced before extraction, and
+    /// `should_fallback_to_public_html` still reads the HTTP 401/403 text out of
+    /// them, so this is the one place that wording is allowed to move.
+    fn source_error(error: remote::FetchError) -> AppError {
+        match error {
+            remote::FetchError::Status { url, status } => {
+                AppError::LibreTexts(format!("request to {url} failed with HTTP {status}"))
+            }
+            remote::FetchError::Transport(error) => AppError::Http(error),
         }
     }
 
@@ -496,17 +512,25 @@ impl LibreTextsClient {
     {
         let total = toc.chapter_count.max(1);
         let mut current_chapter = 0;
-        let mut pages = Vec::with_capacity(toc.pages.len());
 
-        for entry in &toc.pages {
-            if entry.chapter_number != current_chapter {
-                current_chapter = entry.chapter_number;
-                on_progress(current_chapter, total);
-            }
-            pages.push(self.fetch_page(&toc.book_id, &toc.library, entry).await?);
-        }
-
-        Ok(pages)
+        remote::fetch_all(
+            &toc.pages,
+            PAGE_CONCURRENCY,
+            |index| {
+                // Reported when a chapter starts, not when a page finishes --
+                // the reader is watching chapters go by, and there are more
+                // pages than chapters.
+                let chapter_number = toc.pages[index].chapter_number;
+                if chapter_number != current_chapter {
+                    current_chapter = chapter_number;
+                    on_progress(current_chapter, total);
+                }
+            },
+            |entry: LibreTextsTocEntry| async move {
+                self.fetch_page(&toc.book_id, &toc.library, &entry).await
+            },
+        )
+        .await
     }
 
     async fn fetch_json<T: DeserializeOwned>(
@@ -514,103 +538,31 @@ impl LibreTextsClient {
         url: &str,
         params: &[(&str, String)],
     ) -> AppResult<T> {
-        let mut last_error = None;
-
-        for attempt in 0..MAX_RETRIES {
-            let request = self
-                .http
-                .get(url)
-                .query(params)
-                .header("user-agent", "libretexts-reader-libretexts-importer");
-
-            match request.send().await {
-                Ok(response) if response.status().is_success() => {
-                    return Ok(response.json::<T>().await?);
-                }
-                Ok(response) => {
-                    let status = response.status();
-                    if !should_retry_status(status) || attempt + 1 == MAX_RETRIES {
-                        return Err(AppError::LibreTexts(format!(
-                            "request to {url} failed with HTTP {status}"
-                        )));
-                    }
-                    last_error = Some(format!("HTTP {status}"));
-                }
-                Err(error) => {
-                    if attempt + 1 == MAX_RETRIES {
-                        return Err(AppError::Http(error));
-                    }
-                    last_error = Some(error.to_string());
-                }
-            }
-
-            tokio::time::sleep(Duration::from_millis(500 * 2_u64.pow(attempt as u32))).await;
-        }
-
-        Err(AppError::LibreTexts(format!(
-            "request to {url} failed: {}",
-            last_error.unwrap_or_else(|| "unknown error".to_string())
-        )))
+        let request = remote::Request::get(url)
+            .query(params)
+            .header("user-agent", USER_AGENT);
+        let response = self
+            .fetcher
+            .send(&request)
+            .await
+            .map_err(Self::source_error)?;
+        Ok(response.json::<T>().await?)
     }
 
     async fn fetch_html(&self, url: &str) -> AppResult<String> {
-        let mut last_error = None;
-
-        for attempt in 0..MAX_RETRIES {
-            let request = self
-                .http
-                .get(url)
-                .header("user-agent", "libretexts-reader-libretexts-importer")
-                .header("accept", "text/html,application/xhtml+xml");
-
-            match request.send().await {
-                Ok(response) if response.status().is_success() => {
-                    return Ok(response.text().await?);
-                }
-                Ok(response) => {
-                    let status = response.status();
-                    if !should_retry_status(status) || attempt + 1 == MAX_RETRIES {
-                        return Err(AppError::LibreTexts(format!(
-                            "request to {url} failed with HTTP {status}"
-                        )));
-                    }
-                    last_error = Some(format!("HTTP {status}"));
-                }
-                Err(error) => {
-                    if attempt + 1 == MAX_RETRIES {
-                        return Err(AppError::Http(error));
-                    }
-                    last_error = Some(error.to_string());
-                }
-            }
-
-            tokio::time::sleep(Duration::from_millis(500 * 2_u64.pow(attempt as u32))).await;
-        }
-
-        Err(AppError::LibreTexts(format!(
-            "request to {url} failed: {}",
-            last_error.unwrap_or_else(|| "unknown error".to_string())
-        )))
+        let request = remote::Request::get(url)
+            .header("user-agent", USER_AGENT)
+            .header("accept", "text/html,application/xhtml+xml");
+        let response = self
+            .fetcher
+            .send(&request)
+            .await
+            .map_err(Self::source_error)?;
+        Ok(response.text().await?)
     }
 
     fn cached_page(&self, cache_key: &str) -> AppResult<Option<LibreTextsPageContent>> {
-        let conn = self.db.get()?;
-        let content_gzip = conn
-            .query_row(
-                "SELECT content_gzip FROM libretexts_cache WHERE cache_key = ?1",
-                params![cache_key],
-                |row| row.get::<_, Vec<u8>>(0),
-            )
-            .optional()?;
-
-        let Some(content_gzip) = content_gzip else {
-            return Ok(None);
-        };
-
-        let mut decoder = GzDecoder::new(content_gzip.as_slice());
-        let mut json = String::new();
-        decoder.read_to_string(&mut json)?;
-        Ok(Some(serde_json::from_str(&json)?))
+        self.cache.read(cache_key)
     }
 
     fn store_page(
@@ -619,29 +571,13 @@ impl LibreTextsClient {
         page: &LibreTextsPageContent,
         cache_key: &str,
     ) -> AppResult<()> {
-        let json = serde_json::to_vec(page)?;
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&json)?;
-        let content_gzip = encoder.finish()?;
-        let fetched_at = Utc::now().to_rfc3339();
-        let conn = self.db.get()?;
-
-        conn.execute(
-            "INSERT OR REPLACE INTO libretexts_cache (
-                cache_key, book_id, page_id, content_gzip, content_revision, fetched_at
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                cache_key,
-                book_id,
-                page.page_id,
-                content_gzip,
-                page.revision,
-                fetched_at
-            ],
-        )?;
-
-        Ok(())
+        self.cache.write(
+            cache_key,
+            book_id,
+            &page.page_id,
+            page.revision.as_deref(),
+            page,
+        )
     }
 }
 
@@ -820,10 +756,6 @@ fn page_base_url(library: &str, entry: &LibreTextsTocEntry) -> String {
     })
 }
 
-fn should_retry_status(status: StatusCode) -> bool {
-    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
-}
-
 fn should_fallback_to_public_html(error: &AppError) -> bool {
     match error {
         AppError::LibreTexts(message) => {
@@ -972,7 +904,7 @@ async fn sections_from_pages(
             }
             None => (paragraphs_from_html(&page.html), Vec::new()),
         };
-        let images = download_images(&client.http, image_candidates).await?;
+        let images = download_images(client.fetcher.http(), image_candidates).await?;
         if paragraphs.is_empty() && images.is_empty() {
             continue;
         }
@@ -1093,8 +1025,206 @@ fn license_label(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::db::{connection, library};
+    use super::{LibreTextsClient, LibreTextsTocEntry};
+    use crate::db::connection::{self, temporary_pool};
+    use crate::db::library;
+    use crate::error::AppError;
+
+    /// A LibreTexts public page, reduced to the parts the importer reads.
+    const PUBLIC_PAGE_HTML: &str = r#"
+        <html>
+            <body>
+                <span id="pageIDHolder">4211</span>
+                <h1 id="title">Cell Structure</h1>
+                <span id="modifiedHolder">2026-01-17</span>
+                <section class="mt-content-container">
+                    <p>Cells store information in DNA.</p>
+                </section>
+            </body>
+        </html>
+    "#;
+
+    /// One book, in the shape the Commons search endpoint returns.
+    const SEARCH_RESPONSE_JSON: &str = r#"{
+        "results": [
+            {
+                "bookID": "bio-15711",
+                "title": "Cell Biology",
+                "library": "bio",
+                "author": "A. Author"
+            }
+        ]
+    }"#;
+
+    fn public_entry(server: &MockServer, page_id: &str) -> LibreTextsTocEntry {
+        LibreTextsTocEntry {
+            page_id: page_id.to_string(),
+            title: "Table-of-contents title".to_string(),
+            url: Some(format!("{}/chapter/{page_id}", server.uri())),
+            chapter_number: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cached_page_survives_a_store_and_read_round_trip() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/chapter/4211"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(PUBLIC_PAGE_HTML))
+            .mount(&server)
+            .await;
+
+        let client = LibreTextsClient::with_commons_base_url(pool, server.uri());
+        let entry = public_entry(&server, "4211");
+
+        let fetched = client
+            .fetch_page("bio-15711", "bio", &entry)
+            .await
+            .expect("first read should fetch the page");
+        let cached = client
+            .fetch_page("bio-15711", "bio", &entry)
+            .await
+            .expect("second read should come back from the cache");
+
+        // A cache hit, and only that. `content_revision` and `fetched_at` are
+        // written by `store_page` and read by nothing, so a stored page is
+        // returned forever with no revalidation and no TTL. This assertion
+        // pins the hit; it is not a statement that never revalidating is
+        // right.
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            1,
+            "the second read should not reach the network"
+        );
+        assert_eq!(cached.page_id, fetched.page_id);
+        assert_eq!(cached.title, fetched.title);
+        assert_eq!(cached.html, fetched.html);
+        assert_eq!(cached.revision, fetched.revision);
+        assert_eq!(cached.title, "Cell Structure");
+        assert_eq!(cached.revision.as_deref(), Some("2026-01-17"));
+        assert!(
+            cached.html.contains("Cells store information in DNA."),
+            "cached content should survive the gzip round trip intact, got: {}",
+            cached.html
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retryable_failure_followed_by_a_success_returns_the_successful_body() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/search/books-v2"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/search/books-v2"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(SEARCH_RESPONSE_JSON))
+            .mount(&server)
+            .await;
+
+        let client = LibreTextsClient::with_commons_base_url(pool, server.uri());
+        let books = client
+            .search_books(Some("cell"), None)
+            .await
+            .expect("a retried request should return the successful body");
+
+        // Ordering, not duration: the failure was answered before the success,
+        // and the two attempts were separate requests. Asserting how long the
+        // backoff slept would be asserting the clock, not the behaviour.
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            2,
+            "the client should have retried the failure exactly once"
+        );
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].book_id, "bio-15711");
+        assert_eq!(books[0].title, "Cell Biology");
+        assert_eq!(books[0].library, "bio");
+    }
+
+    #[tokio::test]
+    async fn exhausting_the_retry_limit_returns_the_source_error_with_the_failing_status() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/commons/libraries"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let client = LibreTextsClient::with_commons_base_url(pool, server.uri());
+        let error = client
+            .list_libraries()
+            .await
+            .expect_err("a request that never succeeds should fail");
+
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            3,
+            "the client should stop after three attempts"
+        );
+        match error {
+            AppError::LibreTexts(message) => assert!(
+                message.contains("HTTP 503"),
+                "the failure should carry the status it gave up on, got: {message}"
+            ),
+            other => panic!("expected the LibreTexts error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_non_retryable_status_fails_on_the_first_attempt() {
+        let (_dir, pool) = temporary_pool();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/commons/book/bio-15711"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = LibreTextsClient::with_commons_base_url(pool, server.uri());
+        let error = client
+            .fetch_book_detail("bio-15711")
+            .await
+            .expect_err("a missing book should fail");
+
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .expect("mock server should record requests")
+                .len(),
+            1,
+            "a status that cannot be retried should not be retried"
+        );
+        match error {
+            AppError::LibreTexts(message) => assert!(
+                message.contains("HTTP 404"),
+                "the failure should carry the status it stopped on, got: {message}"
+            ),
+            other => panic!("expected the LibreTexts error, got: {other:?}"),
+        }
+    }
 
     #[test]
     fn paragraphs_ignore_libretexts_navigation_listings() {

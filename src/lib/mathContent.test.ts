@@ -6,6 +6,11 @@ function mathmlToken(markup: string) {
   return `[[mathml:${btoa(markup)}]]`;
 }
 
+/** LaTeX as the import pipeline encodes it, recovered from a Pressbooks equation. */
+function latexToken(latex: string) {
+  return `[[latex:${btoa(latex)}]]`;
+}
+
 describe("sanitizeMathml", () => {
   it("keeps legitimate MathML intact", () => {
     const sanitized = sanitizeMathml("<math><mrow><mi>x</mi><mo>=</mo><mn>2</mn></mrow></math>");
@@ -84,6 +89,59 @@ describe("parseMathContent", () => {
 
     const display = parseMathContent("Result: \\[E = mc^2\\]");
     expect(display.some((segment) => segment.kind === "tex")).toBe(true);
+  });
+
+  it("renders a latex token as typeset mathematics, in display mode when the publisher wrote it that way", () => {
+    const display = parseMathContent(`Result: ${latexToken("\\[ E = mc^2 \\]")}`);
+
+    expect(display.map((segment) => segment.kind)).toEqual(["text", "tex"]);
+    expect(display[1]).toMatchObject({ text: "E = mc^2", display: true });
+  });
+
+  it("keeps an inline equation inline, and in its sentence", () => {
+    const segments = parseMathContent(
+      `The ratio is ${latexToken("\\(\\Theta=2\\)")} exactly.`,
+    );
+
+    expect(segments.map((segment) => segment.kind)).toEqual(["text", "tex", "text"]);
+    expect(segments[1]).toMatchObject({ text: "\\Theta=2", display: false });
+  });
+
+  it("reads an environment the publisher named as display mathematics", () => {
+    // A QuickLaTeX alt just as often names its environment as delimits it, and
+    // KaTeX renders the environment itself.
+    const segments = parseMathContent(
+      latexToken("\\begin{equation*} x=1 \\end{equation*}"),
+    );
+
+    expect(segments[0]).toMatchObject({
+      kind: "tex",
+      text: "\\begin{equation*} x=1 \\end{equation*}",
+      display: true,
+    });
+  });
+
+  it("renders bare notation, which carries no delimiters at all", () => {
+    const segments = parseMathContent(latexToken("x^2"));
+
+    expect(segments[0]).toMatchObject({ kind: "tex", text: "x^2", display: false });
+  });
+
+  it("never lets an undecodable token reach the reader as its own markup", () => {
+    const segments = parseMathContent("Given [[latex:A]].");
+
+    expect(segments.every((segment) => segment.kind === "text")).toBe(true);
+    expect(segments.map((segment) => "text" in segment && segment.text).join("")).toBe(
+      "Given equation.",
+    );
+  });
+
+  it("keeps a mathml token and a latex token apart in one paragraph", () => {
+    const segments = parseMathContent(
+      `${mathmlToken("<math><mi>x</mi></math>")} then ${latexToken("\\(y\\)")}`,
+    );
+
+    expect(segments.map((segment) => segment.kind)).toEqual(["mathml", "text", "tex"]);
   });
 
   it("leaves a lone dollar sign alone", () => {

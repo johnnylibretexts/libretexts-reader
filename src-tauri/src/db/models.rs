@@ -23,6 +23,7 @@ pub struct Document {
 pub enum SourceType {
     Openstax,
     Libretexts,
+    Pressbooks,
     Epub,
     Pdf,
     Pasted,
@@ -112,6 +113,69 @@ pub struct LibreTextsBook {
     pub last_updated: Option<String>,
     pub location: String,
     pub program: String,
+}
+
+/// One Pressbooks Catalog the application offers.
+///
+/// Pressbooks calls these "networks" and the picker uses that word, because it
+/// is the publisher's own. The type is not named after it: the domain term for
+/// what this is remains Catalog -- see `CONTEXT.md`.
+///
+/// `book_count` is what was observed when the bundled list was probed. It
+/// conveys scale in the picker; the live count comes from the Catalog itself at
+/// browse time.
+///
+/// `is_default` marks the one Catalog the browser opens on. It is carried on
+/// the payload rather than left to the browser to infer from position, because
+/// opening a Catalog crawls it: reading the default off the list's order makes
+/// reordering that list silently cost a reader three hundred requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PressbooksCatalog {
+    pub host: String,
+    pub name: String,
+    pub book_count: u32,
+    /// Set by `content::pressbooks::catalogs`, not by the bundled resource --
+    /// `DEFAULT_NETWORK_HOST` is the single place the default is named.
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+/// A Catalog as the browser shows it: the books it holds locally, and how that
+/// compares with the Catalog itself.
+///
+/// The counts are not decoration. The largest bundled Catalog is three hundred
+/// requests, so an interruption is normal rather than exceptional, and a
+/// partial Catalog that reported only its books would be indistinguishable from
+/// a small complete one -- the reader would take a fifth of eCampusOntario for
+/// all of it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PressbooksCatalogListing {
+    pub books: Vec<PressbooksBook>,
+    /// What the Catalog says it holds, from its own count header -- not
+    /// `books.len()`, which is what arrived.
+    pub total_books: u32,
+    pub is_complete: bool,
+}
+
+/// One book in a Pressbooks Catalog, as the browser shows it.
+///
+/// `book_url` is the book's canonical URL. It is the identity everywhere: the
+/// row key, the value `source_metadata` carries on an imported Document, and
+/// what the browser matches on to tell an already-imported book from a new one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PressbooksBook {
+    pub book_url: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub cover_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub authors: String,
+    pub license_name: String,
+    pub license_url: Option<String>,
+    pub word_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

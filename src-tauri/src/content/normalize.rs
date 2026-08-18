@@ -6,7 +6,10 @@ use regex::{Captures, Regex};
 static URL_RE: OnceLock<Regex> = OnceLock::new();
 static EMAIL_RE: OnceLock<Regex> = OnceLock::new();
 static MATHML_TOKEN_RE: OnceLock<Regex> = OnceLock::new();
+static LATEX_TOKEN_RE: OnceLock<Regex> = OnceLock::new();
 static MATHML_RE: OnceLock<Regex> = OnceLock::new();
+static LATEX_DELIMITER_RE: OnceLock<Regex> = OnceLock::new();
+static LATEX_ENVIRONMENT_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_MATH_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_FRAC_RE: OnceLock<Regex> = OnceLock::new();
 static LATEX_SQRT_RE: OnceLock<Regex> = OnceLock::new();
@@ -34,8 +37,18 @@ pub fn normalize_for_tts(text: &str) -> String {
     normalized = replace_common_abbreviations(&normalized);
     normalized = mathml_token_re()
         .replace_all(&normalized, |captures: &Captures<'_>| {
-            decode_mathml_token(&captures[1])
+            decode_math_token(&captures[1])
                 .map(|markup| mathml_markup_to_speech(&markup))
+                .unwrap_or_else(|| "equation".to_string())
+        })
+        .into_owned();
+    normalized = latex_token_re()
+        .replace_all(&normalized, |captures: &Captures<'_>| {
+            decode_math_token(&captures[1])
+                .map(|latex| with_math_pauses(&latex_to_speech(&latex_body(&latex))))
+                .filter(|spoken| !spoken.is_empty())
+                // An equation is the one place a technical book most needs
+                // speech, so notation that says nothing still says something.
                 .unwrap_or_else(|| "equation".to_string())
         })
         .into_owned();
@@ -79,11 +92,35 @@ pub fn normalize_for_tts(text: &str) -> String {
     cleanup_speech_punctuation(&collapse_repeated_punctuation(&normalized))
 }
 
-fn decode_mathml_token(value: &str) -> Option<String> {
+fn decode_math_token(value: &str) -> Option<String> {
     BASE64_STANDARD
         .decode(value.as_bytes())
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
+}
+
+/// The notation inside whatever the publisher wrapped it in. Delimiters and
+/// environment names announce that mathematics follows; they are not themselves
+/// spoken, and read aloud they arrive as "open bracket" or "begin equation".
+///
+/// Every occurrence goes, not just an outer pair: one `alt` can carry more than
+/// one equation, and the delimiters between them are as unspeakable as the ones
+/// around them. Stripping them anywhere is safe because `\\(` and `\\[` open
+/// mathematics and are meaningless inside it.
+fn latex_body(latex: &str) -> String {
+    let stripped = latex_delimiter_re().replace_all(latex.trim(), |captures: &Captures<'_>| {
+        // An escaped dollar is a dollar sign the author wrote, not a delimiter.
+        if &captures[0] == r"\$" {
+            r"\$"
+        } else {
+            " "
+        }
+    });
+
+    latex_environment_re()
+        .replace_all(&stripped, " ")
+        .trim()
+        .to_string()
 }
 
 fn mathml_markup_to_speech(markup: &str) -> String {
@@ -559,6 +596,23 @@ fn mathml_token_re() -> &'static Regex {
     })
 }
 
+fn latex_token_re() -> &'static Regex {
+    LATEX_TOKEN_RE.get_or_init(|| {
+        Regex::new(r"\[\[latex:([A-Za-z0-9+/=]+)\]\]").expect("valid LaTeX token regex")
+    })
+}
+
+fn latex_delimiter_re() -> &'static Regex {
+    LATEX_DELIMITER_RE
+        .get_or_init(|| Regex::new(r"\\\$|\\[\[\]()]|\$\$?").expect("valid delimiter regex"))
+}
+
+fn latex_environment_re() -> &'static Regex {
+    LATEX_ENVIRONMENT_RE.get_or_init(|| {
+        Regex::new(r"\\(?:begin|end)\s*\{[^{}]*\}").expect("valid environment regex")
+    })
+}
+
 fn mathml_re() -> &'static Regex {
     MATHML_RE
         .get_or_init(|| Regex::new(r"(?is)<math\b[^>]*>.*?</math>").expect("valid MathML regex"))
@@ -670,6 +724,73 @@ mod tests {
 
         assert!(normalized.contains("Given, x, equals, two"), "{normalized}");
         assert!(!normalized.contains("[[mathml:"), "{normalized}");
+    }
+
+    #[test]
+    fn speaks_a_latex_token_recovered_from_a_pressbooks_equation() {
+        // `\[ \Theta=\Theta_g \]`, as the Pressbooks importer encodes it.
+        let text = "Given [[latex:XFsgXFRoZXRhPVxUaGV0YV9nIFxd]].";
+
+        let normalized = normalize_for_tts(text);
+
+        assert!(normalized.contains("capital theta"), "{normalized}");
+        assert!(normalized.contains("equals"), "{normalized}");
+        assert!(!normalized.contains("[[latex:"), "{normalized}");
+        // The publisher's own delimiters say "this is mathematics". They are
+        // not themselves spoken.
+        assert!(!normalized.contains("bracket"), "{normalized}");
+    }
+
+    #[test]
+    fn speaks_a_latex_token_that_names_its_environment_rather_than_delimiting_it() {
+        // `\begin{equation*} x=1 \end{equation*}` — an equally common shape in
+        // a QuickLaTeX alt, and one with no delimiters to strip.
+        let normalized = normalize_for_tts(
+            "Given [[latex:XGJlZ2lue2VxdWF0aW9uKn0geD0xIFxlbmR7ZXF1YXRpb24qfQ==]].",
+        );
+
+        assert!(normalized.contains("x, equals, one"), "{normalized}");
+        assert!(!normalized.contains("begin"), "{normalized}");
+        assert!(!normalized.contains("equation"), "{normalized}");
+    }
+
+    #[test]
+    fn speaks_a_latex_token_carrying_bare_notation() {
+        // `x^2` with nothing around it at all.
+        let normalized = normalize_for_tts("Given [[latex:eF4y]].");
+
+        assert!(normalized.contains("x squared"), "{normalized}");
+    }
+
+    #[test]
+    fn speaks_every_equation_in_an_alt_that_carries_more_than_one() {
+        // `\(a\) and \(b\)`. Stripping only an outer pair leaves the
+        // delimiters between the two equations to be read aloud.
+        let normalized = normalize_for_tts("Given [[latex:XChhXCkgYW5kIFwoYlwp]].");
+
+        assert!(normalized.contains("a and b"), "{normalized}");
+        assert!(!normalized.contains("parenthesis"), "{normalized}");
+        assert!(!normalized.contains('\\'), "{normalized}");
+    }
+
+    #[test]
+    fn an_undecodable_latex_token_is_spoken_rather_than_read_out_raw() {
+        // A payload in the token alphabet that is not decodable notation — a
+        // truncated one. It must not fall silent and must not reach the
+        // listener as its own markup.
+        let normalized = normalize_for_tts("Given [[latex:A]].");
+
+        assert!(normalized.contains("equation"), "{normalized}");
+        assert!(!normalized.contains("[[latex:"), "{normalized}");
+    }
+
+    #[test]
+    fn a_latex_token_never_leaves_the_listener_in_silence() {
+        // The point of the whole path: an equation is the one place a technical
+        // book most needs speech, so an empty rendering falls back to a word.
+        let normalized = normalize_for_tts("Given [[latex:IA==]].");
+
+        assert!(normalized.contains("equation"), "{normalized}");
     }
 
     #[test]

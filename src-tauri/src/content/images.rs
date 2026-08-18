@@ -72,6 +72,15 @@ pub async fn download_images(
     http: &Client,
     candidates: Vec<SourceImage>,
 ) -> AppResult<Vec<ImageBuilder>> {
+    // Resolve nothing when there is nothing to download. `paths::images_dir`
+    // calls `create_dir_all`, so asking for it materialises the real app-data
+    // tree -- which a Source importing a book with no figures should not do,
+    // and which makes any test of such an Import indistinguishable from real
+    // usage on disk.
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let images_dir = paths::images_dir()?;
     let mut seen = HashSet::new();
     let mut images = Vec::new();
@@ -86,6 +95,46 @@ pub async fn download_images(
     }
 
     Ok(images)
+}
+
+/// Download a book's cover into `covers_dir`, returning where it was stored.
+///
+/// The same download as a Figure's -- same size cap, same content-type and
+/// extension rules, same client -- because a cover is one more image from the
+/// same host, and a second request path would be a second place for those
+/// rules to drift. What differs is only where it lands and that it carries no
+/// caption or anchor.
+///
+/// `covers_dir` is passed in rather than resolved here: `paths::covers_dir`
+/// creates every directory it resolves, so resolving it inside this function
+/// would make a test of a cover indistinguishable from real usage on disk.
+///
+/// `url` is resolved against `book_url` first, the same way a Figure's `src`
+/// is resolved against the page it sits on. WordPress emits root-relative and
+/// protocol-relative image URLs, and a bare `Url::parse` of one fails -- which
+/// would arrive as a book that simply has no cover.
+///
+/// `None` means no cover, never a failed Import. A book is readable without
+/// its cover, so nothing here is worth failing an Import over.
+pub async fn download_cover(
+    http: &Client,
+    covers_dir: &Path,
+    book_url: &str,
+    url: &str,
+) -> Option<String> {
+    download_image(
+        http,
+        covers_dir,
+        SourceImage {
+            url: resolve_url(book_url, url)?,
+            alt_text: None,
+            caption: None,
+            content_type_hint: None,
+            anchor_paragraph_ordinal: None,
+        },
+    )
+    .await
+    .map(|cover| cover.local_path)
 }
 
 async fn download_image(
@@ -293,7 +342,73 @@ fn extension_from_url(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::source_images_from_html;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::{download_cover, source_images_from_html};
+
+    const COVER_BYTES: &[u8] = b"-- a cover --";
+
+    /// A server answering `/cover.png` with an image.
+    async fn server_with_cover() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/cover.png"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(COVER_BYTES),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn a_cover_url_relative_to_the_book_is_resolved_before_it_is_fetched() {
+        // WordPress emits root-relative and protocol-relative image URLs, and a
+        // Source hands this whatever its metadata carries. Fetching that
+        // verbatim fails to parse, and a swallowed parse failure looks exactly
+        // like a book that has no cover.
+        let server = server_with_cover().await;
+        let covers = tempfile::tempdir().expect("temporary covers directory");
+        let http = reqwest::Client::new();
+
+        let stored = download_cover(
+            &http,
+            covers.path(),
+            &format!("{}/book/", server.uri()),
+            "/cover.png",
+        )
+        .await
+        .expect("a relative cover should be resolved and fetched");
+
+        assert_eq!(
+            std::fs::read(&stored).expect("the cover should be on disk"),
+            COVER_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn an_absolute_cover_url_is_fetched_as_given() {
+        let server = server_with_cover().await;
+        let covers = tempfile::tempdir().expect("temporary covers directory");
+        let http = reqwest::Client::new();
+
+        let stored = download_cover(
+            &http,
+            covers.path(),
+            &format!("{}/book/", server.uri()),
+            &format!("{}/cover.png", server.uri()),
+        )
+        .await
+        .expect("an absolute cover should be fetched");
+
+        assert_eq!(
+            std::fs::read(&stored).expect("the cover should be on disk"),
+            COVER_BYTES
+        );
+    }
 
     #[test]
     fn extracts_openstax_style_images_with_captions() {

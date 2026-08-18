@@ -7,8 +7,8 @@ LibreTexts Reader turns written works — textbooks, EPUBs, PDFs, articles, past
 ### Content
 
 **Library**:
-The set of works a reader has imported onto their machine.
-_Avoid_: collection, shelf, bookshelf
+The set of works a reader has imported onto their machine. There is exactly one, and it is the reader's.
+_Avoid_: collection, shelf, bookshelf; never a LibreTexts subdomain or a Pressbooks network — those are Catalogs
 
 **Document**:
 A single imported work, whatever it was imported from.
@@ -42,8 +42,12 @@ _Avoid_: image, illustration, asset
 Turning a source into a Document. Preserves reading order and figures; it is not a reproduction of the source's layout.
 _Avoid_: ingest, parse, scrape
 
+**Source**:
+Where a work comes from — OpenStax, LibreTexts, Pressbooks, or a file or URL the reader supplies.
+_Avoid_: provider, publisher, origin, vendor
+
 **Catalog**:
-The browsable index of works available from a source, before any of them are imported.
+A browsable index of works offered by a Source, before any of them are imported. One Source may offer many; what a Source calls its own catalogs — LibreTexts libraries, Pressbooks networks — is its word, shown to the reader as-is.
 _Avoid_: index, listing, store
 
 ### Speech

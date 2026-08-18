@@ -3,8 +3,12 @@ use tauri::{AppHandle, Emitter, Runtime, State, Window};
 
 use crate::content;
 use crate::db::connection::DbPool;
-use crate::db::models::{LibreTextsBook, LibreTextsLibrary, OpenStaxBook};
+use crate::db::models::{
+    LibreTextsBook, LibreTextsLibrary, OpenStaxBook, PressbooksBook, PressbooksCatalog,
+    PressbooksCatalogListing,
+};
 use crate::error::AppResult;
+use crate::paths;
 
 #[tauri::command]
 pub async fn import_openstax<R: Runtime>(
@@ -68,6 +72,54 @@ pub async fn import_libretexts<R: Runtime>(
     })
     .await?;
 
+    let mut conn = state.get()?;
+    let document_id = document.persist(&mut conn)?;
+    window.emit("library-changed", json!({}))?;
+    window.emit(
+        "import-progress",
+        json!({
+            "documentId": document_id,
+            "stage": "complete",
+            "current": 1,
+            "total": 1,
+            "message": null
+        }),
+    )?;
+    Ok(document_id)
+}
+
+#[tauri::command]
+pub async fn import_pressbooks<R: Runtime>(
+    state: State<'_, DbPool>,
+    window: Window<R>,
+    book_url: String,
+) -> AppResult<String> {
+    content::pressbooks::verify_offered_book_url(&book_url)?;
+
+    let pool = state.inner().clone();
+    let progress_window = window.clone();
+    let progress_book_url = book_url.clone();
+    // The one place the real covers directory is named. `paths::covers_dir`
+    // creates it, which is why `import_book` takes it rather than resolving it.
+    let covers_dir = paths::covers_dir()?;
+    let document =
+        content::pressbooks::import_book(pool, &book_url, &covers_dir, move |current, total| {
+            let _ = progress_window.emit(
+                "import-progress",
+                json!({
+                    "documentId": progress_book_url,
+                    "stage": "fetching",
+                    "current": current,
+                    "total": total,
+                    "message": null
+                }),
+            );
+        })
+        .await?;
+
+    // Persisted only after the whole book has been assembled. A failure above
+    // returns before this line, so the Library is never left holding half a
+    // Document.
     let mut conn = state.get()?;
     let document_id = document.persist(&mut conn)?;
     window.emit("library-changed", json!({}))?;
@@ -156,4 +208,49 @@ pub async fn list_libretexts_libraries(
     state: State<'_, DbPool>,
 ) -> AppResult<Vec<LibreTextsLibrary>> {
     content::libretexts::list_libraries(state.inner().clone()).await
+}
+
+/// The Catalogs the picker offers. Bundled, so this needs no network.
+#[tauri::command]
+pub async fn list_pressbooks_catalogs(
+    _state: State<'_, DbPool>,
+) -> AppResult<Vec<PressbooksCatalog>> {
+    content::pressbooks::catalogs()
+}
+
+/// List a Catalog, reporting crawl progress as `catalog-progress`.
+///
+/// Its own event rather than `import-progress`: a Catalog crawl and an Import
+/// can run at the same time, and they mean different things to a reader --
+/// folding them into one event would have a Catalog's pages overwrite a book's
+/// sections in the same indicator.
+#[tauri::command]
+pub async fn list_pressbooks_books<R: Runtime>(
+    state: State<'_, DbPool>,
+    window: Window<R>,
+    host: String,
+) -> AppResult<PressbooksCatalogListing> {
+    let progress_host = host.clone();
+    content::pressbooks::list_books(state.inner().clone(), &host, move |current, total| {
+        let _ = window.emit(
+            "catalog-progress",
+            json!({
+                "host": progress_host.clone(),
+                "current": current,
+                "total": total,
+            }),
+        );
+    })
+    .await
+}
+
+/// Filter an already-listed Catalog. Local, so it costs no request -- which is
+/// what lets the webview call it on every keystroke.
+#[tauri::command]
+pub async fn search_pressbooks_books(
+    state: State<'_, DbPool>,
+    host: String,
+    query: String,
+) -> AppResult<Vec<PressbooksBook>> {
+    content::pressbooks::search_books(state.inner().clone(), &host, &query)
 }

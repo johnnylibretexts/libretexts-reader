@@ -34,6 +34,11 @@ jobs:
           scripts/ci/check-error-kinds.test.sh
           scripts/ci/check-error-kinds.sh
 
+      - name: Source type sync check
+        run: |
+          scripts/ci/check-source-types.test.sh
+          scripts/ci/check-source-types.sh
+
       - name: Identifier sync check
         run: |
           scripts/ci/check-identifier.test.sh

@@ -17,6 +17,7 @@ import { PdfDialog } from "./Import/PdfDialog";
 import { UrlDialog } from "./Import/UrlDialog";
 import { LibraryGrid } from "./Library/Grid";
 import { LibreTextsBrowser } from "./LibreTextsBrowser/LibreTextsBrowser";
+import { PressbooksBrowser } from "./PressbooksBrowser/PressbooksBrowser";
 import { OpenStaxBrowser } from "./OpenStaxBrowser/OpenStaxBrowser";
 import { Reader } from "./Reader/Reader";
 import { SettingsPanel } from "./Settings/SettingsPanel";
@@ -28,6 +29,7 @@ export type RouteId =
   | "library"
   | "openstax"
   | "libretexts"
+  | "pressbooks"
   | "epub"
   | "pdf"
   | "paste"
@@ -49,6 +51,7 @@ const ROUTES: Record<RouteId, Route> = {
   library: { id: "library", label: "Library" },
   openstax: { id: "openstax", label: "OpenStax" },
   libretexts: { id: "libretexts", label: "LibreTexts" },
+  pressbooks: { id: "pressbooks", label: "Pressbooks" },
   epub: { id: "epub", label: "EPUB Import" },
   pdf: { id: "pdf", label: "PDF Import" },
   paste: { id: "paste", label: "Pasted Text" },
@@ -234,6 +237,10 @@ function RoutePlaceholder({
       {route.id === "openstax" ? (
         <OpenStaxBrowser onOpenDocument={onOpenDocument} />
       ) : null}
+      {route.id === "pressbooks" ? (
+        <PressbooksBrowser onOpenDocument={onOpenDocument} />
+      ) : null}
+
       {route.id === "libretexts" ? (
         <LibreTextsBrowser onOpenDocument={onOpenDocument} />
       ) : null}
@@ -297,6 +304,7 @@ function routeIcon(route: RouteId) {
       return <ListMusic className={className} aria-hidden="true" />;
     case "openstax":
     case "libretexts":
+    case "pressbooks":
       return <BookOpen className={className} aria-hidden="true" />;
     case "epub":
     case "pdf":
@@ -318,6 +326,8 @@ function routeSubtitle(route: RouteId): string {
       return "Catalog view.";
     case "libretexts":
       return "LibreTexts catalog.";
+    case "pressbooks":
+      return "Pressbooks catalog.";
     case "epub":
       return "File import.";
     case "pdf":

@@ -11,6 +11,11 @@
 //! MathML (LibreTexts does) simply have nothing for it to match, and their
 //! notation passes through as text for the reader and the speech pipeline to
 //! handle downstream.
+//!
+//! A source can also recover notation an image carries rather than shows —
+//! Pressbooks renders equations to pictures and keeps the LaTeX in the `alt` —
+//! by answering `math_from_image`. That becomes a `[[latex:…]]` token standing
+//! where the picture stood.
 
 use std::sync::OnceLock;
 
@@ -21,8 +26,10 @@ use scraper::{ElementRef, Html, Selector};
 use crate::content::images::{source_image_from_element, SourceImage};
 
 static MATH_RE: OnceLock<Regex> = OnceLock::new();
+static IMG_RE: OnceLock<Regex> = OnceLock::new();
 static WHITESPACE_RE: OnceLock<Regex> = OnceLock::new();
 static BLOCK_SELECTOR: OnceLock<Selector> = OnceLock::new();
+static IMG_SELECTOR: OnceLock<Selector> = OnceLock::new();
 
 /// What a particular source considers chrome rather than content.
 pub trait SectionSource {
@@ -36,6 +43,16 @@ pub trait SectionSource {
     /// image inside that same figure is exactly what it wants to keep.
     fn should_skip_image(&self, _element: &ElementRef<'_>) -> bool {
         false
+    }
+
+    /// The notation an image carries rather than shows, as LaTeX.
+    ///
+    /// A source that renders equations to pictures answers here with the
+    /// original notation, and it takes the picture's place in the paragraph.
+    /// Such an image should also be skipped as a figure, or the reader gets
+    /// the equation twice — once readable and once as a picture of itself.
+    fn math_from_image(&self, _element: &ElementRef<'_>) -> Option<String> {
+        None
     }
 
     /// Whether an extracted paragraph is worth keeping.
@@ -85,7 +102,7 @@ fn paragraph_from_element(element: &ElementRef<'_>, source: &dyn SectionSource) 
         return None;
     }
 
-    let text = text_with_math_replacements(element);
+    let text = text_with_math_replacements(element, source);
     source.is_readable(&text).then_some(text)
 }
 
@@ -95,19 +112,58 @@ fn anchor_paragraph_ordinal(paragraph_count: usize) -> Option<u32> {
     paragraph_count.checked_sub(1).map(|index| index as u32)
 }
 
-/// Swap `<math>` markup for a token *before* stripping tags, so the notation
-/// survives text extraction instead of collapsing into its own glyphs.
-fn text_with_math_replacements(element: &ElementRef<'_>) -> String {
+/// Swap math markup for a token *before* stripping tags, so the notation
+/// survives text extraction instead of collapsing into its own glyphs — or, for
+/// an image that carries its own source, instead of vanishing entirely.
+fn text_with_math_replacements(element: &ElementRef<'_>, source: &dyn SectionSource) -> String {
     let html = element.html();
     let replaced = math_re().replace_all(&html, |captures: &regex::Captures<'_>| {
         format!(" {} ", mathml_token(&captures[0]))
     });
+    // Asked of the real elements first, which costs nothing to parse. Sources
+    // that recover no math — every source but Pressbooks — stop here, rather
+    // than re-parsing each of a figure-heavy book's images to be told `None`.
+    let replaced = if recovers_math_from_an_image(element, source) {
+        img_re().replace_all(&replaced, |captures: &regex::Captures<'_>| {
+            math_from_image_tag(&captures[0], source).map_or_else(
+                || captures[0].to_string(),
+                |latex| format!(" {} ", latex_token(&latex)),
+            )
+        })
+    } else {
+        replaced
+    };
+
     let fragment = Html::parse_fragment(&replaced);
     normalize_text(&fragment.root_element().text().collect::<Vec<_>>().join(" "))
 }
 
+fn recovers_math_from_an_image(element: &ElementRef<'_>, source: &dyn SectionSource) -> bool {
+    element
+        .select(img_selector())
+        .any(|image| source.math_from_image(&image).is_some())
+}
+
+/// Re-parse the one tag, so the source is handed an element with its attribute
+/// values already entity-decoded rather than a slice of raw markup.
+///
+/// Matching the tag's text back to the element it came from would save the
+/// parse, but a match the walk does not yield — inside a comment, say — would
+/// shift every later image onto the wrong equation, silently.
+fn math_from_image_tag(tag: &str, source: &dyn SectionSource) -> Option<String> {
+    let fragment = Html::parse_fragment(tag);
+    let image = fragment.select(img_selector()).next()?;
+    source.math_from_image(&image)
+}
+
 fn mathml_token(markup: &str) -> String {
     format!("[[mathml:{}]]", BASE64_STANDARD.encode(markup.as_bytes()))
+}
+
+/// Base64 so the notation cannot be mistaken for prose on its way through the
+/// sentence splitter, the speech normalizer and the reader.
+fn latex_token(latex: &str) -> String {
+    format!("[[latex:{}]]", BASE64_STANDARD.encode(latex.as_bytes()))
 }
 
 /// Collapse runs of whitespace, including the non-breaking spaces textbook HTML
@@ -130,6 +186,18 @@ fn math_re() -> &'static Regex {
     MATH_RE.get_or_init(|| {
         Regex::new(r"(?is)<(?:m:)?math\b.*?</(?:m:)?math>").expect("valid MathML regex")
     })
+}
+
+/// Quote-aware: `>` is legal and unescaped inside an attribute value, and
+/// LaTeX is full of it, so `[^>]*` would cut a tag in half.
+fn img_re() -> &'static Regex {
+    IMG_RE.get_or_init(|| {
+        Regex::new(r#"(?is)<img\b(?:"[^"]*"|'[^']*'|[^>"'])*>"#).expect("valid image tag regex")
+    })
+}
+
+fn img_selector() -> &'static Selector {
+    IMG_SELECTOR.get_or_init(|| Selector::parse("img").expect("valid image selector"))
 }
 
 fn whitespace_re() -> &'static Regex {
@@ -155,6 +223,82 @@ mod tests {
                 .filter_map(ElementRef::wrap)
                 .any(|node| node.value().name() == "aside")
         }
+    }
+
+    struct MathInAlt;
+    impl SectionSource for MathInAlt {
+        fn should_skip_paragraph(&self, _element: &ElementRef<'_>) -> bool {
+            false
+        }
+
+        fn math_from_image(&self, element: &ElementRef<'_>) -> Option<String> {
+            element
+                .value()
+                .attr("alt")
+                .map(str::trim)
+                .filter(|alt| !alt.is_empty())
+                .map(str::to_string)
+        }
+    }
+
+    fn decoded_latex_tokens(text: &str) -> Vec<String> {
+        let token_re = Regex::new(r"\[\[latex:([A-Za-z0-9+/=]+)\]\]").expect("valid token regex");
+        token_re
+            .captures_iter(text)
+            .map(|captures| {
+                String::from_utf8(
+                    BASE64_STANDARD
+                        .decode(captures[1].as_bytes())
+                        .expect("the token payload should be base64"),
+                )
+                .expect("the token payload should be UTF-8")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_source_can_recover_mathematics_an_image_carries() {
+        // Pressbooks renders equations to pictures and keeps the LaTeX in the
+        // alt. Without this the equation leaves no trace in the paragraph.
+        let paragraphs = paragraphs_from_html(
+            r#"<p>The ratio is <img src="eq.png" alt="\(\Theta=2\)" /> exactly.</p>"#,
+            &MathInAlt,
+        );
+
+        assert_eq!(decoded_latex_tokens(&paragraphs[0]), vec![r"\(\Theta=2\)"]);
+        assert!(paragraphs[0].starts_with("The ratio is"), "{paragraphs:?}");
+        assert!(paragraphs[0].ends_with("exactly."), "{paragraphs:?}");
+    }
+
+    #[test]
+    fn an_image_the_source_finds_no_mathematics_in_leaves_the_paragraph_alone() {
+        let paragraphs = paragraphs_from_html(
+            r#"<p>A photograph <img src="soil.jpg" alt="" /> follows.</p>"#,
+            &MathInAlt,
+        );
+
+        assert_eq!(paragraphs, vec!["A photograph follows."]);
+    }
+
+    #[test]
+    fn mathematics_containing_a_greater_than_sign_survives_the_tag_scan() {
+        // `>` is legal, and unescaped, inside an attribute value. A naive
+        // `<img[^>]*>` scan would cut the tag in half and lose the rest.
+        let paragraphs = paragraphs_from_html(
+            r#"<p>Given <img src="eq.png" alt="\(x > 5\)" /> it holds.</p>"#,
+            &MathInAlt,
+        );
+
+        assert_eq!(decoded_latex_tokens(&paragraphs[0]), vec![r"\(x > 5\)"]);
+    }
+
+    #[test]
+    fn a_source_that_recovers_no_mathematics_reads_exactly_as_before() {
+        // The hook is opt-in: sources that do not implement it must see the
+        // same text they saw before it existed.
+        let html = r#"<p>Given <math><mi>x</mi></math> and <img src="a.png" alt="\(y\)" />.</p>"#;
+
+        assert!(!paragraphs_from_html(html, &KeepEverything)[0].contains("[[latex:"));
     }
 
     #[test]
