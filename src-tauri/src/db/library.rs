@@ -129,20 +129,42 @@ pub fn list_section_images(conn: &Connection, section_id: &str) -> AppResult<Vec
 }
 
 pub fn delete_document(conn: &Connection, id: &str) -> AppResult<()> {
-    let cover_image_path = conn
+    let row = conn
         .query_row(
-            "SELECT cover_image_path FROM documents WHERE id = ?1",
+            "SELECT source_type, source_metadata, cover_image_path FROM documents WHERE id = ?1",
             params![id],
-            |row| row.get::<_, Option<String>>(0),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
         )
-        .optional()?
-        .flatten();
+        .optional()?;
     let image_paths = document_image_paths(conn, id)?;
 
     conn.execute("DELETE FROM documents WHERE id = ?1", params![id])?;
 
-    if let Some(path) = cover_image_path {
-        remove_file_if_present(&path)?;
+    if let Some((source_type, source_metadata, cover_image_path)) = row {
+        // The cache outlives an Import by design, but a reader who deletes
+        // the Document has no other way to force a fresh copy on the next
+        // one, so the deletion has to reach it too.
+        if source_type == "libretexts" {
+            if let Some(book_id) = parse_json(&source_metadata)
+                .ok()
+                .and_then(|value| value.get("book_id")?.as_str().map(str::to_string))
+            {
+                conn.execute(
+                    "DELETE FROM source_page_cache WHERE source = 'libretexts' AND book_id = ?1",
+                    params![book_id],
+                )?;
+            }
+        }
+
+        if let Some(path) = cover_image_path {
+            remove_file_if_present(&path)?;
+        }
     }
     for path in image_paths {
         remove_file_if_present(&path)?;
@@ -283,5 +305,50 @@ mod tests {
             assert_eq!(documents.len(), 1);
             assert_eq!(documents[0].source_type, source_type);
         }
+    }
+
+    /// `source_page_cache` outlives an Import by design -- it is what makes a
+    /// second Import of the same book cheap -- but a reader who deletes the
+    /// Document has no other way to force a re-download, so the deletion has
+    /// to reach the cache too.
+    #[test]
+    fn deleting_a_libretexts_document_clears_its_cached_pages() {
+        let (_dir, pool) = temporary_pool();
+        let mut conn = pool.get().expect("a connection should be available");
+
+        let document_id = DocumentBuilder {
+            title: "A Book".to_string(),
+            source_type: SourceType::Libretexts,
+            source_metadata: serde_json::json!({"book_id": "bio-15711"}),
+            cover_image_path: None,
+            license: None,
+            attribution: None,
+            sections: vec![SectionBuilder::text("One", vec!["A sentence.".to_string()])],
+        }
+        .persist(&mut conn)
+        .expect("the document should persist");
+
+        conn.execute(
+            "INSERT INTO source_page_cache
+                (source, cache_key, book_id, page_id, content_gzip, content_revision, fetched_at)
+             VALUES ('libretexts', 'bio-15711:1', 'bio-15711', '1', X'1f8b', NULL, '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("seeding a cache row should succeed");
+
+        super::delete_document(&conn, &document_id).expect("delete should succeed");
+
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM source_page_cache WHERE book_id = 'bio-15711'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the count query should succeed");
+
+        assert_eq!(
+            remaining, 0,
+            "deleting the Document should clear its cached pages"
+        );
     }
 }
