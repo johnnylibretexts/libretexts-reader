@@ -371,6 +371,51 @@ describe("PressbooksBrowser", () => {
       expect(screen.getByText("Openteach")).toBeInTheDocument();
     });
 
+    it("answers a search typed while the first catalog is still loading", async () => {
+      // The cache is empty until the crawl commits, and the reader can type
+      // before then. An empty answer kept from that moment would outlive the
+      // Catalog's arrival.
+      const listed = new Set<string>();
+      let release: (books: Domain.PressbooksBook[]) => void = () => {};
+      listPressbooksBooks.mockImplementation(
+        (host: string) =>
+          new Promise<Domain.PressbooksBook[]>((resolve) => {
+            release = (books) => {
+              listed.add(host);
+              resolve(books);
+            };
+          }),
+      );
+      searchPressbooksBooks.mockImplementation((host: string, query: string) =>
+        Promise.resolve(
+          (listed.has(host) ? [BOOK, OTHER_BOOK] : []).filter((book) =>
+            book.title.toLowerCase().includes(query.trim().toLowerCase()),
+          ),
+        ),
+      );
+
+      render(<PressbooksBrowser onOpenDocument={vi.fn()} />);
+      await waitFor(() =>
+        expect(screen.getByText(/Loading Pressbooks catalog/)).toBeInTheDocument(),
+      );
+      await userEvent.type(searchBox(), "logic");
+      release([BOOK, OTHER_BOOK]);
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("A Concise Introduction to Logic"),
+        ).toBeInTheDocument(),
+      );
+      // The Catalog arriving must not wash the search out: the book that does
+      // not match has to stay gone.
+      expect(screen.queryByText("Openteach")).not.toBeInTheDocument();
+      expect(screen.queryByText(/No books match/i)).not.toBeInTheDocument();
+      // One search, issued after the Catalog was listed. A search sent while
+      // the cache was still empty would answer "nothing" about a Catalog that
+      // had not arrived, and flash that answer when it did.
+      expect(searchPressbooksBooks).toHaveBeenCalledTimes(1);
+    });
+
     it("searches again once a newly chosen catalog has been listed", async () => {
       // The cache a search reads is the one listing the Catalog fills, so a
       // search issued before the listing lands asks an empty cache. Keeping
@@ -391,7 +436,8 @@ describe("PressbooksBrowser", () => {
       searchPressbooksBooks.mockImplementation((host: string, query: string) => {
         const cached = listed.has(host)
           ? host === "oer.pressbooks.pub"
-            ? [OTHER_BOOK]
+            ? // Two books, so a filter that stopped being applied would show.
+              [OTHER_BOOK, BOOK]
             : [BOOK]
           : [];
         return Promise.resolve(
@@ -411,9 +457,12 @@ describe("PressbooksBrowser", () => {
         screen.getByRole("combobox", { name: /network/i }),
         "oer.pressbooks.pub",
       );
-      release([OTHER_BOOK]);
+      release([OTHER_BOOK, BOOK]);
 
       await waitFor(() => expect(screen.getByText("Openteach")).toBeInTheDocument());
+      expect(
+        screen.queryByText("A Concise Introduction to Logic"),
+      ).not.toBeInTheDocument();
     });
 
     it("says a search matched nothing, distinctly from a catalog with no books", async () => {
