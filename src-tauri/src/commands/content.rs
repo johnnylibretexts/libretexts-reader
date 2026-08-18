@@ -3,7 +3,9 @@ use tauri::{AppHandle, Emitter, Runtime, State, Window};
 
 use crate::content;
 use crate::db::connection::DbPool;
-use crate::db::models::{LibreTextsBook, LibreTextsLibrary, OpenStaxBook, PressbooksBook};
+use crate::db::models::{
+    LibreTextsBook, LibreTextsLibrary, OpenStaxBook, PressbooksBook, PressbooksCatalog,
+};
 use crate::error::AppResult;
 
 #[tauri::command]
@@ -200,7 +202,18 @@ pub async fn list_libretexts_libraries(
     content::libretexts::list_libraries(state.inner().clone()).await
 }
 
+/// The Catalogs the picker offers. Bundled, so this needs no network.
 #[tauri::command]
-pub async fn list_pressbooks_catalog(state: State<'_, DbPool>) -> AppResult<Vec<PressbooksBook>> {
-    content::pressbooks::list_catalog(state.inner().clone()).await
+pub async fn list_pressbooks_catalogs(
+    _state: State<'_, DbPool>,
+) -> AppResult<Vec<PressbooksCatalog>> {
+    content::pressbooks::catalogs()
+}
+
+#[tauri::command]
+pub async fn list_pressbooks_books(
+    state: State<'_, DbPool>,
+    host: String,
+) -> AppResult<Vec<PressbooksBook>> {
+    content::pressbooks::list_books(state.inner().clone(), &host).await
 }

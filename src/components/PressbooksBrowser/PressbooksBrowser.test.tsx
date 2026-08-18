@@ -3,14 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Domain from "../../types/domain";
 
-const listPressbooksCatalog = vi.fn();
+const listPressbooksCatalogs = vi.fn();
+const listPressbooksBooks = vi.fn();
 const importPressbooks = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
   isTauriRuntime: () => true,
   api: {
-    get listPressbooksCatalog() {
-      return listPressbooksCatalog;
+    get listPressbooksCatalogs() {
+      return listPressbooksCatalogs;
+    },
+    get listPressbooksBooks() {
+      return listPressbooksBooks;
     },
     get importPressbooks() {
       return importPressbooks;
@@ -21,6 +25,23 @@ vi.mock("../../lib/tauri", () => ({
 const { PressbooksBrowser } = await import("./PressbooksBrowser");
 const { useImportsStore } = await import("../../stores/imports");
 const { useLibraryStore } = await import("../../stores/library");
+
+const CATALOGS: Domain.PressbooksCatalog[] = [
+  { host: "milnepublishing.geneseo.edu", name: "Milne Publishing", bookCount: 90 },
+  { host: "oer.pressbooks.pub", name: "PressbooksOER", bookCount: 43 },
+];
+
+const OTHER_BOOK: Domain.PressbooksBook = {
+  bookUrl: "https://oer.pressbooks.pub/openteach/",
+  title: "Openteach",
+  subtitle: null,
+  coverUrl: null,
+  thumbnailUrl: null,
+  authors: "Orna Farrell",
+  licenseName: "CC BY",
+  licenseUrl: null,
+  wordCount: 25637,
+};
 
 const BOOK: Domain.PressbooksBook = {
   bookUrl: "https://milnepublishing.geneseo.edu/concise-introduction-to-logic/",
@@ -64,7 +85,10 @@ async function renderBrowser(onOpenDocument = vi.fn()) {
 describe("PressbooksBrowser", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    listPressbooksCatalog.mockResolvedValue([BOOK]);
+    listPressbooksCatalogs.mockResolvedValue(CATALOGS);
+    listPressbooksBooks.mockImplementation((host: string) =>
+      Promise.resolve(host === "oer.pressbooks.pub" ? [OTHER_BOOK] : [BOOK]),
+    );
     importPressbooks.mockResolvedValue("doc-1");
     useImportsStore.setState({ active: null, completed: null, error: null });
     useLibraryStore.setState({ documents: [] });
@@ -158,8 +182,91 @@ describe("PressbooksBrowser", () => {
     expect(onOpenDocument).toHaveBeenCalledTimes(1);
   });
 
+  it("offers every bundled catalog in the picker and opens on the first", async () => {
+    await renderBrowser();
+
+    const picker = screen.getByRole("combobox", { name: /network/i });
+    expect(picker).toHaveValue("milnepublishing.geneseo.edu");
+    expect(
+      screen.getByRole("option", { name: /Milne Publishing \(90 books\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /PressbooksOER \(43 books\)/ }),
+    ).toBeInTheDocument();
+    expect(listPressbooksBooks).toHaveBeenCalledWith("milnepublishing.geneseo.edu");
+  });
+
+  it("shows the chosen catalog's books when the reader switches", async () => {
+    await renderBrowser();
+
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /network/i }),
+      "oer.pressbooks.pub",
+    );
+
+    await waitFor(() => expect(screen.getByText("Openteach")).toBeInTheDocument());
+    expect(listPressbooksBooks).toHaveBeenLastCalledWith("oer.pressbooks.pub");
+  });
+
+  it("drops the previous catalog's books as soon as the reader switches", async () => {
+    // Asserted while the new Catalog is still loading. Checking only after it
+    // arrives proves nothing -- the new list replaces the old either way. The
+    // window this covers is the one where a reader would otherwise see one
+    // Catalog's books sitting under another Catalog's name.
+    let release: (books: Domain.PressbooksBook[]) => void = () => {};
+    listPressbooksBooks.mockImplementation((host: string) =>
+      host === "oer.pressbooks.pub"
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve([BOOK]),
+    );
+
+    await renderBrowser();
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /network/i }),
+      "oer.pressbooks.pub",
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("A Concise Introduction to Logic"),
+      ).not.toBeInTheDocument(),
+    );
+
+    release([OTHER_BOOK]);
+    await waitFor(() => expect(screen.getByText("Openteach")).toBeInTheDocument());
+  });
+
+  it("keeps the picker usable when the chosen catalog cannot be reached", async () => {
+    // A Catalog that will not load must not strand the reader on it: the
+    // bundled list needs no network, so switching away stays possible.
+    listPressbooksBooks.mockImplementation((host: string) =>
+      host === "milnepublishing.geneseo.edu"
+        ? Promise.reject({
+            kind: "pressbooks",
+            message: "request to https://milne.test failed with HTTP 503",
+            retryable: true,
+          })
+        : Promise.resolve([OTHER_BOOK]),
+    );
+
+    render(<PressbooksBrowser onOpenDocument={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByText(/failed with HTTP 503/)).toBeInTheDocument(),
+    );
+
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /network/i }),
+      "oer.pressbooks.pub",
+    );
+
+    await waitFor(() => expect(screen.getByText("Openteach")).toBeInTheDocument());
+    expect(screen.queryByText(/failed with HTTP 503/)).not.toBeInTheDocument();
+  });
+
   it("reports a catalog that cannot be reached rather than showing it as empty", async () => {
-    listPressbooksCatalog.mockRejectedValue({
+    listPressbooksBooks.mockRejectedValue({
       kind: "pressbooks",
       message: "request to https://milne.test failed with HTTP 503",
       retryable: true,

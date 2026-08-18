@@ -115,6 +115,23 @@ pub struct LibreTextsBook {
     pub program: String,
 }
 
+/// One Pressbooks Catalog the application offers.
+///
+/// Pressbooks calls these "networks" and the picker uses that word, because it
+/// is the publisher's own. The type is not named after it: the domain term for
+/// what this is remains Catalog -- see `CONTEXT.md`.
+///
+/// `book_count` is what was observed when the bundled list was probed. It
+/// conveys scale in the picker; the live count comes from the Catalog itself at
+/// browse time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PressbooksCatalog {
+    pub host: String,
+    pub name: String,
+    pub book_count: u32,
+}
+
 /// One book in a Pressbooks Catalog, as the browser shows it.
 ///
 /// `book_url` is the book's canonical URL. It is the identity everywhere: the

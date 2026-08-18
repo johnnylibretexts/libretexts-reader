@@ -23,10 +23,11 @@ use crate::content::html_section::{section_content_from_html, SectionSource};
 use crate::content::images::download_images;
 use crate::content::remote;
 use crate::db::connection::DbPool;
-use crate::db::models::{PressbooksBook, SourceType};
+use crate::db::models::{PressbooksBook, PressbooksCatalog, SourceType};
 use crate::error::{AppError, AppResult};
 
-/// The one Catalog this slice browses. A Catalog picker is its own ticket.
+/// The Catalog the browser opens on: the smallest bundled one, so a first
+/// visit is nine requests rather than three hundred.
 pub const DEFAULT_NETWORK_HOST: &str = "milnepublishing.geneseo.edu";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -89,6 +90,11 @@ impl EntryKind {
 // Shapes below were read off the live API rather than inferred. Every field is
 // `#[serde(default)]` where the API may omit it, because a Catalog is thousands
 // of independently edited books and one missing subtitle must not fail a crawl.
+
+#[derive(Debug, Deserialize)]
+struct BundledCatalogs {
+    networks: Vec<PressbooksCatalog>,
+}
 
 #[derive(Debug, Deserialize)]
 struct ApiCatalogBook {
@@ -608,8 +614,42 @@ impl SectionSource for PressbooksSource {
     }
 }
 
-pub async fn list_catalog(db: DbPool) -> AppResult<Vec<PressbooksBook>> {
-    PressbooksClient::new(db).list_catalog().await
+/// The Catalogs the application offers.
+///
+/// Bundled rather than discovered: Pressbooks has no directory API, and the one
+/// host that comes closest answers an unrecognised client with a block page.
+/// The resource also records the Catalogs deliberately left out and why, so an
+/// unreachable one is not re-added by someone who rediscovers the problem.
+pub fn catalogs() -> AppResult<Vec<PressbooksCatalog>> {
+    let bundled: BundledCatalogs = serde_json::from_str(include_str!(
+        "../../resources/catalog/pressbooks-networks.json"
+    ))?;
+    Ok(bundled.networks)
+}
+
+/// Reject a host the application does not offer.
+///
+/// The host arrives from the webview and becomes part of every URL the crawl
+/// requests, so it is checked against the bundled list rather than trusted. It
+/// also keeps a typo from silently creating an empty Catalog under a host that
+/// does not exist.
+fn offered_host(host: &str) -> AppResult<String> {
+    catalogs()?
+        .into_iter()
+        .find(|catalog| catalog.host == host)
+        .map(|catalog| catalog.host)
+        .ok_or_else(|| {
+            AppError::Pressbooks(format!(
+                "{host} is not a Pressbooks catalog this app offers"
+            ))
+        })
+}
+
+pub async fn list_books(db: DbPool, host: &str) -> AppResult<Vec<PressbooksBook>> {
+    let host = offered_host(host)?;
+    PressbooksClient::with_network_base_url(db, format!("https://{host}"))
+        .list_catalog()
+        .await
 }
 
 pub async fn import_book<F>(
@@ -1151,6 +1191,161 @@ mod tests {
 
         assert_eq!(books.len(), 1);
         assert_eq!(books[0].title, "Openteach");
+    }
+
+    #[test]
+    fn the_bundled_list_offers_catalogs_and_records_the_excluded_ones() {
+        let catalogs = super::catalogs().expect("the bundled Catalog list should parse");
+
+        assert!(
+            catalogs.len() >= 10,
+            "the picker should offer more than a token few, got {}",
+            catalogs.len()
+        );
+        assert!(
+            catalogs
+                .iter()
+                .any(|c| c.host == super::DEFAULT_NETWORK_HOST),
+            "the Catalog the browser opens on must be one it offers"
+        );
+        assert!(
+            catalogs
+                .iter()
+                .all(|c| !c.host.trim().is_empty() && !c.name.trim().is_empty()),
+            "every Catalog needs a host to reach and a name to show"
+        );
+
+        let mut hosts = catalogs.iter().map(|c| c.host.as_str()).collect::<Vec<_>>();
+        hosts.sort_unstable();
+        let unique = hosts.len();
+        hosts.dedup();
+        assert_eq!(hosts.len(), unique, "a Catalog is listed twice");
+    }
+
+    #[test]
+    fn every_excluded_catalog_records_why_and_is_not_also_offered() {
+        // The point of recording exclusions is that nobody re-adds a Catalog
+        // nobody can reach after rediscovering the problem by hand. An entry
+        // with no reason, or one that also appears in the offered list, fails
+        // at exactly that.
+        #[derive(serde::Deserialize)]
+        struct Bundled {
+            networks: Vec<super::PressbooksCatalog>,
+            excluded: Vec<Excluded>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Excluded {
+            host: String,
+            reason: String,
+        }
+
+        let bundled: Bundled = serde_json::from_str(include_str!(
+            "../../resources/catalog/pressbooks-networks.json"
+        ))
+        .expect("the bundled Catalog list should parse");
+
+        assert!(!bundled.excluded.is_empty());
+        for excluded in &bundled.excluded {
+            assert!(
+                excluded.reason.trim().len() > 20,
+                "{} is excluded without saying why",
+                excluded.host
+            );
+            assert!(
+                !bundled.networks.iter().any(|c| c.host == excluded.host),
+                "{} is both offered and excluded",
+                excluded.host
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn each_catalog_caches_independently() {
+        let (_dir, pool) = temporary_pool();
+        let first = MockServer::start().await;
+        let second = MockServer::start().await;
+
+        for (server, title) in [(&first, "Openteach"), (&second, "Logic")] {
+            Mock::given(method("GET"))
+                .and(path("/wp-json/pressbooks/v2/books"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("x-wp-total", "1")
+                        .set_body_string(catalog_page(
+                            &format!("https://books.test/{title}/"),
+                            title,
+                        )),
+                )
+                .mount(server)
+                .await;
+        }
+
+        let one = PressbooksClient::with_network_base_url(pool.clone(), first.uri());
+        let two = PressbooksClient::with_network_base_url(pool, second.uri());
+
+        one.list_catalog().await.expect("the first should list");
+        two.list_catalog().await.expect("the second should list");
+
+        // Crawling the second must not have emptied the first: a reader
+        // switching back and forth would otherwise pay a fresh crawl each way.
+        let back = one
+            .list_catalog()
+            .await
+            .expect("the first should still list after the second was crawled");
+        let requests = first
+            .received_requests()
+            .await
+            .expect("mock server should record requests")
+            .len();
+
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].title, "Openteach");
+        assert_eq!(
+            requests, 3,
+            "returning to a Catalog should cost only its freshness check"
+        );
+    }
+
+    #[test]
+    fn every_offered_catalog_can_show_its_thumbnails() {
+        // The bundled list and the `img-src` CSP are twins with no link between
+        // them. Adding a Catalog without widening the policy leaves its cards
+        // rendering placeholders, with the refusal visible only in a devtools
+        // console nobody opens -- CLAUDE.md flags this class of failure.
+        let config = include_str!("../../tauri.conf.json");
+        let img_src = config
+            .split("img-src ")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .expect("tauri.conf.json should carry an img-src policy");
+
+        for catalog in super::catalogs().expect("the bundled Catalog list should parse") {
+            let allowed = img_src.contains(&format!("https://{}", catalog.host))
+                || catalog
+                    .host
+                    .split_once('.')
+                    .is_some_and(|(_, domain)| img_src.contains(&format!("https://*.{domain}")));
+
+            assert!(
+                allowed,
+                "{} is offered in the picker but its thumbnails are blocked by img-src",
+                catalog.host
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_host_the_app_does_not_offer_is_refused() {
+        let (_dir, pool) = temporary_pool();
+
+        // The host arrives from the webview and becomes part of every URL the
+        // crawl requests, so it is checked rather than trusted.
+        let Err(error) = super::list_books(pool, "evil.example.com").await else {
+            panic!("an unoffered host should be refused");
+        };
+
+        assert_eq!(error.kind(), "pressbooks");
+        assert!(error.message().contains("evil.example.com"));
     }
 
     /// The one test that proves the recorded wire format is still the real one.

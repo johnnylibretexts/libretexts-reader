@@ -166,10 +166,16 @@ export const api = {
       [],
       "list_libretexts_libraries",
     ),
-  listPressbooksCatalog: () =>
+  listPressbooksCatalogs: () =>
+    invokeWithBrowserFallback<Domain.PressbooksCatalog[]>(
+      [],
+      "list_pressbooks_catalogs",
+    ),
+  listPressbooksBooks: (host: string) =>
     invokeWithBrowserFallback<Domain.PressbooksBook[]>(
       [],
-      "list_pressbooks_catalog",
+      "list_pressbooks_books",
+      { host },
     ),
 
   savePlaybackState: (playback: Domain.PlaybackState) =>

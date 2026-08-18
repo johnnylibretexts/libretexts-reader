@@ -1,0 +1,111 @@
+{
+  "_comment": [
+    "The Pressbooks Catalogs this application offers. Pressbooks calls them networks, which is why that word appears in the picker; the domain term is Catalog and no type is named after a network.",
+    "There is no directory API that enumerates Catalogs, so this list ships with the application. `bookCount` is what was observed at the probe and is recorded only to convey scale -- the live count comes from the X-WP-Total header at runtime, and these move.",
+    "`excluded` exists so that a Catalog nobody can reach is not re-added later by someone who rediscovers the problem by hand. Do not move an entry out of it without re-probing and recording what changed.",
+    "Every entry below was probed on 2026-08-17 with the User-Agent the importer sends, `Mozilla/5.0 (compatible; LibreTexts Reader/0.1.0)`. That matters: these hosts answer an unrecognised client with 403, so a probe with a bare tool name reports far more of them unreachable than really are."
+  ],
+  "networks": [
+    {
+      "host": "ecampusontario.pressbooks.pub",
+      "name": "eCampusOntario Open Authoring Platform",
+      "bookCount": 3033
+    },
+    {
+      "host": "pressbooks.online.ucf.edu",
+      "name": "University of Central Florida Pressbooks",
+      "bookCount": 1935
+    },
+    {
+      "host": "boisestate.pressbooks.pub",
+      "name": "Boise State Pressbooks",
+      "bookCount": 315
+    },
+    {
+      "host": "open.maricopa.edu",
+      "name": "Maricopa Open Digital Press",
+      "bookCount": 253
+    },
+    {
+      "host": "uen.pressbooks.pub",
+      "name": "UEN Pressbooks Consortium",
+      "bookCount": 238
+    },
+    {
+      "host": "kpu.pressbooks.pub",
+      "name": "Kwantlen Polytechnic University Publishing",
+      "bookCount": 188
+    },
+    {
+      "host": "ohiostate.pressbooks.pub",
+      "name": "The Ohio State University Pressbooks",
+      "bookCount": 114
+    },
+    {
+      "host": "louis.pressbooks.pub",
+      "name": "LOUIS Pressbooks",
+      "bookCount": 102
+    },
+    {
+      "host": "milnepublishing.geneseo.edu",
+      "name": "Milne Publishing",
+      "bookCount": 90
+    },
+    {
+      "host": "iastate.pressbooks.pub",
+      "name": "Iowa State University Open Books",
+      "bookCount": 85
+    },
+    {
+      "host": "viva.pressbooks.pub",
+      "name": "VIVA Open Publishing",
+      "bookCount": 78
+    },
+    {
+      "host": "open.library.okstate.edu",
+      "name": "Open OKState",
+      "bookCount": 62
+    },
+    {
+      "host": "oer.pressbooks.pub",
+      "name": "PressbooksOER",
+      "bookCount": 43
+    },
+    {
+      "host": "rotel.pressbooks.pub",
+      "name": "Remixing Open Textbooks through an Equity Lens (ROTEL)",
+      "bookCount": 38
+    },
+    {
+      "host": "ncstate.pressbooks.pub",
+      "name": "NC State University Libraries Sites",
+      "bookCount": 34
+    }
+  ],
+  "excluded": [
+    {
+      "host": "pressbooks.pub",
+      "reason": "Bot protection. Answers the importer with HTTP 403 and an HTML block page rather than the API. This is the Pressbooks Directory host; its api.pressbooks.com backend is an undocumented JS application, not a public API."
+    },
+    {
+      "host": "opentextbc.ca",
+      "reason": "Cloudflare managed challenge. Returns HTTP 403 and a \"Just a moment...\" interstitial, which no HTTP client can pass."
+    },
+    {
+      "host": "fanshawe.pressbooks.pub",
+      "reason": "Cloudflare managed challenge. Serves the \"Just a moment...\" interstitial and then drops the connection."
+    },
+    {
+      "host": "library.achievingthedream.org",
+      "reason": "Cloudflare managed challenge. Serves the \"Just a moment...\" interstitial and then drops the connection."
+    },
+    {
+      "host": "montana.pressbooks.net",
+      "reason": "Cloudflare managed challenge. Serves the \"Just a moment...\" interstitial and then drops the connection."
+    },
+    {
+      "host": "oer.hawaii.edu",
+      "reason": "No Pressbooks v2 API. Reachable, but /wp-json/pressbooks/v2/books answers HTTP 404 rest_no_route. This is the only exclusion here that is not bot protection."
+    }
+  ]
+}

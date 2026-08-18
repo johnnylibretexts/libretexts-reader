@@ -13,12 +13,15 @@ interface PressbooksBrowserProps {
 }
 
 /**
- * One Catalog, listed whole. Pressbooks ignores its own `search` parameter and
- * caps a page at ten books, so searching means enumerating first — which is a
- * separate ticket, along with the Catalog picker. "Network" is Pressbooks' own
- * word for a Catalog and appears in labels for that reason.
+ * One Catalog at a time, listed whole. Pressbooks ignores its own `search`
+ * parameter and caps a page at ten books, so searching means enumerating
+ * first — that is a separate ticket. "Network" is Pressbooks' own word for a
+ * Catalog and appears in the picker label for that reason; nothing here is
+ * typed after it.
  */
 export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
+  const [catalogs, setCatalogs] = useState<Domain.PressbooksCatalog[]>([]);
+  const [host, setHost] = useState<string | null>(null);
   const [books, setBooks] = useState<Domain.PressbooksBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -26,12 +29,43 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
   const startImport = useImportsStore((state) => state.start);
   const documents = useLibraryStore((state) => state.documents);
 
+  // The bundled list needs no network, so the picker is populated before the
+  // first Catalog is reached and stays usable if that Catalog cannot be.
   useEffect(() => {
+    let active = true;
+    api
+      .listPressbooksCatalogs()
+      .then((offered) => {
+        if (active) {
+          setCatalogs(offered);
+          setHost((current) => current ?? offered[0]?.host ?? null);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setError(displayError(error));
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!host) {
+      return;
+    }
+
     let active = true;
     setLoading(true);
     setError(null);
+    // Cleared on every switch: leaving the previous Catalog's books on screen
+    // under a new Catalog's name would misattribute them.
+    setBooks([]);
     api
-      .listPressbooksCatalog()
+      .listPressbooksBooks(host)
       .then((catalog) => {
         if (active) {
           setBooks(catalog);
@@ -52,7 +86,7 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [host]);
 
   async function importBook(book: Domain.PressbooksBook) {
     await startImport({
@@ -64,6 +98,23 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
 
   return (
     <section className="flex flex-col gap-4">
+      <div className="grid gap-3 rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900 md:grid-cols-[minmax(14rem,1fr)]">
+        <label className="flex min-w-0 flex-col gap-2 text-sm font-medium">
+          Network
+          <select
+            className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+            onChange={(event) => setHost(event.target.value)}
+            value={host ?? ""}
+          >
+            {catalogs.map((catalog) => (
+              <option key={catalog.host} value={catalog.host}>
+                {catalog.name} ({catalog.bookCount} books)
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">
           {error}
