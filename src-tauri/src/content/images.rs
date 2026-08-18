@@ -166,13 +166,6 @@ async fn download_image(
             .map(media_type)
             .filter(|value| is_image_media_type(value))
     });
-    let extension = content_type
-        .as_deref()
-        .and_then(extension_for_media_type)
-        .or_else(|| extension_from_url(&candidate.url));
-    if content_type.is_none() && extension.is_none() {
-        return None;
-    }
 
     // Stream the body and abort as soon as the cap is exceeded, rather than
     // buffering the whole response before checking its size.
@@ -189,11 +182,37 @@ async fn download_image(
         return None;
     }
 
-    let path = images_dir.join(format!(
-        "{}.{}",
-        Uuid::new_v4(),
-        extension.unwrap_or_else(|| "bin".to_string())
-    ));
+    // Decided on the body, and on what the server said about it -- never on the
+    // URL alone. A URL extension names a file; it is not evidence of what came
+    // back. Pressbooks networks sit behind a WAF that answers an unrecognised
+    // client with an HTML error page, and a `200 text/html` block page for
+    // `.../cover.png` would otherwise be written to disk as a PNG and hung on
+    // the Library card.
+    //
+    // Either signal is enough on its own, because each covers the other's blind
+    // spot. Servers that will not guess answer a genuine PNG as
+    // `application/octet-stream`, so the bytes have to be able to speak for
+    // themselves; and a format not sniffed here -- AVIF, say -- is still an
+    // image when the server says so, so a sniff miss must not drop it.
+    //
+    // The cost of asking the body is that a response has to be read before it
+    // can be refused, where a header rule could refuse it unread. There is no
+    // safe way to shortcut that -- a non-image content type is exactly what a
+    // real PNG arrives with from a server that will not guess -- so the size
+    // cap above is what bounds it, and one decision on all the evidence is
+    // worth more than two that can drift apart.
+    let sniffed = sniffed_image_extension(&bytes);
+    if sniffed.is_none() && content_type.is_none() {
+        return None;
+    }
+
+    let extension = sniffed
+        .map(str::to_string)
+        .or_else(|| content_type.as_deref().and_then(extension_for_media_type))
+        .or_else(|| extension_from_url(&candidate.url))
+        .unwrap_or_else(|| "bin".to_string());
+
+    let path = images_dir.join(format!("{}.{}", Uuid::new_v4(), extension));
     std::fs::write(&path, bytes).ok()?;
 
     Some(ImageBuilder {
@@ -201,9 +220,81 @@ async fn download_image(
         local_path: path.to_string_lossy().to_string(),
         alt_text: candidate.alt_text,
         caption: candidate.caption,
-        content_type,
+        // The sniffed type in preference to the claimed one, for the same
+        // reason the extension is: it is the one derived from the actual image.
+        content_type: sniffed.and_then(media_type_for_extension).or(content_type),
         anchor_paragraph_ordinal: candidate.anchor_paragraph_ordinal,
     })
+}
+
+/// The file extension the body's own leading bytes identify, if any.
+///
+/// Deliberately not exhaustive. It has to recognise the formats this module
+/// already names extensions for, so a correctly served image is never worse off
+/// for being sniffed -- beyond that, an unrecognised body is not a rejection,
+/// only an absence of evidence.
+fn sniffed_image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("png");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("jpg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("gif");
+    }
+    // RIFF containers carry their format in bytes 8..12; only WEBP is an image.
+    if bytes.starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    if looks_like_svg(bytes) {
+        return Some("svg");
+    }
+
+    None
+}
+
+/// Whether the body opens as an SVG document.
+///
+/// SVG is the one format here with no binary signature, so it is recognised by
+/// its root element instead. An XML declaration may come first, and only then is
+/// the opening tag worth searching for -- checking for `<svg` anywhere would
+/// match an HTML page that happens to inline an icon.
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let start = body
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .map_or(&[][..], |offset| &body[offset..]);
+    let lower = start[..start.len().min(SVG_SNIFF_BYTES)].to_ascii_lowercase();
+
+    if lower.starts_with(b"<svg") {
+        return true;
+    }
+
+    // An XML declaration or an SVG doctype may stand ahead of the root element,
+    // and only after one of those is the opening tag worth searching for.
+    // Searching any document for `<svg` would match an HTML page that inlines an
+    // icon; `<!doctype svg` is asked for by name so `<!doctype html` cannot.
+    (lower.starts_with(b"<?xml") || lower.starts_with(b"<!doctype svg"))
+        && lower.windows(4).any(|window| window == b"<svg")
+}
+
+/// How far into a document to look for an SVG root element. Enough for an XML
+/// declaration, a doctype and a comment or two ahead of the opening tag.
+const SVG_SNIFF_BYTES: usize = 1024;
+
+/// The media type a sniffed extension stands for, inverse of
+/// `extension_for_media_type` over the extensions this module produces.
+fn media_type_for_extension(extension: &str) -> Option<String> {
+    match extension {
+        "jpg" => Some("image/jpeg".to_string()),
+        "png" => Some("image/png".to_string()),
+        "gif" => Some("image/gif".to_string()),
+        "webp" => Some("image/webp".to_string()),
+        "svg" => Some("image/svg+xml".to_string()),
+        _ => None,
+    }
 }
 
 fn should_skip_src(src: &str) -> bool {
@@ -342,12 +433,108 @@ fn extension_from_url(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::{download_cover, source_images_from_html};
 
     const COVER_BYTES: &[u8] = b"-- a cover --";
+
+    /// A PNG's eight-byte signature, then enough to be a plausible body.
+    const PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR-- pixels --";
+
+    /// What a WAF answers an unrecognised client with. Both `images.rs` and
+    /// `pressbooks.rs` document that Pressbooks networks sit behind one.
+    const BLOCK_PAGE: &[u8] =
+        b"<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body>Request blocked.</body></html>";
+
+    /// A server answering `at` with `body` and an optional content type.
+    async fn server_answering(
+        at: &'static str,
+        body: &'static [u8],
+        content_type: Option<&str>,
+    ) -> MockServer {
+        let server = MockServer::start().await;
+        let mut response = ResponseTemplate::new(200).set_body_bytes(body);
+        if let Some(content_type) = content_type {
+            response = response.insert_header("content-type", content_type);
+        }
+        Mock::given(method("GET"))
+            .and(path(at))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+        server
+    }
+
+    async fn cover_from(server: &MockServer, covers: &Path, at: &str) -> Option<String> {
+        download_cover(
+            &reqwest::Client::new(),
+            covers,
+            &format!("{}/book/", server.uri()),
+            at,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn an_error_page_served_for_an_image_url_is_not_stored() {
+        // The URL says `.png` and the status says 200, so the extension alone
+        // would accept this and hang an HTML page on the Library card.
+        let server =
+            server_answering("/cover.png", BLOCK_PAGE, Some("text/html; charset=utf-8")).await;
+        let covers = tempfile::tempdir().expect("temporary covers directory");
+
+        assert_eq!(cover_from(&server, covers.path(), "/cover.png").await, None);
+        assert_eq!(
+            std::fs::read_dir(covers.path())
+                .expect("the covers directory should be readable")
+                .count(),
+            0,
+            "nothing should have been written to disk"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_error_page_with_no_content_type_at_all_is_not_stored() {
+        let server = server_answering("/cover.png", BLOCK_PAGE, None).await;
+        let covers = tempfile::tempdir().expect("temporary covers directory");
+
+        assert_eq!(cover_from(&server, covers.path(), "/cover.png").await, None);
+    }
+
+    #[tokio::test]
+    async fn an_image_served_with_a_generic_content_type_is_still_stored() {
+        // Some servers will not guess, and answer every file as octet-stream.
+        // Refusing those would drop Figures that import correctly today.
+        let server =
+            server_answering("/cover.png", PNG_BYTES, Some("application/octet-stream")).await;
+        let covers = tempfile::tempdir().expect("temporary covers directory");
+
+        let stored = cover_from(&server, covers.path(), "/cover.png")
+            .await
+            .expect("a real image should be stored whatever the header says");
+
+        assert!(stored.ends_with(".png"), "{stored}");
+        assert_eq!(
+            std::fs::read(&stored).expect("the cover should be on disk"),
+            PNG_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn an_image_served_with_no_content_type_is_still_stored() {
+        let server = server_answering("/cover.png", PNG_BYTES, None).await;
+        let covers = tempfile::tempdir().expect("temporary covers directory");
+
+        let stored = cover_from(&server, covers.path(), "/cover.png")
+            .await
+            .expect("a real image should be stored with no header at all");
+
+        assert!(stored.ends_with(".png"), "{stored}");
+    }
 
     /// A server answering `/cover.png` with an image.
     async fn server_with_cover() -> MockServer {
@@ -408,6 +595,69 @@ mod tests {
             std::fs::read(&stored).expect("the cover should be on disk"),
             COVER_BYTES
         );
+    }
+
+    #[tokio::test]
+    async fn an_image_the_url_and_the_headers_both_say_nothing_about_is_stored() {
+        // Nothing but the body identifies this: no extension on the URL, no
+        // content type on the response. OpenStax serves figures from
+        // extension-less resource paths, and today they are dropped.
+        let server = server_answering("/resources/cell-image", PNG_BYTES, None).await;
+        let covers = tempfile::tempdir().expect("temporary covers directory");
+
+        let stored = cover_from(&server, covers.path(), "/resources/cell-image")
+            .await
+            .expect("the body alone should be enough to identify an image");
+
+        assert!(stored.ends_with(".png"), "{stored}");
+    }
+
+    #[test]
+    fn recognises_the_formats_it_names_extensions_for() {
+        use super::sniffed_image_extension as sniff;
+
+        assert_eq!(sniff(b"\x89PNG\r\n\x1a\nrest"), Some("png"));
+        assert_eq!(sniff(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00]), Some("jpg"));
+        assert_eq!(sniff(b"GIF89a...."), Some("gif"));
+        assert_eq!(sniff(b"GIF87a...."), Some("gif"));
+        assert_eq!(sniff(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("webp"));
+    }
+
+    #[test]
+    fn recognises_svg_through_a_bom_a_declaration_and_leading_space() {
+        use super::sniffed_image_extension as sniff;
+
+        assert_eq!(
+            sniff(br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#),
+            Some("svg")
+        );
+        assert_eq!(
+            sniff(b"<?xml version=\"1.0\"?>\n<!-- drawn by hand -->\n<svg/>"),
+            Some("svg")
+        );
+        assert_eq!(sniff(b"\xEF\xBB\xBF\n  <SVG/>"), Some("svg"));
+        // A doctype and no declaration at all, which is how older SVG files open.
+        assert_eq!(
+            sniff(b"<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"svg11.dtd\">\n<svg/>"),
+            Some("svg")
+        );
+    }
+
+    #[test]
+    fn does_not_mistake_a_page_for_an_image() {
+        use super::sniffed_image_extension as sniff;
+
+        assert_eq!(sniff(BLOCK_PAGE), None);
+        // An HTML page may inline an icon. Searching the whole head for `<svg`
+        // rather than requiring it to open the document would match this.
+        assert_eq!(
+            sniff(b"<!DOCTYPE html><html><body><svg viewBox=\"0 0 1 1\"/></body></html>"),
+            None
+        );
+        assert_eq!(sniff(b"{\"error\":\"forbidden\"}"), None);
+        // RIFF is a container, and most of what it carries is not an image.
+        assert_eq!(sniff(b"RIFF\x00\x00\x00\x00WAVEfmt "), None);
+        assert_eq!(sniff(b""), None);
     }
 
     #[test]
