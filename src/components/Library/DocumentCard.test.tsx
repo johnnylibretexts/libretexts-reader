@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type * as Domain from "../../types/domain";
 
@@ -57,6 +57,21 @@ describe("DocumentCard", () => {
     expect(cover?.getAttribute("src")).not.toBe("/covers/abc123.png");
     expect(cover?.getAttribute("src")).toContain("asset://localhost/");
     expect(cover?.getAttribute("src")).toContain("abc123.png");
+  });
+
+  it("falls back to the source icon when the stored cover will not render", () => {
+    // A file that is missing, or that is not the image its name claims, would
+    // otherwise leave a broken-image glyph on the card with no way back. The
+    // fallback that already exists for "no cover" should cover "bad cover".
+    const { container } = renderCard(
+      libraryDocument({ coverImagePath: "/covers/abc123.png" }),
+    );
+    const cover = container.querySelector("img");
+
+    fireEvent.error(cover!);
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("Pressbooks")).toBeInTheDocument();
   });
 
   it("falls back to the source icon when the document has no cover", () => {

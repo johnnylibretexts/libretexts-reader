@@ -803,7 +803,7 @@ where
     // will not download is `None`, never an Import failure: the book is
     // readable without it.
     let cover_image_path = match clean(metadata.image) {
-        Some(url) => download_cover(client.fetcher.http(), covers_dir, &url).await,
+        Some(url) => download_cover(client.fetcher.http(), covers_dir, book_url, &url).await,
         None => None,
     };
 

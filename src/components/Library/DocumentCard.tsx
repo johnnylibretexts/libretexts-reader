@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import {
   BookOpen,
   Clipboard,
@@ -28,6 +28,15 @@ export function DocumentCard({
 }: DocumentCardProps) {
   const Icon = sourceIcon(document.sourceType);
   const progress = 0;
+  // A stored cover can stop rendering -- the file is gone, or is not the image
+  // its name claims. Without this the card keeps a broken-image glyph; the
+  // Source icon is the fallback that already exists for a Document with no
+  // cover at all. Same pattern as the Pressbooks browser's thumbnail.
+  const [coverFailed, setCoverFailed] = useState(false);
+
+  useEffect(() => {
+    setCoverFailed(false);
+  }, [document.coverImagePath]);
 
   return (
     <article
@@ -36,10 +45,11 @@ export function DocumentCard({
     >
       <div className="flex gap-3">
         <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-md bg-stone-100 text-brand-700 dark:bg-neutral-800 dark:text-brand-500">
-          {document.coverImagePath ? (
+          {document.coverImagePath && !coverFailed ? (
             <img
               alt=""
               className="size-full object-cover"
+              onError={() => setCoverFailed(true)}
               src={convertFileSrc(document.coverImagePath)}
             />
           ) : (
