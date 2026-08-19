@@ -372,6 +372,22 @@ describe("PressbooksBrowser", () => {
       }) => void;
     }
 
+    it("subscribes to catalog-progress before starting the crawl", async () => {
+      // crawl_catalog reports progress synchronously, before it issues any
+      // request. A subscription registered after the crawl has already
+      // started can miss that first event.
+      render(<PressbooksBrowser onOpenDocument={vi.fn()} />);
+
+      await waitFor(() =>
+        expect(listen).toHaveBeenCalledWith("catalog-progress", expect.any(Function)),
+      );
+      expect(listPressbooksBooks).toHaveBeenCalled();
+
+      const listenOrder = listen.mock.invocationCallOrder[0];
+      const crawlOrder = listPressbooksBooks.mock.invocationCallOrder[0];
+      expect(listenOrder).toBeLessThan(crawlOrder);
+    });
+
     it("shows how far a crawl has got while it runs", async () => {
       // Three hundred requests with no sign of movement is indistinguishable
       // from a frozen application.

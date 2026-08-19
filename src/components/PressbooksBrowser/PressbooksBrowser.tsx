@@ -82,6 +82,46 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
     };
   }, []);
 
+  // Scoped to this component, unlike the Import listener: a crawl is awaited by
+  // the call this component made, so a subscription outliving the component
+  // would have nothing to report to.
+  //
+  // Declared before the effect that starts the crawl: crawl_catalog reports
+  // progress synchronously, before it issues any request, so a subscription
+  // registered after that effect can miss the first event entirely.
+  useEffect(() => {
+    // Nothing to report on until a Catalog is chosen, and a subscription made
+    // before then could only ever compare against a host of `null`.
+    if (!host) {
+      return;
+    }
+
+    let active = true;
+    let dispose: (() => void) | undefined;
+
+    void listen<Domain.PressbooksCatalogProgress>("catalog-progress", (event) => {
+      // A crawl the reader has navigated away from keeps running and keeps
+      // reporting. Its progress must not drive the indicator for the Catalog
+      // they are looking at now.
+      if (event.payload.host === host) {
+        setProgress(event.payload);
+      }
+    })
+      .then((unlisten) => {
+        if (active) {
+          dispose = unlisten;
+        } else {
+          unlisten();
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+      dispose?.();
+    };
+  }, [host]);
+
   useEffect(() => {
     if (!host) {
       return;
@@ -120,42 +160,6 @@ export function PressbooksBrowser({ onOpenDocument }: PressbooksBrowserProps) {
       active = false;
     };
   }, [host, continueToken]);
-
-  // Scoped to this component, unlike the Import listener: a crawl is awaited by
-  // the call this component made, so a subscription outliving the component
-  // would have nothing to report to.
-  useEffect(() => {
-    // Nothing to report on until a Catalog is chosen, and a subscription made
-    // before then could only ever compare against a host of `null`.
-    if (!host) {
-      return;
-    }
-
-    let active = true;
-    let dispose: (() => void) | undefined;
-
-    void listen<Domain.PressbooksCatalogProgress>("catalog-progress", (event) => {
-      // A crawl the reader has navigated away from keeps running and keeps
-      // reporting. Its progress must not drive the indicator for the Catalog
-      // they are looking at now.
-      if (event.payload.host === host) {
-        setProgress(event.payload);
-      }
-    })
-      .then((unlisten) => {
-        if (active) {
-          dispose = unlisten;
-        } else {
-          unlisten();
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      active = false;
-      dispose?.();
-    };
-  }, [host]);
 
   // Undebounced on purpose: this reads the local cache listing the Catalog
   // filled, so a keystroke costs a SQL LIKE rather than a request. The `active`
