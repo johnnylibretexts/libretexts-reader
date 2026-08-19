@@ -176,6 +176,15 @@ fn should_retry_status(status: StatusCode) -> bool {
 ///
 /// Keyed by Source as well as by page, so two Sources that number their pages
 /// the same way cannot read each other's rows.
+/// How long a cached row stays fresh before a read treats it as a miss.
+///
+/// There is no cheaper way to learn a page changed than fetching it -- the
+/// Sources that use this cache expose no lightweight revision check the way
+/// OpenStax's `archive_release` does -- so age is the whole revalidation
+/// policy. `content_revision` is still recorded on every write, for a Source
+/// that someday gets a real conditional check, but nothing reads it back yet.
+const CACHE_TTL_DAYS: i64 = 7;
+
 #[derive(Debug, Clone)]
 pub struct PageCache {
     db: DbPool,
@@ -191,23 +200,39 @@ impl PageCache {
         use std::io::Read;
 
         let conn = self.db.get()?;
-        let content_gzip = conn
+        let row = conn
             .query_row(
-                "SELECT content_gzip FROM source_page_cache
+                "SELECT content_gzip, fetched_at FROM source_page_cache
                  WHERE source = ?1 AND cache_key = ?2",
                 rusqlite::params![self.source, cache_key],
-                |row| row.get::<_, Vec<u8>>(0),
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?;
 
-        let Some(content_gzip) = content_gzip else {
+        let Some((content_gzip, fetched_at)) = row else {
             return Ok(None);
         };
+
+        if !Self::is_fresh(&fetched_at) {
+            return Ok(None);
+        }
 
         let mut decoder = flate2::read::GzDecoder::new(content_gzip.as_slice());
         let mut json = String::new();
         decoder.read_to_string(&mut json)?;
         Ok(Some(serde_json::from_str(&json)?))
+    }
+
+    /// An unparseable timestamp reads as stale rather than erroring the whole
+    /// read -- it just costs a refetch, and every row this application ever
+    /// wrote itself is a valid RFC 3339 string.
+    fn is_fresh(fetched_at: &str) -> bool {
+        fetched_at
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .map(|fetched_at| {
+                chrono::Utc::now() - fetched_at <= chrono::Duration::days(CACHE_TTL_DAYS)
+            })
+            .unwrap_or(false)
     }
 
     pub fn write<T: Serialize>(
@@ -383,6 +408,32 @@ mod tests {
                 .read::<String>("book:1")
                 .expect("the second Source should read its own row"),
             Some("Pressbooks page".to_string())
+        );
+    }
+
+    #[test]
+    fn a_cache_entry_older_than_the_ttl_reads_as_a_miss() {
+        let (_dir, pool) = temporary_pool();
+        let cache = super::PageCache::new(pool.clone(), "libretexts");
+        cache
+            .write("book:1", "book", "1", None, &"a page".to_string())
+            .expect("the cache should accept a write");
+
+        let stale = (chrono::Utc::now() - chrono::Duration::days(8)).to_rfc3339();
+        pool.get()
+            .expect("a pool checkout should succeed")
+            .execute(
+                "UPDATE source_page_cache SET fetched_at = ?1 WHERE cache_key = 'book:1'",
+                rusqlite::params![stale],
+            )
+            .expect("backdating the row should succeed");
+
+        assert_eq!(
+            cache
+                .read::<String>("book:1")
+                .expect("a stale read is not an error"),
+            None,
+            "a row older than the TTL should read as a miss so the caller refetches"
         );
     }
 
