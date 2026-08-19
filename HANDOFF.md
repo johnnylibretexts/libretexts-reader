@@ -1,6 +1,6 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-18
+Last updated: 2026-08-19
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
@@ -10,11 +10,19 @@ One follow-up fix merged behind it: [PR #36](https://github.com/johnnylibretexts
 
 And [PR #37](https://github.com/johnnylibretexts/libretexts-reader/pull/37) (`0a6ea2d`) closed #31. An image download used to accept a response if *either* its content type or its URL extension looked like an image, so a WAF block page served `200 text/html` for `.../cover.png` was written to disk as a PNG and hung on the Library card. It now decides on the body — sniffed magic bytes — or on what the server said, never on the URL alone. Both signals have to stay, and the PR body says why: servers that will not guess send a genuine PNG as `application/octet-stream`, and a format the sniffer does not know is still an image when the server says so.
 
-**There is no work in progress as of this update.** The standing caution against `git reset --hard` applies to any new WIP.
+**Five open tickets closed in one session, 2026-08-18/19: #33, #29, #28, #34, #32 — all merged to `main`.**
+
+- **#33** ([PR #39](https://github.com/johnnylibretexts/libretexts-reader/pull/39), `3fe7a5c`) — `word_count` on a Pressbooks TOC entry is now `Option<u32>`. `push_readable` gates on `has_post_content` alone and only excludes a *measured* zero, so a Catalog that never sends the field no longer imports as an empty book.
+- **#29** ([PR #40](https://github.com/johnnylibretexts/libretexts-reader/pull/40), `81177af`) — `verify_offered_book_url` now also rejects a non-`https` scheme, an explicit port, and embedded userinfo, not just an unoffered host.
+- **#28** ([PR #41](https://github.com/johnnylibretexts/libretexts-reader/pull/41), `372bf3b`) — `source_page_cache` (shared by LibreTexts and Pressbooks since migration `0008`; the `libretexts_cache` table the issue named no longer exists) now expires a read after a 7-day TTL, and `delete_document` clears a LibreTexts Document's cached pages when the Document is deleted. **Landed narrower than the issue asked, on purpose**: there is no cheap way to revalidate via `content_revision` without a full fetch (unlike OpenStax's `archive_release` manifest), so this is TTL-only rather than the revalidate-then-TTL policy the issue floated. Don't reopen that as a gap without a lightweight revision-check endpoint to build it on.
+- **#34** ([PR #42](https://github.com/johnnylibretexts/libretexts-reader/pull/42), `71ed16c`) — the Pressbooks `catalog-progress` listener effect was declared *after* the effect that starts the crawl. `crawl_catalog` reports progress synchronously before issuing any request, so the first event was always emitted into a window with no subscriber. Fixed by swapping the declaration order — React runs effects in declaration order.
+- **#32** ([PR #43](https://github.com/johnnylibretexts/libretexts-reader/pull/43), `5990b87`) — the flaky test was `PressbooksBrowser.test.tsx > search > "answers a search typed while the first catalog is still loading"`. Reproduced on iteration 5 of an 80-run loop of the *full* suite; 40 runs of just the two files the issue suspected never reproduced it in isolation — the race needs the full suite's CPU contention, matching the issue's own observation. Root cause: a Catalog's arrival renders both its books from the raw listing for one tick before the search resolves and narrows them; the test's `waitFor` polled for a book title present in *both* that transient tick and the final state, then a synchronous check right after raced the search's still-pending promise. Fixed by folding the negative assertion into the same `waitFor` callback instead of lengthening any timeout. A sibling test had the identical shape and the identical latent race and was fixed the same way, though it never itself reproduced. **Verified: 100 consecutive full-suite runs, zero failures**, after 0 in the first 40 isolated-file runs and a hit on run 5 of 80 full-suite runs — the isolation detail is worth keeping if this class of flake resurfaces elsewhere.
+
+**One new ticket, opened and fixed in the same session: #44**, filed after PR #43's own CI run hung for the full 6-hour GitHub Actions per-job cap before being force-cancelled — on a two-line test-assertion diff that explains nothing about a 6-hour hang. The culprit step, `Install Linux build dependencies` (a plain `apt-get update && apt-get install`, `.github/workflows/ci.yml:52`), timed between 47 seconds and 28 minutes across other runs and, on that one run, indefinitely. [PR #45](https://github.com/johnnylibretexts/libretexts-reader/pull/45) adds `timeout-minutes: 60` to the `verify` job. **Open, not yet merged as of this update** — merge once its own CI run confirms 60 minutes doesn't clip a normal run.
+
+**There is no other work in progress as of this update.** The standing caution against `git reset --hard` applies to any new WIP.
 
 The Fish Audio provider (spec B) merged on 2026-08-16 via [PR #4](https://github.com/johnnylibretexts/libretexts-reader/pull/4) — 39 commits, merge commit `64ead91`, reviewed with all 15 findings resolved.
-
-**Open tickets, all `ready-for-agent`, in the order worth taking them:** **#33** (a Catalog whose table of contents omits `word_count` imports as an empty book — the field is `#[serde(default)]`, so an absent value reads as a measured zero and every entry is dropped), **#29** (a book URL is checked for host but not scheme, port or userinfo), **#28** (the LibreTexts page cache never expires or revalidates), then **#34** (the first crawl progress event is lost — cosmetic) and **#32** (a frontend test failed once, name never captured).
 
 **#30 is closed as not reproducible**, and the reasoning is worth not repeating: it asserted that no `busy_timeout` was set, but `rusqlite` applies 5000ms to every connection it opens, and the test the ticket demanded passed against unmodified code. **Reproduce a ticket's defect before building for it** — write the test it asks for and watch it fail first. `/code-review` findings on this repo have twice been wrong about their own premise.
 
@@ -448,8 +456,8 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 
 ## Testing And Verification
 
-Current counts on `main`: **129 Rust tests** (1 ignored — the live network import smoke) and
-**83 frontend tests across 11 files**, including two component test files.
+Current counts on `main`: **207 Rust tests** (3 ignored — the live network import smoke plus
+two others) and **129 frontend tests across 16 files**.
 
 These commands were green before handoff:
 
