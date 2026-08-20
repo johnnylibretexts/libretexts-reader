@@ -308,11 +308,17 @@ Design and plan: `docs/superpowers/specs/2026-08-13-rename-libretexts-reader-des
 
 **Not verified, and worth doing on the next import:** cover and figure rendering. There was no library on this machine, so the identifier/`$APPDATA` coupling has not been exercised end to end with real images. That is the one failure mode that produces no error — see `check-identifier.sh` and the asset-protocol gotcha.
 
-**Open issues** on `johnnylibretexts/libretexts-reader`: **none as of 2026-08-17.** #1 (the
-`check-identifier.sh` scope guard) closed via PR #15, #12 (ffmpeg SONAME symlinks) via PR #16.
-#2 (the Rust suite writing into the real app-data directory) was fixed on 2026-08-13, and #3
-(model precision is a one-way door) was closed as obsolete when the Kokoro removal deleted the
-setting it described.
+**Open issues** on `johnnylibretexts/libretexts-reader`: **22 as of 2026-08-20** (#48-#69),
+all from the release-readiness audit — see "Known Limitations And Next Steps" below for
+the map. This paragraph previously read "none as of 2026-08-17", which was true then and
+is a good reminder that a hand-maintained count goes stale silently; prefer
+`gh issue list` over trusting this line.
+
+Historic closures from the era this section describes: #1 (the `check-identifier.sh` scope
+guard) closed via PR #15, #12 (ffmpeg SONAME symlinks) via PR #16. #2 (the Rust suite
+writing into the real app-data directory) was fixed on 2026-08-13, and #3 (model precision
+is a one-way door) was closed as obsolete when the Kokoro removal deleted the setting it
+described.
 
 An empty `~/Library/Application Support/dev.johnnyrobot.reader` may still exist; it holds nothing and can be deleted.
 
@@ -592,20 +598,66 @@ Also on 2026-08-17, **PR #13 moved the actions off deprecated Node 20**:
 
 ## Known Limitations And Next Steps
 
-- The reader does not yet mirror full LibreTexts page layout. It approximates the textbook flow by preserving paragraphs and figures, not full HTML sections, sidebars, exercises, tables, or CSS.
-- Image placement is paragraph-anchored, not DOM-node exact. It is good enough for figure-in-reading-flow behavior, but not a pixel-perfect textbook clone.
-- Existing imported documents before migration `0004` lack anchors and should be reimported.
-- Chapter/section images are currently loaded for the active section only.
-- If a page starts with an image before any readable paragraph, that image has a null anchor and renders before the first paragraph.
-- Supertonic math speech normalization is heuristic. It handles common LaTeX/MathML patterns, not a full accessibility-grade math speech system.
+**The GitHub tracker is the source of truth for this, not this section.** A
+release-readiness audit on 2026-08-20 filed 22 issues (#48-#69) covering everything below
+and a good deal this section had never recorded. What follows is a map, not a list — read
+it to know what kind of thing is wrong, then read the tracker for the specifics.
 
-Recommended next work:
+The previous version of this section was written before Fish Audio shipped and listed
+none of the actual blockers. **If it looks stale again, distrust it and check the
+tracker.**
 
-1. Decide whether "mirror LibreTexts layout" means richer HTML preservation. If yes, introduce a structured content block model instead of only paragraphs plus anchored images.
+### Not ready for a public beta, as of 2026-08-20
+
+Nine issues are filed as release blockers. They fall into three groups, and the grouping
+matters because the groups have different owners:
+
+- **Release mechanics** — #48 (the pipeline has *never* run; no runner registered, no
+  `APPLE_SIGNING_IDENTITY`), #49 (a `-beta` tag fails `check-version.sh`, and the only
+  tag is stale and local-only), #56 (the repo is private, so a Release has no public
+  download URL).
+- **Legal and compliance** — #50 (LAME is statically linked under LGPL with no notice and,
+  because of `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is also
+  never bundled into the `.app`), #51 (imported books' licence and attribution are stored
+  and then displayed nowhere, including in exported MP3s), #55 (the README's "no data ever
+  leaving your machine" claim is false — image download has no host allowlist).
+- **Product** — #52 (first Play silently pulls ~383 MB and disables every playback control
+  with no progress or cancel), #53 (Delete is one unconfirmed click and irreversible),
+  #54 (Fish playback bills ~10 sentences per Play with no in-app warning and no way to
+  stop it).
+
+Four more are **decisions rather than tasks** and should be made deliberately: #57 (using
+the LibreTexts name while unaffiliated), #67 (platform scope — `msi`/`nsis` are declared
+but never built), #68 (no auto-updater), #69 (content-fidelity gaps).
+
+**#68 has an ordering trap worth knowing before you plan anything else:** adding the
+updater *after* a beta means the first cohort can never be auto-migrated, so its cost only
+grows once a tester installs. It pairs with #56 — a small, named-tester private beta makes
+both problems mostly go away.
+
+### Import fidelity — still true, unchanged
+
+These are design consequences of paragraph-flow import, not defects, and they have been
+true since the beginning:
+
+- The reader does not mirror source page layout. It preserves paragraph order and figures, not full HTML sections, sidebars, exercises, tables, or CSS. **Skipped content leaves no marker**, which is the part that reads as a bug to a user — see #69.
+- Image placement is paragraph-anchored (`anchor_paragraph_ordinal`), not DOM-node exact.
+- An image appearing before any readable paragraph has a null anchor and renders before the first paragraph.
+- Section images load for the active section only.
+- Math speech normalization is heuristic — common LaTeX/MathML patterns, not accessibility-grade math speech.
+- Imports predating migration `0004` have null anchors and need reimporting. Irrelevant to a fresh install; only affects long-lived local databases.
+
+### Longer-term direction, if layout fidelity becomes the goal
+
+Unchanged from the previous version of this section, and still the right shape if that
+decision is taken — but it is **not** the current priority, and #69 should settle the
+question of how much fidelity is actually wanted first:
+
+1. Introduce a structured content block model rather than paragraphs plus anchored images.
 2. Add block types for headings, paragraphs, figures, tables, examples/exercises, callouts, and equations.
-3. Persist blocks in SQLite with source ordinal, then render a section as a sequence of blocks.
-4. Add UI tests or Playwright/manual screenshot checks for representative LibreTexts chapters with figures, tables, and callouts.
-5. Consider a migration/import version so old imports can be detected and prompted for reimport.
+3. Persist blocks in SQLite with source ordinal; render a section as a sequence of blocks.
+4. Add screenshot or UI tests over representative chapters with figures, tables, and callouts.
+5. Add an import version so old imports can be detected and a reimport prompted.
 
 ## Cautions For The Next Codex Session
 
