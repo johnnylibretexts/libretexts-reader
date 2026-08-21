@@ -4,8 +4,9 @@ Last updated: 2026-08-20
 
 > **Current goal: a private beta.** Signed and notarized, fewer than ten named testers,
 > repo staying private. The gating work is the **`Private beta` milestone** on the tracker
-> — eleven issues. See "The plan: a private beta" under Known Limitations for the shape of
-> it and what the decision retired. The app itself is in good health: 207 Rust and 129
+> — run `gh issue list --milestone "Private beta"` for the live list, and see "The plan: a
+> private beta" under Known Limitations for the shape of
+> it and what the decision retired. The app itself is in good health: 207 Rust and 133
 > frontend tests green, and the debug build verified running on 2026-08-20. What is missing
 > is release process, not code.
 
@@ -477,7 +478,7 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 ## Testing And Verification
 
 Current counts on `main`: **207 Rust tests** (3 ignored — the live network import smoke plus
-two others) and **129 frontend tests across 16 files**.
+two others) and **133 frontend tests across 17 files**. Counts drift — run the suites rather than trusting these.
 
 These commands were green before handoff:
 
@@ -620,12 +621,22 @@ tracker.**
 private repo and a Release published here. The build **is** signed and notarized. The repo
 stays private; going public is a separate, later decision.
 
-The eleven issues that gate it carry the **`Private beta` milestone** — that milestone is
-the working list, and it is authoritative over this paragraph:
+The issues that gate it carry the **`Private beta` milestone**. **That milestone is the
+working list and is authoritative over this paragraph** — run
+`gh issue list --milestone "Private beta"` rather than trusting what follows, which is a
+snapshot and will drift.
 
-- **Release mechanics** — #48 (the pipeline has *never* run: no runner registered, no `APPLE_SIGNING_IDENTITY`, and the Developer ID cert is not on the dev machine — find the release Mac first), #49 (a `-beta` tag fails `check-version.sh`; the only tag is stale and local-only), #67 (drop `msi`/`nsis` so the config stops claiming Windows).
-- **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either), #51 (imported books' licence and attribution are stored and displayed nowhere, including in exported MP3s), #55 (the README's "no data ever leaving your machine" claim is false — image download has no host allowlist).
-- **Product** — #52 (first Play silently pulls ~383 MB and disables every playback control), #53 (Delete is one unconfirmed click and irreversible), #54 (Fish bills ~10 sentences per Play with no warning and no stop button), #58 (developer scaffolding ships on user-facing routes), #60 (the voice-style setting is silently ignored during playback).
+Open as of 2026-08-20:
+
+- **Release mechanics** — #48 (the pipeline has *never* run: no runner registered, no `APPLE_SIGNING_IDENTITY`, and the Developer ID cert is not on the dev machine — **find the release Mac first**, everything else here assumes it), #49 (a `-beta` tag fails `check-version.sh`; the only tag is stale and local-only).
+- **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either), #51 (imported books' licence and attribution are stored and displayed nowhere, including in exported MP3s).
+- **Product** — #52 (first Play silently pulls ~383 MB and disables every playback control), #53 (Delete is one unconfirmed click and irreversible), #54 (Fish bills ~10 sentences per Play with no warning and no stop button), #60 (the voice-style setting is silently ignored during playback).
+
+**Cleared 2026-08-20** — the cheap three, all merged: #67 (`bundle.targets` now declares
+only what a release builds), #55 (the false privacy claims corrected and `PRIVACY.md`
+added with the full host table), #58 (the debug status table, placeholder route subtitles,
+the permanently-disabled Export item, and stale empty-state copy all removed, with a new
+`Grid.test.tsx` covering it).
 
 **What the decision retired.** #56 (distribution) is closed — a private cohort needs no
 public artifact URL. #68 (no auto-updater) is closed as deferred: ten emailable people can
