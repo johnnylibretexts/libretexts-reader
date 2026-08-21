@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { BookOpen, Search, Trash2 } from "lucide-react";
 import { useLibraryStore } from "../../stores/library";
+import { usePlayerStore } from "../../stores/player";
+import { ConfirmDialog } from "../ConfirmDialog";
 import type * as Domain from "../../types/domain";
 import { DocumentCard } from "./DocumentCard";
 import { EmptyState } from "./EmptyState";
@@ -30,6 +32,12 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
   const remove = useLibraryStore((state) => state.remove);
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  // The delete the reader has asked for but not yet agreed to. Holding the
+  // whole document rather than an id so the dialog can name the book: a
+  // confirmation that does not say what it is about to destroy is not one.
+  const [pendingDelete, setPendingDelete] = useState<Domain.Document | null>(
+    null,
+  );
 
   useEffect(() => {
     function closeMenu() {
@@ -64,9 +72,31 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
     onOpenDocument({ id: document.id, title: document.title });
   }
 
-  async function deleteDocument(document: Domain.Document) {
+  function requestDelete(document: Domain.Document) {
     setMenu(null);
+    setPendingDelete(document);
+  }
+
+  async function confirmDelete() {
+    const document = pendingDelete;
+    if (!document) {
+      return;
+    }
+    setPendingDelete(null);
+
+    // Read before the delete, not after: `remove` drops the row locally as
+    // part of the same transition, so asking afterwards races it.
+    const isOpenInReader =
+      usePlayerStore.getState().document?.id === document.id;
+
     await remove(document.id);
+
+    // The Reader and MiniPlayer stay bound to whatever the player store holds.
+    // Left pointing at a deleted document, the next section change runs
+    // against rows the backend has already removed from disk.
+    if (isOpenInReader) {
+      usePlayerStore.getState().reset();
+    }
   }
 
   function openContextMenu(
@@ -130,7 +160,7 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
               document={document}
               key={document.id}
               onContextMenu={openContextMenu}
-              onDelete={(document) => void deleteDocument(document)}
+              onDelete={(document) => void requestDelete(document)}
               onOpen={openDocument}
             />
           ))}
@@ -154,7 +184,7 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
                     openDocument(menu.document);
                   }
                   if (item.id === "delete") {
-                    void deleteDocument(menu.document);
+                    void requestDelete(menu.document);
                   }
                 }}
                 role="menuitem"
@@ -167,6 +197,26 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
           })}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        body={
+          <>
+            <p>
+              <strong>{pendingDelete?.title}</strong> and everything downloaded
+              with it -- its cover, every figure, and its cached Source pages --
+              will be deleted from this Mac. This cannot be undone.
+            </p>
+            <p className="mt-2">
+              You can import it again, but the whole book has to download afresh.
+            </p>
+          </>
+        }
+        confirmLabel="Delete"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
+        open={pendingDelete !== null}
+        title="Delete this book?"
+      />
     </section>
   );
 }

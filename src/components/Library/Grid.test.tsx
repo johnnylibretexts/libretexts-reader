@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Domain from "../../types/domain";
 
@@ -9,8 +9,21 @@ vi.mock("@tauri-apps/api/core", () => ({
     `asset://localhost/${encodeURIComponent(path)}`,
 }));
 
+const deleteDocument = vi.fn(async (_id: string) => undefined);
+const listDocuments = vi.fn(async () => []);
+const searchDocuments = vi.fn(async (_query: string) => []);
+
+vi.mock("../../lib/tauri", () => ({
+  api: {
+    deleteDocument: (id: string) => deleteDocument(id),
+    listDocuments: () => listDocuments(),
+    searchDocuments: (q: string) => searchDocuments(q),
+  },
+}));
+
 const { LibraryGrid } = await import("./Grid");
 const { useLibraryStore } = await import("../../stores/library");
+const { usePlayerStore } = await import("../../stores/player");
 
 function libraryDocument(
   overrides: Partial<Domain.Document> = {},
@@ -32,10 +45,95 @@ function libraryDocument(
 
 describe("LibraryGrid", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    deleteDocument.mockResolvedValue(undefined);
     useLibraryStore.setState({
       documents: [libraryDocument()],
       loading: false,
       error: null,
+    });
+    usePlayerStore.setState({ document: null });
+  });
+
+  describe("deleting", () => {
+    const TITLE = "A Concise Introduction to Logic";
+
+    /** The trash button on the card, which deleted on the first click. */
+    function clickTrash() {
+      fireEvent.click(screen.getByRole("button", { name: `Delete ${TITLE}` }));
+    }
+
+    it("asks first, and names the book it is about to destroy", async () => {
+      // One click destroyed a multi-hundred-MB import: rows, cover, every
+      // downloaded figure, and since #28 the Source page cache too, so a
+      // re-import genuinely re-downloads. The button sits next to "more
+      // actions" on every card.
+      render(<LibraryGrid onOpenDocument={vi.fn()} />);
+      clickTrash();
+
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveTextContent(TITLE);
+      expect(deleteDocument).not.toHaveBeenCalled();
+    });
+
+    it("leaves the book alone when the reader cancels", async () => {
+      render(<LibraryGrid onOpenDocument={vi.fn()} />);
+      clickTrash();
+      fireEvent.click(
+        await screen.findByRole("button", { name: /^Cancel$/ }),
+      );
+
+      expect(deleteDocument).not.toHaveBeenCalled();
+      expect(screen.getByText(TITLE)).toBeInTheDocument();
+    });
+
+    it("deletes once the reader confirms", async () => {
+      render(<LibraryGrid onOpenDocument={vi.fn()} />);
+      clickTrash();
+      fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
+
+      await waitFor(() => expect(deleteDocument).toHaveBeenCalledWith("doc-1"));
+    });
+
+    it("resets the player when the book being read is the one deleted", async () => {
+      // The MiniPlayer stayed bound to the deleted document, and the next
+      // section change ran against rows that no longer exist.
+      usePlayerStore.setState({ document: libraryDocument() });
+      render(<LibraryGrid onOpenDocument={vi.fn()} />);
+      clickTrash();
+      fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
+
+      await waitFor(() =>
+        expect(usePlayerStore.getState().document).toBeNull(),
+      );
+    });
+
+    it("can be reopened after Escape dismisses it", async () => {
+      // Escape closes a native dialog through the DOM without telling React.
+      // Left unsynced, `pendingDelete` stays set against a shut dialog -- and
+      // `showModal()` on an already-open dialog throws, so it is the NEXT
+      // delete that breaks, nowhere near the Escape that caused it.
+      render(<LibraryGrid onOpenDocument={vi.fn()} />);
+      clickTrash();
+      const dialog = await screen.findByRole("dialog");
+
+      fireEvent(dialog, new Event("cancel", { cancelable: true }));
+      await waitFor(() => expect(dialog).not.toHaveAttribute("open"));
+
+      clickTrash();
+      await waitFor(() => expect(dialog).toHaveAttribute("open"));
+      expect(deleteDocument).not.toHaveBeenCalled();
+    });
+
+    it("leaves the player alone when a different book is deleted", async () => {
+      const reading = libraryDocument({ id: "doc-2", title: "Another Book" });
+      usePlayerStore.setState({ document: reading });
+      render(<LibraryGrid onOpenDocument={vi.fn()} />);
+      clickTrash();
+      fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
+
+      await waitFor(() => expect(deleteDocument).toHaveBeenCalled());
+      expect(usePlayerStore.getState().document).toEqual(reading);
     });
   });
 
