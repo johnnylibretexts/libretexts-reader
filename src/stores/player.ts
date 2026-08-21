@@ -5,10 +5,11 @@ import {
   createSpeechEngine,
   SPEECH_ENGINE_LABELS,
   SpeechAbortedError,
+  type SettingsSource,
   type SpeechEngine,
 } from "../lib/speech";
 import { useSettingsStore } from "./settings";
-import type { SettingsState } from "./settings";
+import type { SettingsStore } from "./settings";
 import type * as Domain from "../types/domain";
 
 interface Position {
@@ -25,7 +26,6 @@ interface PlayerState {
   sectionImages: Domain.SectionImage[];
   currentParagraphIndex: number;
   currentSentenceIndex: number;
-  voice: string;
   speed: number;
   isPlaying: boolean;
   isBuffering: boolean;
@@ -53,7 +53,6 @@ interface PlayerState {
   skipBack: () => Promise<void>;
   skipParagraphForward: () => Promise<void>;
   skipParagraphBack: () => Promise<void>;
-  setVoice: (voiceId: string) => void;
   setSpeed: (speed: number) => void;
   /**
    * The one place playback is allowed to change `ttsProvider`. Reachable only
@@ -81,12 +80,23 @@ const SPEECH_CACHE_LIMIT = 32;
 const LAST_IN_SECTION = Number.MAX_SAFE_INTEGER;
 
 /**
- * The engine in use, rebuilt only when the settings that define it change.
- * Holding it here rather than passing it around keeps every caller below from
- * having to know which engine is active — that decision happens once, in
- * `activeEngine`, and nowhere else in this file.
+ * The engine in use, rebuilt only when the settings that define it change,
+ * paired with the settings snapshot it was built from. Holding it here rather
+ * than passing it around keeps every caller below from having to know which
+ * engine is active — that decision happens once, in `activeEngine`, and
+ * nowhere else in this file.
+ *
+ * The snapshot travels with the engine because the two must never be read
+ * from different moments: `speechCacheKey` describes the audio an engine
+ * produced, so keying with settings newer than the engine files that engine's
+ * output under a key promising a voice it did not speak in.
  */
-let cachedEngine: { key: string; engine: SpeechEngine } | null = null;
+interface ActiveEngine {
+  engine: SpeechEngine;
+  settings: SettingsStore;
+}
+
+let cachedEngine: { key: string; active: ActiveEngine } | null = null;
 
 /** Aborts in-flight synthesis for the current utterance. See SpeechEngine. */
 let speechAbort: AbortController | null = null;
@@ -111,7 +121,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   sectionImages: [],
   currentParagraphIndex: 0,
   currentSentenceIndex: 0,
-  voice: "M1",
   speed: 1,
   isPlaying: false,
   isBuffering: false,
@@ -254,10 +263,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     await advanceByParagraph(set, get, -1);
   },
 
-  setVoice: (voiceId: string) => {
-    set({ voice: voiceId });
-  },
-
   setSpeed: (speed: number) => {
     set({ speed });
   },
@@ -269,11 +274,25 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     try {
       await useSettingsStore.getState().setTtsProvider("supertonic");
     } catch (error) {
-      // setTtsProvider/saveTtsSettings reject on a failed persist (after
-      // recording their own banner message) — surface that here too rather
+      // setTtsProvider rejects on a failed persist (after recording its own
+      // banner message) — surface that here too rather
       // than let it become an unhandled rejection, and stop before resuming
       // playback with a provider switch that may not have stuck.
-      set({ error: displayError(error), canSwitchToSupertonic: false });
+      // `canSwitchToSupertonic` stays true: this is the button the reader
+      // just pressed, and removing it on a transient "database is locked"
+      // leaves them stopped on the provider that failed with no way back in
+      // the player. Retrying is safe -- `setTtsProvider` applies nothing
+      // until its write lands, and those writes are serialized.
+      set({ error: displayError(error) });
+      return;
+    }
+
+    if (useSettingsStore.getState().ttsProvider !== "supertonic") {
+      // `setTtsProvider` resolves without applying when a later click
+      // supersedes it, so resolving is not the same as "Supertonic is now the
+      // provider". Falling through would take this button away and replay the
+      // sentence through the engine that just failed. Leave it for the reader
+      // to press again.
       return;
     }
 
@@ -311,8 +330,10 @@ async function speakCurrentSentence(
   const position = currentPosition(state);
   const requireInitialBuffer = options.requireInitialBuffer ?? true;
 
+  const { engine, settings } = activeEngine();
   await speakWithBufferedSpeech(
-    activeEngine(set),
+    engine,
+    settings,
     position,
     sentence,
     token,
@@ -323,40 +344,127 @@ async function speakCurrentSentence(
 }
 
 /**
- * Resolve the engine for the current settings, rebuilding it only when those
- * settings change.
+ * Everything about `settings` that changes which engine speaks, or how.
  *
- * A voice id means something only to the engine that offered it, so switching
- * engines resets the reader's voice to the new engine's default rather than
- * handing it an id it cannot interpret.
+ * Per provider, not a union of all of them: a key folding in every provider's
+ * settings unconditionally means saving a Supertonic voice style rebuilds a
+ * *Fish* engine and re-keys its whole prefetch buffer, re-buying sentences the
+ * reader has already paid Fish for. The Supertonic settings card renders
+ * whatever provider is active, so that is a click away, not a corner case.
+ *
+ * Every setting an engine captures at construction time (not just per-call)
+ * must be in its branch, or changing it silently has no effect until the
+ * reader switches providers and back. Supertonic captures `language` and
+ * `supertonicVoiceStyle` (see supertonicEngine.ts); Fish captures
+ * `fishVoiceId` (see fishEngine.ts).
  */
-function activeEngine(set: (partial: Partial<PlayerState>) => void) {
+/**
+ * Whether these rows are the reader's, or DEFAULT_SETTINGS standing in.
+ *
+ * `hydrateFailed` alone cannot say: it is false both when the load succeeded
+ * and when it has not finished, and only the first is the reader's. A slow
+ * `get_all_settings` and an early Play would otherwise build Supertonic from
+ * defaults with permission to fetch its model -- the same defaults a *failed*
+ * load refuses.
+ */
+function settingsSource(settings: SettingsStore): SettingsSource {
+  if (!settings.hydrated) {
+    return "unloaded";
+  }
+  return settings.hydrateFailed ? "failed" : "loaded";
+}
+
+/**
+ * Everything about `settings` that changes how a sentence *sounds*.
+ *
+ * Per provider, not a union of all of them: a key folding in every provider's
+ * settings unconditionally means saving a Supertonic voice style rebuilds a
+ * *Fish* engine and re-keys its whole prefetch buffer, re-buying sentences the
+ * reader has already paid Fish for.
+ *
+ * This is what `speechCacheKey` is built from, so it must contain nothing
+ * that leaves the audio identical -- see `engineKey`.
+ */
+function voiceKey(settings: SettingsStore): string {
+  switch (settings.ttsProvider) {
+    case "supertonic":
+      return [
+        "supertonic",
+        settings.supertonicLanguage,
+        settings.supertonicVoiceStyle,
+      ].join(":");
+    case "fish":
+      return ["fish", settings.fishVoiceId].join(":");
+  }
+}
+
+/**
+ * When the engine has to be rebuilt: the voice, plus where the settings came
+ * from. The engine captures the source -- one built from a guess refuses to
+ * fetch Supertonic's model -- and anything captured has to be here, or it
+ * goes stale in both directions: an engine cached before a failure keeps
+ * permission it should have lost, and one cached during it keeps refusing
+ * after a retry that loaded rows identical to the defaults, with no way out
+ * but a restart.
+ *
+ * Deliberately wider than `voiceKey`, and deliberately not what the speech
+ * cache is keyed on. The source changes what the engine may *do*, never what
+ * it produces, so folding it into the cache key would orphan a whole prefetch
+ * buffer the moment a retry succeeded -- re-synthesizing sentences that were
+ * already correct.
+ */
+function engineKey(settings: SettingsStore): string {
+  return `${voiceKey(settings)}:${settingsSource(settings)}`;
+}
+
+/**
+ * Resolve the engine for the current settings, rebuilding it only when the
+ * settings that define it change, and pair it with the snapshot it was built
+ * from.
+ *
+ * Pure apart from the memo: the player used to mirror the engine's default
+ * voice into its own `voice` field from here, which meant that field was
+ * right only at the moments this happened to run. Whoever needs the voice
+ * asks the engine for it instead -- it is the only thing that ever knew.
+ *
+ * Deliberately not gated on `hydrated`, unlike the two settings panels. Those
+ * mount on their own routes and can beat `hydrate()`; this runs from the
+ * Reader, which `AppShell` only mounts once the reader navigates there from
+ * the default library route -- long after the one `get_all_settings` invoke
+ * App fires on mount. Anything that made the Reader reachable at launch (a
+ * restored session, a deep link) would need this to wait for hydration, or a
+ * cold start would speak the first sentence through DEFAULT_SETTINGS: on
+ * Supertonic in "M1", whatever the reader had actually chosen.
+ *
+ * A hydrate *failure* lands in that same state and `hydrated` does not say
+ * so, which is what `hydrateFailed` is for. Playback keeps going on the
+ * defaults rather than refusing -- silence helps nobody -- and Settings
+ * carries the banner and the retry that gets the real rows back.
+ */
+function activeEngine(): ActiveEngine {
   const settings = useSettingsStore.getState();
-  // Every setting an engine captures at construction time (not just per-call)
-  // must be in this key, or changing it silently has no effect until the
-  // reader switches providers and back. Supertonic only captures `language`
-  // (its voice is passed per-synthesize call, see supertonicEngine.ts); Fish
-  // captures `fishVoiceId` (see fishEngine.ts).
-  const key = [
-    settings.ttsProvider,
-    settings.supertonicLanguage,
-    settings.fishVoiceId,
-  ].join(":");
+  const key = engineKey(settings);
 
   if (cachedEngine?.key !== key) {
-    const previous = cachedEngine?.engine;
-    const engine = createSpeechEngine(settings);
-    cachedEngine = { key, engine };
-    if (previous && previous.id !== engine.id) {
-      set({ voice: engine.defaultVoice });
-    }
+    cachedEngine = {
+      key,
+      active: {
+        engine: createSpeechEngine({
+          ...settings,
+          settingsSource: settingsSource(settings),
+        }),
+        settings,
+      },
+    };
   }
 
-  return cachedEngine.engine;
+  return cachedEngine.active;
 }
 
 async function speakWithBufferedSpeech(
   engine: SpeechEngine,
+  /** The snapshot `engine` was built from — never re-read the store here. */
+  settings: SettingsStore,
   position: Position,
   sentence: string,
   token: number,
@@ -378,7 +486,7 @@ async function speakWithBufferedSpeech(
   });
 
   try {
-    void fillSpeechBuffer(engine, lookaheadPositions, token, get);
+    void fillSpeechBuffer(engine, settings, lookaheadPositions, token, get);
     if (requireInitialBuffer) {
       const initialPositions = lookaheadPositions.slice(
         0,
@@ -386,6 +494,7 @@ async function speakWithBufferedSpeech(
       );
       await fillSpeechBuffer(
         engine,
+        settings,
         initialPositions,
         token,
         get,
@@ -399,12 +508,21 @@ async function speakWithBufferedSpeech(
       );
     }
 
+    // Deliberately not guarded the way `fillSpeechBuffer` is. If a settings
+    // save landed while the buffer above was filling, that guard has already
+    // stopped the lookahead -- but this sentence still goes through the
+    // superseded engine, in the voice the reader just replaced, and is filed
+    // under its old key. Bailing instead would stop playback dead with
+    // nothing queued to take over, which is worse than one sentence of lag;
+    // the new voice takes over at the next `speakCurrentSentence`. The blob is
+    // read by the very playback below, so nothing is bought unheard -- only a
+    // replay of this one sentence would miss the cache.
     const blob = await cachedSpeechBlob({
       engine,
       position,
       speechText: sentenceSpeechAtPosition(get(), position) ?? sentence,
       state: get(),
-      settings: useSettingsStore.getState(),
+      settings,
       onStatus: (bufferingMessage) => {
         if (token === utteranceToken && get().isPlaying) {
           set({ bufferingMessage });
@@ -418,6 +536,7 @@ async function speakWithBufferedSpeech(
     await playGeneratedAudio(blob, token, set, get);
     void fillSpeechBuffer(
       engine,
+      settings,
       speechPositionsFromCurrent(get(), SPEECH_LOOKAHEAD_SENTENCES),
       token,
       get,
@@ -479,10 +598,10 @@ async function cachedSpeechBlob({
   /** Already in spoken form — see Paragraph.sentenceSpeech. */
   speechText: string;
   state: PlayerState;
-  settings: SettingsState;
+  settings: SettingsStore;
   onStatus?: (status: string) => void;
 }) {
-  const key = speechCacheKey(engine, position, speechText, state, settings);
+  const key = speechCacheKey(position, speechText, state, settings);
   const cached = speechCache.get(key);
   if (cached) {
     cached.lastUsed = Date.now();
@@ -493,7 +612,7 @@ async function cachedSpeechBlob({
     // Cold engines report progress while they load; synthesis itself does not.
     await engine.ensureReady(onStatus);
     return engine.synthesize(
-      { text: speechText, voice: state.voice, speed: state.speed },
+      { text: speechText, speed: state.speed },
       speechAbort?.signal,
     );
   })().catch((error) => {
@@ -508,6 +627,8 @@ async function cachedSpeechBlob({
 
 async function fillSpeechBuffer(
   engine: SpeechEngine,
+  /** See `speakWithBufferedSpeech` — this must be `engine`'s own snapshot. */
+  settings: SettingsStore,
   positions: Position[],
   token: number,
   get: () => PlayerState,
@@ -517,13 +638,25 @@ async function fillSpeechBuffer(
     return;
   }
 
-  const settings = useSettingsStore.getState();
+  // What this engine was built for. Compared against the live store below to
+  // decide whether to keep going -- never to build a key. Keys come from
+  // `settings` and only from `settings`; that is what keeps an engine's audio
+  // from being filed under another engine's name.
+  const builtFor = engineKey(settings);
   let ready = 0;
   let cursor = 0;
 
   async function worker() {
     while (cursor < positions.length) {
       if (token !== utteranceToken || !get().isPlaying) {
+        return;
+      }
+      // The settings moved on, so this engine's output is already unreachable
+      // -- every sentence it files lands under `builtFor`, which nothing will
+      // read again, while the engine that replaced it re-synthesizes the same
+      // positions. Fish bills for both. The token guard above cannot catch
+      // this: auto-advance reuses the token, so nothing bumps it.
+      if (engineKey(useSettingsStore.getState()) !== builtFor) {
         return;
       }
 
@@ -560,34 +693,31 @@ async function fillSpeechBuffer(
 }
 
 function speechCacheKey(
-  engine: SpeechEngine,
   position: Position,
   text: string,
   state: PlayerState,
-  settings: SettingsState,
+  settings: SettingsStore,
 ) {
   const section = state.sections[position.sectionIndex];
   const paragraph = state.paragraphs[position.paragraphIndex];
-  // Engine-specific settings are folded in unconditionally rather than per
-  // engine: a superset key costs an occasional extra synthesis after a settings
-  // change, where a too-narrow one would serve audio in the wrong voice.
+  // The engine's own settings, via `voiceKey` -- the half of `engineKey` that
+  // decides how a sentence sounds -- so the key and the engine can never
+  // disagree about what makes audio stale, and one provider's settings never
+  // invalidate another's buffered audio.
+  //
+  // Deliberately NOT `state.voice`. Both engines take their voice from
+  // settings, so `engineKey` already carries it; adding the field too meant
+  // `activeEngine` rewriting it on a provider swap orphaned every entry the
+  // previous provider had already been billed for, and switching back bought
+  // them again.
   return JSON.stringify({
-    engine: engine.id,
+    engine: voiceKey(settings),
     documentId: state.document?.id ?? "",
     sectionId: section?.id ?? "",
     paragraphId: paragraph?.id ?? "",
     sentenceIndex: position.sentenceIndex,
     text,
-    voice: state.voice,
     speed: state.speed,
-    supertonicLanguage: settings.supertonicLanguage,
-    // Fish's voice does not travel through `state.voice`: it is captured at
-    // engine construction from settings, and a change to it keeps
-    // `engine.id === "fish"`, so `activeEngine` rebuilds the engine without
-    // resetting `state.voice`. Every other field above would be identical
-    // across the change, and the buffered sentences would replay in the old
-    // voice while new ones used the new one.
-    fishVoiceId: settings.fishVoiceId,
   });
 }
 
@@ -1061,7 +1191,16 @@ async function persistPlaybackState(state: PlayerState) {
       paragraphId: paragraph.id,
       sentenceIndex: state.currentSentenceIndex,
       sentenceOffsetMs: 0,
-      voiceId: state.voice,
+      // The voice the settings select as of this write, asked for at write
+      // time rather than mirrored into player state: this runs on load and on
+      // every seek, not only while speaking, so any cached copy is right only
+      // at the moments something happens to refresh it. Not necessarily the
+      // voice this sentence was synthesized in -- a style saved while it was
+      // buffering lands here first. Empty for Fish with no voice configured,
+      // which is what `createFishEngine` reports and is truer than naming a
+      // voice from the other provider. Building an engine is plain object
+      // construction; nothing downloads or synthesizes until `ensureReady`.
+      voiceId: activeEngine().engine.defaultVoice,
       speed: state.speed,
       updatedAt: new Date().toISOString(),
     });

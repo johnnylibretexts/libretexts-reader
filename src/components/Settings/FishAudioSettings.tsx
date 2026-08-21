@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ExternalLink,
@@ -36,6 +36,11 @@ export function FishAudioSettings({
 }: FishAudioSettingsProps) {
   const fishVoiceId = useSettingsStore((state) => state.fishVoiceId);
   const saveTtsSettings = useSettingsStore((state) => state.saveTtsSettings);
+  // The store is showing DEFAULT_SETTINGS rather than the reader's rows (see
+  // `hydrateFailed`), so "Current voice id" below reads as unset whatever
+  // they actually have saved. Choosing here would write over a voice this panel
+  // never showed them -- the same reason Settings disables Save.
+  const settingsFailed = useSettingsStore((state) => state.hydrateFailed);
 
   const [keyStatus, setKeyStatus] = useState<FishKeyStatus | null>(null);
   const [keyStatusError, setKeyStatusError] = useState<string | null>(null);
@@ -50,8 +55,48 @@ export function FishAudioSettings({
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [customVoiceId, setCustomVoiceId] = useState("");
   const [savingVoice, setSavingVoice] = useState(false);
-  const [voiceSaved, setVoiceSaved] = useState(false);
+  /**
+   * Which control's save just succeeded, so only that one shows the tick.
+   * Shared, it put a green check on the pasted-id button after a save started
+   * from the dropdown -- on a button simultaneously disabled because no id
+   * was pasted, for a paste that never happened.
+   */
+  const [savedFrom, setSavedFrom] = useState<"list" | "pasted" | null>(null);
+  const savedTimer = useRef<number | null>(null);
+
+  /**
+   * Shows the tick for a moment, replacing any tick still counting down.
+   * A bare `setTimeout` let an earlier save's timer clear a later save's
+   * confirmation -- two saves inside 1.6s and the second showed none -- and
+   * kept firing after the reader navigated away.
+   */
+  function showSavedFor(from: "list" | "pasted") {
+    if (savedTimer.current !== null) {
+      window.clearTimeout(savedTimer.current);
+    }
+    setSavedFrom(from);
+    savedTimer.current = window.setTimeout(() => {
+      savedTimer.current = null;
+      setSavedFrom(null);
+    }, 1600);
+  }
+
+  useEffect(
+    () => () => {
+      if (savedTimer.current !== null) {
+        window.clearTimeout(savedTimer.current);
+      }
+    },
+    [],
+  );
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  // The voice a save is currently writing. `saveTtsSettings` applies only
+  // once the write lands, so without this the select -- controlled off the
+  // store -- renders the *previous* voice for the whole round trip and the
+  // reader watches their pick snap back.
+  const [savingVoiceId, setSavingVoiceId] = useState<string | null>(null);
+  /** Which control started the save, so only that one shows it running. */
+  const [savingFrom, setSavingFrom] = useState<"list" | "pasted" | null>(null);
 
   // No network call -- safe to run on mount, per `key_status_from` in
   // `commands/fish.rs`.
@@ -183,45 +228,58 @@ export function FishAudioSettings({
     }
   }
 
-  async function persistVoice(voiceId: string) {
+  async function persistVoice(voiceId: string, from: "list" | "pasted") {
     const trimmed = voiceId.trim();
     if (!trimmed) {
       return;
     }
 
     setSavingVoice(true);
+    setSavingVoiceId(trimmed);
+    setSavingFrom(from);
     setVoiceError(null);
-    setVoiceSaved(false);
+    setSavedFrom(null);
     try {
-      // saveTtsSettings rethrows on a failed persist (after recording the
-      // message in the shared settings store for the banner elsewhere), so
-      // this ordinary try/catch is what detects a failure -- not a read of
-      // the store's mutable `error` field, which a concurrent unrelated
-      // settings action (e.g. a Supertonic save in flight) could otherwise
-      // overwrite or clear out from under this call.
+      // saveTtsSettings reports a failed persist only by rejecting -- it does
+      // not touch the store's shared `error` field, precisely so this catch
+      // is the single place the message comes from. Reading that field
+      // instead would be unreliable anyway: a concurrent unrelated settings
+      // action could overwrite or clear it out from under this call.
       await saveTtsSettings({ fishVoiceId: trimmed });
       setCustomVoiceId("");
-      setVoiceSaved(true);
-      window.setTimeout(() => setVoiceSaved(false), 1600);
+      showSavedFor(from);
     } catch (error) {
       setVoiceError(displayError(error));
     } finally {
       setSavingVoice(false);
+      setSavingVoiceId(null);
+      setSavingFrom(null);
     }
   }
 
   // A sentinel, not a real Fish voice id, so it can never collide with one.
   const PASTED_VOICE_OPTION = "__pasted-voice__";
 
+  // The voice as of the reader's latest intent: while a save is in flight,
+  // what they just chose; otherwise what is stored. Everything below derives
+  // from this one value rather than each deciding for itself -- deriving
+  // `selectedVoiceOption` from the pending pick while `isPastedVoice` still
+  // came from the stored id gave the <select> a value whose <option> was not
+  // rendered, so a pasted save blanked the control to "Choose a voice" for
+  // the whole round trip. `saveTtsSettings` applies only once the write
+  // lands, so the stored id is precisely the one that has not caught up yet.
+  const effectiveVoiceId = savingVoiceId ?? fishVoiceId;
+
   const isKnownVoice =
-    !!fishVoiceId && !!voices?.some((voice) => voice.id === fishVoiceId);
+    !!effectiveVoiceId &&
+    !!voices?.some((voice) => voice.id === effectiveVoiceId);
   // The common case: the reader's chosen voice is a public model they don't
   // own, so it never appears in `voices` (their own models only). Without
   // this, the <select> falls back to its blank "Choose a voice" option and
   // reads as "nothing selected" even though a voice is very much in effect.
-  const isPastedVoice = !!fishVoiceId && !isKnownVoice;
+  const isPastedVoice = !!effectiveVoiceId && !isKnownVoice;
   const selectedVoiceOption = isKnownVoice
-    ? (fishVoiceId as string)
+    ? (effectiveVoiceId as string)
     : isPastedVoice
       ? PASTED_VOICE_OPTION
       : "";
@@ -348,16 +406,32 @@ export function FishAudioSettings({
           </p>
         ) : (
           <label className="mt-2 flex flex-col gap-2 text-sm font-medium">
-            Your voices
+            <span className="flex items-center gap-2">
+              Your voices
+              {savingFrom === "list" ? (
+                // `aria-hidden` so the select's accessible name stays "Your
+                // voices" rather than becoming "Your voices Saving...". The
+                // status reaches assistive tech through `aria-busy` on the
+                // select instead, which is what it describes.
+                <span
+                  aria-hidden="true"
+                  className="inline-flex items-center gap-1 text-xs font-normal text-neutral-500 dark:text-neutral-400"
+                >
+                  <Loader2 className="size-3 animate-spin" />
+                  Saving...
+                </span>
+              ) : null}
+            </span>
             <select
+              aria-busy={savingFrom === "list"}
               className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-              disabled={savingVoice}
+              disabled={savingVoice || settingsFailed}
               onChange={(event) => {
                 if (
                   event.target.value &&
                   event.target.value !== PASTED_VOICE_OPTION
                 ) {
-                  void persistVoice(event.target.value);
+                  void persistVoice(event.target.value, "list");
                 }
               }}
               value={selectedVoiceOption}
@@ -409,13 +483,17 @@ export function FishAudioSettings({
               />
               <button
                 className="inline-flex h-10 shrink-0 items-center gap-2 rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                disabled={customVoiceId.trim().length === 0 || savingVoice}
-                onClick={() => void persistVoice(customVoiceId)}
+                disabled={
+                  customVoiceId.trim().length === 0 ||
+                  savingVoice ||
+                  settingsFailed
+                }
+                onClick={() => void persistVoice(customVoiceId, "pasted")}
                 type="button"
               >
-                {savingVoice ? (
+                {savingFrom === "pasted" ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                ) : voiceSaved ? (
+                ) : savedFrom === "pasted" ? (
                   <Check className="size-4" aria-hidden="true" />
                 ) : (
                   <Save className="size-4" aria-hidden="true" />
@@ -426,9 +504,25 @@ export function FishAudioSettings({
           </label>
         </div>
 
+        {/*
+          `effectiveVoiceId`, like everything else here: reading the stored id
+          left this naming the previous voice for the whole round trip while
+          the select beside it already said "Using a pasted voice id
+          (current)" -- two controls, side by side, disagreeing about which
+          voice is current.
+        */}
+        {settingsFailed ? (
+          <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-300">
+            Your saved settings could not be loaded, so the voice below reads
+            as unset whatever you actually have. Choosing here is off until
+            they load, so this cannot write over it -- retry the load from the
+            Supertonic settings above.
+          </p>
+        ) : null}
+
         <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-          {fishVoiceId
-            ? `Current voice id: ${fishVoiceId}`
+          {effectiveVoiceId
+            ? `Current voice id: ${effectiveVoiceId}`
             : "No voice selected yet."}
         </p>
 

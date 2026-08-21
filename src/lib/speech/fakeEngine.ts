@@ -68,7 +68,7 @@ export function createFakeEngine(
 
       throwIfAborted(signal);
       // Content differs per request so tests can tell two results apart.
-      return new Blob([`audio:${request.voice}:${request.speed}:${request.text}`], {
+      return new Blob([`audio:${request.speed}:${request.text}`], {
         type: "audio/wav",
       });
     },

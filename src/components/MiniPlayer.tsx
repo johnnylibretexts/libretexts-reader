@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Pause,
   Play,
@@ -13,6 +14,7 @@ interface MiniPlayerProps {
 }
 
 export function MiniPlayer({ onClose }: MiniPlayerProps) {
+  const [switching, setSwitching] = useState(false);
   const document = usePlayerStore((state) => state.document);
   const sections = usePlayerStore((state) => state.sections);
   const currentSectionIndex = usePlayerStore(
@@ -46,11 +48,20 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
           <span className="truncate">{error}</span>
           {canSwitchToSupertonic ? (
             <button
-              className="shrink-0 rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-red-800 dark:text-red-200 dark:hover:bg-red-900/40"
+              aria-busy={switching}
+              className="shrink-0 rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800 dark:text-red-200 dark:hover:bg-red-900/40"
+              disabled={switching}
               type="button"
-              onClick={() => void switchToSupertonic()}
+              // `switchToSupertonic` writes the provider row and only applies
+              // it once that lands, so nothing on screen moves until then --
+              // and a second click starts a second `speakCurrentSentence`,
+              // which cancels the utterance the first one had just begun.
+              onClick={() => {
+                setSwitching(true);
+                void switchToSupertonic().finally(() => setSwitching(false));
+              }}
             >
-              Switch to Supertonic
+              {switching ? "Switching..." : "Switch to Supertonic"}
             </button>
           ) : null}
         </div>
