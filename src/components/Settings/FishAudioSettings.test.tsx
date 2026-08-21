@@ -134,4 +134,83 @@ describe("FishAudioSettings", () => {
 
     land();
   });
+  it("confirms a save started from the voices dropdown", async () => {
+    // `savedFrom === "list"` was set and then rendered nowhere: the only
+    // reader of it is the pasted-id button, which checks for "pasted". So a
+    // dropdown save spun and then went silent -- the select snapped to the
+    // new voice with nothing saying the write landed, on the one control
+    // where the value changing is also what a *failed* save looks like.
+    listFishVoices.mockResolvedValue([
+      voice("own-1", "My Own Voice"),
+      voice("own-2", "Another Voice"),
+    ]);
+    useSettingsStore.setState({ fishVoiceId: "own-1" });
+    const user = userEvent.setup();
+    render(<FishAudioSettings />);
+
+    // The option, not just the select: `keyStatus` resolving renders the
+    // dropdown one commit before the voices effect sets `loadingVoices`, so
+    // there is a window where it is on screen holding "No voice models yet".
+    await screen.findByRole("option", { name: "Another Voice" });
+    await user.selectOptions(screen.getByLabelText("Your voices"), ["own-2"]);
+
+    expect(await screen.findByText("Voice saved")).toBeInTheDocument();
+  });
+
+  it("keeps the dropdown confirmation off a pasted save", async () => {
+    // The tick used to be shared state, which put it on whichever control
+    // the reader had not used. Splitting `savedFrom` fixed that direction;
+    // this holds the other one -- the pasted-id button has its own tick and
+    // must not also light up the dropdown's line.
+    listFishVoices.mockResolvedValue([voice("own-1", "My Own Voice")]);
+    const user = userEvent.setup();
+    render(<FishAudioSettings />);
+
+    await screen.findByRole("option", { name: "My Own Voice" });
+    await user.type(screen.getByPlaceholderText("Voice id"), "public-42");
+    await user.click(screen.getByRole("button", { name: /Use voice/ }));
+
+    await waitFor(() => expect(setSetting).toHaveBeenCalled());
+    expect(screen.queryByText("Voice saved")).not.toBeInTheDocument();
+  });
+  it("announces a pasted save on the pasted control", async () => {
+    // The button's tick is an `aria-hidden` icon and its name stays "Use
+    // voice", so the save landed with nothing announced at all -- the same
+    // silence the dropdown had, on the control that was supposed to be the
+    // one already covered.
+    listFishVoices.mockResolvedValue([voice("own-1", "My Own Voice")]);
+    const user = userEvent.setup();
+    render(<FishAudioSettings />);
+
+    await screen.findByRole("option", { name: "My Own Voice" });
+    await user.type(screen.getByPlaceholderText("Voice id"), "public-42");
+    await user.click(screen.getByRole("button", { name: /Use voice/ }));
+
+    expect(await screen.findByText("Pasted voice id saved")).toBeInTheDocument();
+  });
+
+  it("retires the tick with the key whose voices it confirmed", async () => {
+    // The confirmation outlives the select it sits under: Remove inside the
+    // 1.6s window swapped the dropdown for "Add an API key above to see your
+    // saved voices." and left "Voice saved" underneath it, still confirming
+    // a save against an account whose key is gone.
+    listFishVoices.mockResolvedValue([
+      voice("own-1", "My Own Voice"),
+      voice("own-2", "Another Voice"),
+    ]);
+    useSettingsStore.setState({ fishVoiceId: "own-1" });
+    const user = userEvent.setup();
+    render(<FishAudioSettings />);
+
+    await screen.findByRole("option", { name: "Another Voice" });
+    await user.selectOptions(screen.getByLabelText("Your voices"), ["own-2"]);
+    expect(await screen.findByText("Voice saved")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(
+      await screen.findByText(/Add an API key above/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Voice saved")).not.toBeInTheDocument();
+  });
 });

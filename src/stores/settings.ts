@@ -76,11 +76,13 @@ export interface SettingsStore extends SettingsState {
    * provider switch keeps saying so while an unrelated save succeeds beside
    * it -- which is accurate, the provider change really did not stick.
    *
-   * `hydrate` is the exception, because it runs once: a failed load leaves
-   * its message up for the session, dismissed only by a later theme or
-   * provider action succeeding. That is deliberate -- the panel is showing
-   * DEFAULT_SETTINGS rather than the reader's stored rows, and an unrelated
-   * save succeeding does not make that any less true.
+   * `hydrate` is no exception, and it is the case where that matters most:
+   * a failed load holds this field until another `hydrate` clears it, which
+   * in practice means the reader's retry. A theme or provider action
+   * succeeding beside it does nothing -- `releaseBanner` no-ops for anyone
+   * but the owner. That is deliberate: the panel is showing DEFAULT_SETTINGS
+   * rather than the reader's stored rows, and an unrelated save succeeding
+   * does not make that any less true.
    */
   error: string | null;
   hydrate: () => Promise<void>;

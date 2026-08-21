@@ -14,6 +14,13 @@ import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
 import { requiresExportConfirmation } from "./exportGate";
 
+/**
+ * The settings snapshot the export drafts were seeded from: the reader's
+ * stored rows, or the built-ins the store reports while a load has failed.
+ * `null` before either exists.
+ */
+type SeedSignal = "defaults" | "stored" | null;
+
 export function SupertonicChapterExport() {
   const document = usePlayerStore((state) => state.document);
   const sections = usePlayerStore((state) => state.sections);
@@ -107,14 +114,28 @@ export function SupertonicChapterExport() {
   // `hydrate()` they capture the built-in defaults. Keyed on the hydration
   // transition rather than on the rows, so a later change to those rows
   // cannot pull a pick out from under the reader.
-  const [seeded, setSeeded] = useState(false);
+  //
+  // Which settings snapshot this render is looking at, against the one the
+  // drafts were last seeded from. A boolean `seeded` could not say that: on
+  // the retry it was already true, so it gated nothing in the commit where
+  // re-seeding was queued -- see the estimate effect below, which priced the
+  // chapter for the pre-retry defaults there. This is computed *during*
+  // render, so the two differ in that same commit and every effect in it
+  // agrees the drafts are stale.
+  const seedSignal: SeedSignal = !settingsHydrated
+    ? null
+    : settingsFailed
+      ? "defaults"
+      : "stored";
+  const [seededFrom, setSeededFrom] = useState<SeedSignal>(null);
+  const seeded = seedSignal !== null && seededFrom === seedSignal;
   // One flag per draft: they are independent picks, and a shared one would
   // make re-seeding all-or-nothing -- touching Voice would freeze Language on
   // whatever it happened to hold.
   const voiceChosen = useRef(false);
   const languageChosen = useRef(false);
   useEffect(() => {
-    if (!settingsHydrated) {
+    if (seedSignal === null) {
       return;
     }
     const settings = useSettingsStore.getState();
@@ -129,13 +150,14 @@ export function SupertonicChapterExport() {
     if (!languageChosen.current) {
       setLanguage(settings.supertonicLanguage);
     }
-    setSeeded(true);
-    // `settingsFailed` is in the deps so a retry from Settings that finally
-    // brings the reader's rows in re-seeds these drafts; `settingsHydrated`
-    // is already true by then and would never fire again on its own. The
-    // panel still renders on the failure path -- see the notice below -- so
-    // this seeds the defaults meanwhile rather than leaving it blank.
-  }, [settingsHydrated, settingsFailed]);
+    setSeededFrom(seedSignal);
+    // A retry from Settings changes `seedSignal` from "defaults" to "stored",
+    // which is what re-seeds these drafts with the reader's real rows;
+    // `settingsHydrated` is already true by then and would never fire this
+    // again on its own. The panel still renders on the failure path -- see
+    // the notice below -- so this seeds the defaults meanwhile rather than
+    // leaving it blank.
+  }, [seedSignal]);
 
   // A provider or section change invalidates any confirmation already on
   // screen -- it named a character count and provider that no longer apply.
@@ -159,8 +181,11 @@ export function SupertonicChapterExport() {
     // effect above calls setState but *this* effect still holds the
     // pre-hydration draft. Gating on hydration let it price the chapter for
     // the built-in "M1" once before re-firing with the reader's row -- and on
-    // Fish, reach the network to do it. `seeded` only turns true in a later
-    // commit, by which point the draft it reads is the one it reports.
+    // Fish, reach the network to do it. `seeded` compares the snapshot the
+    // drafts came from against the one this render sees, so it is false in
+    // the commit a change arrives and stays false until the drafts catch up
+    // -- on a retry as well as on the first load, where a flag the seeding
+    // effect merely set could only cover the first.
     if (!document || !section || !fishVoiceReady || !seeded) {
       setEstimateError(null);
       // Cleared here too: a run cancelled by a dependency change skips its own
