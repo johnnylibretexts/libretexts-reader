@@ -78,8 +78,26 @@ cargo test -p libretexts-reader
 git diff --check
 ```
 
-## 4. Architectures
+## 4. Platforms and architectures
+
+**A release builds macOS only.** `bundle.targets` in `tauri.conf.json` is
+`["dmg", "app"]`, and `release.yml` is a single macOS job.
+
+`msi` and `nsis` used to appear in that list. They never produced anything: the Tauri
+bundler **silently** filters package types to the host platform, so on a macOS runner
+those two were dropped with no error and no warning. Config that looks like support but
+builds nothing is how a maintainer later assumes a platform is covered when it never was,
+so the list now states what is actually produced.
+
+The `bundle.windows.wix` block and `icons/icon.ico` are deliberately kept — they are
+configuration for *if* Windows is built, not a claim that it is. Adding Windows means a
+second `release.yml` job plus an Authenticode signing story, and Linux means adding
+`deb`/`appimage`/`rpm` to the targets list (absent today, so a Linux build emits
+"No bundles were built"). `build.rs` already carries PDFium and ffmpeg assets for
+`x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, and `aarch64-unknown-linux-gnu`,
+so the groundwork survives either way. See #67.
 
 The default build targets the host (Apple Silicon `aarch64`). For Intel/universal
 builds, install the `x86_64-apple-darwin` target and provide x86_64 ffmpeg/pdfium
-libraries signed the same way.
+libraries signed the same way. Intel macOS is unbuilt and untested — a release is
+Apple-Silicon only unless someone does that work.
