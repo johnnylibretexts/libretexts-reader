@@ -7,8 +7,8 @@ export function EmptyState() {
         <BookOpen className="size-6" aria-hidden="true" />
       </div>
       <p className="max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
-        Get started by importing OpenStax, LibreTexts, EPUB, PDF, or pasted
-        text.
+        Get started by importing a book from OpenStax, LibreTexts, or
+        Pressbooks — or bring your own EPUB, PDF, article link, or pasted text.
       </p>
     </div>
   );
