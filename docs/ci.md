@@ -29,6 +29,12 @@ this repo is **public**, a self-hosted runner is only safe under these rules
 
 ## One-time setup
 
+> **Run `scripts/release-setup.sh` instead of doing the four steps below by
+> hand.** It checks each precondition before the step that needs it, refuses to
+> continue when one did not take, and finishes by triggering the dry run. The
+> steps are kept here as the reference for what it does. Neither your keychain
+> password nor the runner registration token is written anywhere by it.
+
 > Values in angle brackets below (`<Your Name>`, `<TEAMID>`, `<REG_TOKEN>`,
 > `<login-keychain-password>`) are fill-ins for the operator running these
 > commands locally — do not commit real credentials (especially the keychain
@@ -65,8 +71,14 @@ this repo is **public**, a self-hosted runner is only safe under these rules
 ## Cutting a release
 
 ```bash
-# 1. Bump the version in all three files if needed (Cargo.toml, package.json,
-#    src-tauri/tauri.conf.json) and commit.
+# 1. Bump the version if needed. It lives in FIVE places, and check-version.sh
+#    only guards the first three:
+#      Cargo.toml, package.json, src-tauri/tauri.conf.json   (edit by hand)
+#      package-lock.json   -> npm install --package-lock-only
+#      Cargo.lock          -> cargo check -p libretexts-reader
+#    The lockfiles matter: release.yml runs `npm ci`, which fails outright when
+#    package-lock.json disagrees with package.json. Then commit.
+#    Verify with: scripts/ci/check-version.sh <version>
 # 2. Start the runner on the release Mac:
 ./run.sh            # (in the runner install dir; exits after one job if --ephemeral)
 # 3. Push the tag:
