@@ -58,9 +58,27 @@ codesign --force --options runtime --timestamp --sign "$ID" \
 
 ```bash
 export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
-npm run tauri:build
 
-DMG="target/release/bundle/dmg/LibreTexts Reader_0.1.0_aarch64.dmg"
+# CI=true is load-bearing for a LOCAL build and is not optional. Without it,
+# `tauri build` gets all the way through compiling and bundling the .app and
+# then dies in bundle_dmg.sh:
+#
+#   execution error: Finder got an error: AppleEvent timed out. (-1712)
+#   Failed running AppleScript
+#
+# That step is pure Finder cosmetics (window size, icon positions) and it
+# needs a GUI session to drive Finder, which a terminal over SSH or an
+# automation shell does not have. CI=true makes the bundler pass
+# --skip-jenkins, which skips it; the DMG is otherwise identical.
+#
+# release.yml does NOT need this line -- the Actions runner sets CI=true
+# itself, on self-hosted runners too. It is only the by-hand path that trips.
+CI=true npm run tauri:build
+
+# Derived, not hard-coded -- this is the same expression release.yml uses, so
+# the runbook and the workflow cannot disagree about the filename.
+VERSION="$(node -e "process.stdout.write(String(require('./src-tauri/tauri.conf.json').version))")"
+DMG="target/release/bundle/dmg/LibreTexts Reader_${VERSION}_aarch64.dmg"
 xcrun notarytool submit "$DMG" --keychain-profile jr-notary --wait
 xcrun stapler staple "$DMG"
 xcrun stapler staple "target/release/bundle/macos/LibreTexts Reader.app"

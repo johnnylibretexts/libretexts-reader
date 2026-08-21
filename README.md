@@ -40,7 +40,7 @@ npm run tauri:build
 On macOS, successful local builds produce:
 
 - `target/release/bundle/macos/LibreTexts Reader.app`
-- `target/release/bundle/dmg/LibreTexts Reader_0.1.0_aarch64.dmg`
+- `target/release/bundle/dmg/LibreTexts Reader_<version>_aarch64.dmg`
 
 Supertonic playback and chapter MP3 export run through the Rust ONNX Runtime
 backend with on-demand model downloads.

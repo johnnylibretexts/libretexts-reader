@@ -69,6 +69,14 @@ Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p libret
 - **Tauri asset protocol must stay enabled** for downloaded local images to render (`convertFileSrc` → `asset:`). It's wired in `tauri.conf.json` (`app.security.assetProtocol` scoped to `$APPDATA/covers/**` + `images/**`, and the CSP `img-src`) and the `protocol-asset` Tauri feature in `Cargo.toml`. If local images don't show, check CSP + asset protocol first.
 - **Content import is paragraph-flow, not a layout clone.** Figures are anchored to a nearby paragraph (`anchor_paragraph_ordinal`); tables/sidebars/exercises are flattened or skipped. Imports made before migration `0004` have null anchors — reimport to test placement.
 - **Math** is encoded at import as one of two tokens — `[[mathml:<base64>]]` for MathML markup, `[[latex:<base64>]]` for LaTeX a source carries some other way (Pressbooks renders equations to images and keeps the LaTeX in the `alt`). Both are rendered with KaTeX in the reader and normalized heuristically for TTS — it is not accessibility-grade math speech. Base64 is load-bearing: its alphabet contains no sentence terminator, so a token cannot be split across sentences. **A token must never reach the reader or a Speech Engine undecoded** — both paths degrade an unusable payload to the word "equation".
+- **`npm run tauri:build` fails locally unless `CI=true` is set.** It compiles,
+  bundles the `.app`, then dies in `bundle_dmg.sh` with `Finder got an error:
+  AppleEvent timed out. (-1712)`. That step is Finder cosmetics and needs a GUI
+  session, which a terminal over SSH or an automation shell does not have. `CI=true`
+  makes the bundler skip it (`--skip-jenkins`); the DMG is otherwise identical. The
+  Actions runner sets `CI` itself, so `release.yml` is unaffected -- this only bites
+  by hand, and it reads as "the build is broken" because Tauri swallows the script's
+  stderr and reports only `error running bundle_dmg.sh`.
 - **Release signing is manual for bundled natives.** Tauri does not sign the bundled ffmpeg `.dylib`s or `libpdfium.dylib`; sign the source libs with Developer ID + hardened runtime **before** `tauri:build`, or notarization fails. Full runbook: `RELEASE.md`. The auto-updater is disabled in v0.1.0.
 - `build.rs` needs **network on first build** to fetch PDFium/ffmpeg. Bundled binaries/models live in gitignored paths (`src-tauri/binaries/`, `resources/pdfium/`).
 - The working tree is often intentionally dirty with uncommitted feature work — **do not `git reset --hard`/checkout to "clean up" unless asked.** See `HANDOFF.md` for current WIP and full context.
