@@ -434,10 +434,11 @@ pub async fn export_supertonic_chapter_mp3(
 /// Playback synthesis, driven entirely by what the caller passes.
 ///
 /// Deliberately lenient about voice and language rather than erroring the way
-/// the preview and export commands do: the player carries one voice id across
-/// engines, so a reader who switches engines mid-session can briefly hold an
-/// id this engine does not know. Falling back beats cutting the audio off.
-/// User-initiated commands still reject unknown values outright.
+/// the preview and export commands do: playback sends whatever the settings
+/// row holds, which may be a style or language retired between releases, and
+/// falling back beats cutting the audio off mid-chapter. User-initiated
+/// commands still reject unknown values outright. Same split, and same
+/// reasoning, as the module doc on `tts::supertonic::voice`.
 pub async fn synthesize_supertonic_text(
     text: &str,
     voice_id: Option<&str>,

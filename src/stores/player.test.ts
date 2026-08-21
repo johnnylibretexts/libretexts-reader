@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { FakeEngine } from "../lib/speech";
+import type { FakeEngine, SpeechEngineSettings } from "../lib/speech";
 import type * as Domain from "../types/domain";
 
 const DOCUMENT: Domain.Document = {
@@ -52,8 +52,14 @@ const PARAGRAPHS: Domain.Paragraph[] = [
 async function loadPlayer(engines: FakeEngine[]) {
   vi.resetModules();
 
+  const savePlaybackState = vi.fn(
+    async (_state: { voiceId: string }) => undefined,
+  );
   let created = 0;
-  const createSpeechEngine = vi.fn(() => engines[Math.min(created++, engines.length - 1)]);
+  const createSpeechEngine = vi.fn(
+    (_settings: SpeechEngineSettings) =>
+      engines[Math.min(created++, engines.length - 1)],
+  );
 
   vi.doMock("../lib/speech", async () => ({
     ...(await vi.importActual<typeof import("../lib/speech")>("../lib/speech")),
@@ -66,7 +72,7 @@ async function loadPlayer(engines: FakeEngine[]) {
       listSections: vi.fn(async () => SECTIONS),
       listParagraphs: vi.fn(async () => PARAGRAPHS),
       listSectionImages: vi.fn(async () => []),
-      savePlaybackState: vi.fn(async () => undefined),
+      savePlaybackState,
       // switchToSupertonic goes through useSettingsStore.setTtsProvider,
       // which calls this; without it the switch action rejects with
       // "api.setSetting is not a function" before it ever reaches the
@@ -77,7 +83,7 @@ async function loadPlayer(engines: FakeEngine[]) {
   }));
 
   const { usePlayerStore } = await import("./player");
-  return { usePlayerStore, createSpeechEngine };
+  return { usePlayerStore, createSpeechEngine, savePlaybackState };
 }
 
 afterEach(() => {
@@ -233,6 +239,336 @@ describe("engine selection", () => {
     // keep speaking through the engine built for the previous one.
     expect(createSpeechEngine).toHaveBeenCalledTimes(2);
     expect(korean.calls.length).toBeGreaterThan(0);
+  });
+
+  it("rebuilds the engine when the Supertonic voice style changes", async () => {
+    // The style is captured at engine construction (see supertonicEngine.ts),
+    // so it has to be in the engine cache key for the same reason the
+    // language does: without it, changing Voice style has no effect until the
+    // reader switches providers and back, which is indistinguishable from the
+    // setting being ignored outright -- the bug this replaced.
+    const male = await createFake({ voices: ["M1"] });
+    const female = await createFake({ voices: ["F3"] });
+    const { usePlayerStore, createSpeechEngine } = await loadPlayer([
+      male,
+      female,
+    ]);
+    const { useSettingsStore } = await import("./settings");
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    expect(createSpeechEngine).toHaveBeenCalledTimes(1);
+
+    useSettingsStore.setState({ supertonicVoiceStyle: "F3" });
+    await usePlayerStore.getState().play();
+
+    expect(createSpeechEngine).toHaveBeenCalledTimes(2);
+    expect(createSpeechEngine.mock.calls[1][0]).toMatchObject({
+      supertonicVoiceStyle: "F3",
+    });
+    expect(female.calls.length).toBeGreaterThan(0);
+  });
+
+  it("does not throw away paid-for Fish audio when a Supertonic setting changes", async () => {
+    // Fish bills per synthesis. The Supertonic settings card renders whatever
+    // the active provider is, so a Fish listener can save a Voice style at
+    // any time -- and an engine/cache key that folds in every provider's
+    // settings unconditionally would rebuild the Fish engine and re-key every
+    // one of the SPEECH_LOOKAHEAD_SENTENCES already prefetched, re-buying
+    // sentences the reader has already paid for. Keys are per engine: what
+    // Fish does cannot depend on a Supertonic row.
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore, createSpeechEngine } = await loadPlayer([engine]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    const paidFor = engine.calls.length;
+
+    useSettingsStore.setState({ supertonicVoiceStyle: "F3" });
+    await usePlayerStore.getState().seekToSentence(0, 0);
+    await usePlayerStore.getState().play();
+
+    expect(createSpeechEngine).toHaveBeenCalledTimes(1);
+    expect(engine.calls.length).toBe(paidFor);
+  });
+
+  it("records the configured voice after a settings change with no reload and no play", async () => {
+    // Seeding on load is not enough: the Reader skips `loadDocument` for the
+    // document already open, so a reader who visits Settings, saves a style
+    // and comes back to seek without pressing Play was still recording the
+    // voice from before the change. The persisted voice comes from the engine
+    // itself now, which is the only thing that ever knew it.
+    const male = await createFake({ voices: ["M1"] });
+    const female = await createFake({ voices: ["F3"] });
+    const { usePlayerStore, savePlaybackState } = await loadPlayer([
+      male,
+      female,
+    ]);
+    const { useSettingsStore } = await import("./settings");
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    useSettingsStore.setState({ supertonicVoiceStyle: "F3" });
+    await usePlayerStore.getState().seekToSentence(0, 1);
+
+    const calls = savePlaybackState.mock.calls;
+    expect(calls[calls.length - 1][0].voiceId).toBe("F3");
+    // Seeking while paused must not start synthesis on either engine.
+    expect(male.calls).toEqual([]);
+    expect(female.calls).toEqual([]);
+  });
+
+  it("records the configured voice for a book opened but never played", async () => {
+    // `persistPlaybackState` also runs from `loadDocument` and
+    // `moveToPosition`, which happen before anything is spoken -- so a reader
+    // who opens a book and seeks without pressing Play used to write the
+    // hardcoded `"M1"` seed. Resolving the engine on load reseeds `voice`
+    // through the one path that owns it, rather than teaching a second place
+    // how to derive a provider's default voice.
+    const engine = await createFake({ voices: ["F3"] });
+    const { usePlayerStore, savePlaybackState } = await loadPlayer([engine]);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(savePlaybackState).toHaveBeenCalled();
+    const calls = savePlaybackState.mock.calls;
+    expect(calls[calls.length - 1][0].voiceId).toBe("F3");
+    // Nothing was spoken, and resolving an engine must not start synthesis.
+    expect(engine.calls).toEqual([]);
+  });
+
+  it("records the voice actually being spoken, not the seeded one", async () => {
+    // `activeEngine` only reseeded `state.voice` when the engine *id* changed,
+    // so a session that never switches providers kept the literal "M1" the
+    // store is initialised with -- and wrote it to `playback_state.voice_id`
+    // while something else entirely was being spoken. Reseeding was gated
+    // that way because `state.voice` was in `speechCacheKey` and rewriting it
+    // threw away bought audio; it is not in that key any more.
+    const engine = await createFake({ voices: ["F3"] });
+    const { usePlayerStore, savePlaybackState } = await loadPlayer([engine]);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    expect(savePlaybackState).toHaveBeenCalled();
+    const calls = savePlaybackState.mock.calls;
+    expect(calls[calls.length - 1][0].voiceId).toBe("F3");
+  });
+
+  it("still serves audio already bought from a provider after switching away and back", async () => {
+    // `speechCacheKey` carried `state.voice`, which `activeEngine` rewrites on
+    // every provider swap -- so a Fish listener who hits a rate limit, takes
+    // the MiniPlayer's "Switch to Supertonic" escape hatch, then goes back to
+    // Fish finds every already-billed sentence keyed under a voice id that no
+    // longer matches, and buys the whole lookahead a second time. The engine's
+    // voice is already in `engineKey`; carrying it twice only made entries
+    // unreachable.
+    const fishFirst = await createFake({ id: "fish" });
+    const supertonic = await createFake({ id: "supertonic" });
+    const fishAgain = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([
+      fishFirst,
+      supertonic,
+      fishAgain,
+    ]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    useSettingsStore.setState({ ttsProvider: "supertonic" });
+    await usePlayerStore.getState().play();
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().seekToSentence(0, 0);
+    await usePlayerStore.getState().play();
+
+    // Same provider, same voice, same sentences: nothing to re-buy.
+    expect(fishAgain.calls).toEqual([]);
+  });
+
+  it("picks up a speed change in the prefetch already running", async () => {
+    // `speechCacheKey` folds in `state.speed` as well as the engine's
+    // settings, and the liveness guard only watches the latter. It does not
+    // need to watch speed: the worker re-reads player state on every
+    // iteration, so the sentence it takes next is both synthesized and keyed
+    // at the new speed. Audio and key move together, so nothing is filed
+    // where it cannot be read.
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine]);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    const release = engine.blockNextSynthesis();
+    const playing = usePlayerStore.getState().play();
+    usePlayerStore.getState().setSpeed(1.5);
+    release();
+    await playing;
+
+    // Named per sentence: the current sentence is synthesized on its own path
+    // after the buffer resolves, so a bare "some call used 1.5" passes even
+    // when the prefetch is stuck at the old speed. The third sentence is
+    // reachable only through the prefetch, and only after the change.
+    const third = engine.calls.find(
+      (call) => call.text === "Third sentence spoken.",
+    );
+    expect(third?.speed).toBe(1.5);
+  });
+
+  it("stops prefetching through an engine the settings have already replaced", async () => {
+    // Pinning the snapshot to the engine keeps the *keys* honest, but the
+    // fire-and-forget prefetch has no reason left to stop: auto-advance
+    // reuses the utterance token, so `token !== utteranceToken` never trips.
+    // Every sentence it goes on to synthesize is filed under the old engine's
+    // key, which nothing will ever read again, and the new engine then
+    // re-synthesizes the same positions. On Fish that is billed twice.
+    // Reading the store here is a liveness check, never a key -- the two are
+    // different questions.
+    const first = await createFake({ id: "fish" });
+    const second = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([first, second]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    const release = first.blockNextSynthesis();
+    const playing = usePlayerStore.getState().play();
+    // Saved from Settings while the MiniPlayer keeps playing.
+    useSettingsStore.setState({ fishVoiceId: "voice-2" });
+    release();
+    await playing;
+
+    // The lookahead sentence the old engine had not started yet must never be
+    // bought from it: only the new voice will ever be played.
+    expect(first.calls.map((call) => call.text)).not.toContain(
+      "Third sentence spoken.",
+    );
+  });
+
+  it("will not treat settings that have not loaded yet as the reader's", async () => {
+    // `hydrateFailed` is false in two states -- loaded, and not loaded yet --
+    // and only the first is the reader's. A slow `get_all_settings` plus an
+    // early Play would otherwise build Supertonic from DEFAULT_SETTINGS with
+    // permission to fetch its ~383MB model, for a reader whose provider is
+    // Fish. Had the load *failed* rather than merely been slow, the identical
+    // defaults would have been refused.
+    const early = await createFake();
+    const loaded = await createFake();
+    const { usePlayerStore, createSpeechEngine } = await loadPlayer([
+      early,
+      loaded,
+    ]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ hydrated: false, hydrateFailed: false });
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    expect(createSpeechEngine.mock.calls[0][0]).toMatchObject({
+      settingsSource: "unloaded",
+    });
+
+    useSettingsStore.setState({ hydrated: true });
+    await usePlayerStore.getState().play();
+
+    const last = createSpeechEngine.mock.calls.length - 1;
+    expect(createSpeechEngine.mock.calls[last][0]).toMatchObject({
+      settingsSource: "loaded",
+    });
+  });
+
+  it("rebuilds the engine when a settings retry turns a guessed provider into a real one", async () => {
+    // `activeEngine` captures whether the settings are real, to stop
+    // Supertonic fetching its model for a provider the fallback only guessed
+    // at. Anything captured has to be in the key, or the flag goes stale:
+    // here the retry succeeds onto rows identical to the defaults, so nothing
+    // else in the key moves and playback would keep refusing for the rest of
+    // the session with no way out but a restart.
+    const guessed = await createFake();
+    const real = await createFake();
+    const { usePlayerStore, createSpeechEngine } = await loadPlayer([
+      guessed,
+      real,
+    ]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ hydrated: true, hydrateFailed: true });
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    expect(createSpeechEngine.mock.calls[0][0]).toMatchObject({
+      settingsSource: "failed",
+    });
+
+    useSettingsStore.setState({ hydrateFailed: false });
+    await usePlayerStore.getState().play();
+
+    const last = createSpeechEngine.mock.calls.length - 1;
+    expect(createSpeechEngine.mock.calls[last][0]).toMatchObject({
+      settingsSource: "loaded",
+    });
+    // Rebuilt, but the buffer survives: the retry loaded rows identical to
+    // the defaults, so nothing about how a sentence sounds moved. Keying the
+    // speech cache on the source too would orphan every prefetched sentence
+    // the moment a retry succeeded and re-synthesize audio already correct.
+    expect(real.calls).toEqual([]);
+  });
+
+  it("keys buffered audio by the settings that built the engine, not by whatever the store says later", async () => {
+    // `speakWithBufferedSpeech` resolves its engine once, up front, but used
+    // to re-read the settings store after awaiting -- so a style saved while
+    // the initial buffer was filling had the *old* engine writing audio under
+    // the *new* style's cache key. The next sentence then hit those entries
+    // and the reader kept hearing the previous voice, indefinitely: the cache
+    // is size-trimmed, never cleared on an engine rebuild.
+    const male = await createFake({ voices: ["M1"] });
+    const female = await createFake({ voices: ["F3"] });
+    const { usePlayerStore } = await loadPlayer([male, female]);
+    const { useSettingsStore } = await import("./settings");
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    const release = male.blockNextSynthesis();
+    const playing = usePlayerStore.getState().play();
+    // Saved mid-buffer: this is the window the skew lives in.
+    useSettingsStore.setState({ supertonicVoiceStyle: "F3" });
+    release();
+    await playing;
+
+    await usePlayerStore.getState().seekToSentence(0, 0);
+    await usePlayerStore.getState().play();
+
+    // Named per sentence, not just counted: the post-playback prefetch is
+    // fire-and-forget and re-covers the *current* sentence, so a count alone
+    // passes on some later sentence the new engine happened to reach while
+    // the one being listened to was served from a poisoned entry.
+    expect(female.calls.map((call) => call.text)).toContain(
+      "First sentence spoken.",
+    );
+  });
+});
+
+describe("switching away from Fish", () => {
+  it("keeps the escape hatch when another click supersedes its provider write", async () => {
+    // `setTtsProvider` resolves without applying when a later click
+    // supersedes it, so resolving is not the same as "the provider is now
+    // Supertonic". Treating it as one removes the button and immediately
+    // replays through the Fish engine that just failed.
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine]);
+    const { useSettingsStore } = await import("./settings");
+
+    useSettingsStore.setState({ ttsProvider: "fish", fishVoiceId: "voice-1" });
+    await usePlayerStore.getState().loadDocument("doc-1");
+    usePlayerStore.setState({ canSwitchToSupertonic: true });
+
+    const switching = usePlayerStore.getState().switchToSupertonic();
+    // A Settings click landing on top of it.
+    const overriding = useSettingsStore.getState().setTtsProvider("fish");
+    await Promise.all([switching, overriding]);
+
+    expect(useSettingsStore.getState().ttsProvider).toBe("fish");
+    expect(usePlayerStore.getState().canSwitchToSupertonic).toBe(true);
   });
 });
 

@@ -1,7 +1,7 @@
-import type { SupertonicLanguage } from "../supertonic";
+import type { SupertonicLanguage, SupertonicVoiceStyle } from "../supertonic";
 import { createFishEngine } from "./fishEngine";
 import { createSupertonicEngine } from "./supertonicEngine";
-import type { SpeechEngine, SpeechEngineId } from "./types";
+import type { SettingsSource, SpeechEngine, SpeechEngineId } from "./types";
 
 export { createSupertonicEngine, speechAudioToBlob } from "./supertonicEngine";
 export { createFishEngine } from "./fishEngine";
@@ -10,6 +10,7 @@ export {
   SPEECH_ENGINE_LABELS,
   SpeechAbortedError,
   throwIfAborted,
+  type SettingsSource,
   type SpeechEngine,
   type SpeechEngineId,
   type SpeechVoice,
@@ -19,7 +20,10 @@ export {
 export interface SpeechEngineSettings {
   ttsProvider: SpeechEngineId;
   supertonicLanguage: SupertonicLanguage;
+  supertonicVoiceStyle: SupertonicVoiceStyle;
   fishVoiceId: string | null;
+  /** See `SettingsSource`. */
+  settingsSource: SettingsSource;
 }
 
 /**
@@ -31,7 +35,11 @@ export interface SpeechEngineSettings {
 export function createSpeechEngine(settings: SpeechEngineSettings): SpeechEngine {
   switch (settings.ttsProvider) {
     case "supertonic":
-      return createSupertonicEngine({ language: settings.supertonicLanguage });
+      return createSupertonicEngine({
+        language: settings.supertonicLanguage,
+        voiceStyle: settings.supertonicVoiceStyle,
+        settingsSource: settings.settingsSource,
+      });
     case "fish":
       return createFishEngine({ voiceId: settings.fishVoiceId });
   }

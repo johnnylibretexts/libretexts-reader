@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Check, Download, Loader2, Play, Save } from "lucide-react";
 import {
@@ -46,8 +46,13 @@ const TEST_PLAYBACK_TIMEOUT_MS = 30_000;
 
 export function SettingsPanel() {
   const hydrated = useSettingsStore((state) => state.hydrated);
-  const loading = useSettingsStore((state) => state.loading);
   const error = useSettingsStore((state) => state.error);
+  // The values below are built-in defaults, not the reader's -- see
+  // `hydrateFailed`. Saving them would write over rows this screen never
+  // showed, so Save refuses while it is set.
+  const hydrateFailed = useSettingsStore((state) => state.hydrateFailed);
+  const hydrate = useSettingsStore((state) => state.hydrate);
+  const [retryingHydrate, setRetryingHydrate] = useState(false);
   const ttsProvider = useSettingsStore((state) => state.ttsProvider);
   const setTtsProvider = useSettingsStore((state) => state.setTtsProvider);
   const fishVoiceId = useSettingsStore((state) => state.fishVoiceId);
@@ -72,9 +77,55 @@ export function SettingsPanel() {
     useState<SupertonicVoiceStyle>(supertonicVoiceStyle);
   const [language, setLanguage] =
     useState<SupertonicLanguage>(supertonicLanguage);
+  // One flag per draft. These stay editable while a failed load has Save
+  // disabled, so a reader can line up their pick while waiting -- and the
+  // retry that finally succeeds must not replace it at the very moment Save
+  // becomes usable. Same guard, same reasoning, as SupertonicChapterExport.
+  const voiceChosen = useRef(false);
+  const languageChosen = useRef(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const savedTimer = useRef<number | null>(null);
+
+  /**
+   * Shows the tick for a moment, replacing any tick still counting down.
+   * A bare `setTimeout` let an earlier save's timer clear a later save's
+   * confirmation, and kept firing after the reader navigated away -- the same
+   * fix as `showSavedFor` in FishAudioSettings.
+   */
+  function showSaved() {
+    if (savedTimer.current !== null) {
+      window.clearTimeout(savedTimer.current);
+    }
+    setSaved(true);
+    savedTimer.current = window.setTimeout(() => {
+      savedTimer.current = null;
+      setSaved(false);
+    }, 1600);
+  }
+
+  useEffect(
+    () => () => {
+      if (savedTimer.current !== null) {
+        window.clearTimeout(savedTimer.current);
+      }
+    },
+    [],
+  );
+  // Which provider a click is currently writing, if any. `setTtsProvider`
+  // applies only once its write lands (so playback never builds an engine for
+  // a provider that did not stick), which means nothing in the picker moves
+  // until then -- on a slow write the control looked inert and invited a
+  // second click that just queued another write behind the first.
+  const [switchingTo, setSwitchingTo] = useState<TtsProvider | null>(null);
+  // Identifies *which click* the pending state belongs to. Keying on the
+  // provider id instead let an earlier write's completion clear a later
+  // click's spinner: click Fish, click Supertonic, click Fish again, and
+  // write #1 landing would find `switchingTo === "fish"` and clear it while
+  // #2 and #3 were still queued -- the picker inert with writes outstanding,
+  // which is the state this was added to remove.
+  const switchSeq = useRef(0);
   const [testing, setTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -92,10 +143,29 @@ export function SettingsPanel() {
     string | null
   >(null);
 
+  // Seed the drafts from the store once settings finish loading -- not on
+  // every change to those rows. The draft belongs to the reader from the
+  // moment they touch it: keyed on the rows, any later write to them would
+  // pull a pending pick out from under them mid-edit. Hooks run before the
+  // `!hydrated` gate below, so the `useState` initialisers cannot do this on
+  // their own -- on a mount that beats `hydrate()` they capture the built-in
+  // defaults.
   useEffect(() => {
-    setVoiceStyle(supertonicVoiceStyle);
-    setLanguage(supertonicLanguage);
-  }, [supertonicLanguage, supertonicVoiceStyle]);
+    // `!hydrateFailed` as well as `hydrated`: a failed load reports hydrated
+    // with every row at DEFAULT_SETTINGS, and this is also what re-seeds the
+    // drafts when a retry finally brings the reader's rows in -- `hydrated`
+    // is already true by then and would never fire again on its own.
+    if (!hydrated || hydrateFailed) {
+      return;
+    }
+    const settings = useSettingsStore.getState();
+    if (!voiceChosen.current) {
+      setVoiceStyle(settings.supertonicVoiceStyle);
+    }
+    if (!languageChosen.current) {
+      setLanguage(settings.supertonicLanguage);
+    }
+  }, [hydrated, hydrateFailed]);
 
   // A provider change invalidates any confirmation already on screen: it
   // named a provider and a cost that no longer apply.
@@ -169,8 +239,7 @@ export function SettingsPanel() {
     setSaveError(null);
     try {
       await persistDraft();
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 1600);
+      showSaved();
     } catch (error) {
       // Surface the failure and never leave the button stuck on "Saving...".
       setSaveError(displayError(error));
@@ -218,16 +287,23 @@ export function SettingsPanel() {
       const engine = createSpeechEngine({
         ttsProvider,
         supertonicLanguage: language,
+        // The pending selection, not the saved row -- Test previews what the
+        // reader is about to save, exactly as `language` above does.
+        supertonicVoiceStyle: voiceStyle,
         fishVoiceId,
+        // A Test is the reader asking for this engine by name, so it may
+        // fetch the model. The button is disabled outright unless the rows
+        // loaded, so it can never be asking about a guessed provider.
+        settingsSource: "loaded",
       });
       await engine.ensureReady(setTestStatus);
 
       setTestStatus(`Generating ${providerLabel} sample...`);
-      const blob = await engine.synthesize({
-        text: SAMPLE_TEXT,
-        voice: ttsProvider === "supertonic" ? voiceStyle : (fishVoiceId ?? ""),
-        speed: 1,
-      });
+      // No voice on the request: the engine built above already holds the
+      // one being tested (the pending `voiceStyle` for Supertonic, the saved
+      // `fishVoiceId` for Fish). Passing one here read as if it selected the
+      // test voice, and did not.
+      const blob = await engine.synthesize({ text: SAMPLE_TEXT, speed: 1 });
 
       setTestStatus(`Playing ${providerLabel} sample...`);
       await playBlob(blob);
@@ -268,7 +344,12 @@ export function SettingsPanel() {
     }
   }
 
-  if (!hydrated && loading) {
+  // `!hydrated`, not `!hydrated && loading`: the gap between mount and
+  // `hydrate()` setting `loading` used to render fully editable controls
+  // seeded from DEFAULT_SETTINGS, and a style picked in it was silently
+  // overwritten when hydration landed. `hydrate` sets `hydrated` on its
+  // failure path too, so this can never strand the panel on "Loading...".
+  if (!hydrated) {
     return (
       <p className="inline-flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
         <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -303,23 +384,56 @@ export function SettingsPanel() {
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {TTS_PROVIDERS.map((provider) => (
             <button
+              aria-busy={switchingTo === provider.id}
               aria-pressed={ttsProvider === provider.id}
-              className={`rounded-md border px-4 py-3 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 ${
+              className={`rounded-md border px-4 py-3 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60 ${
                 ttsProvider === provider.id
                   ? "border-brand-500 bg-brand-50 dark:border-brand-500 dark:bg-neutral-800"
                   : "border-neutral-200 hover:bg-stone-100 dark:border-neutral-800 dark:hover:bg-neutral-800"
               }`}
+              // Only the button being written, never both: a write that never
+              // settles would otherwise leave the whole picker dead with no
+              // way back, and the per-row queue in `writeRow` already makes
+              // concurrent clicks safe -- the last one clicked is the last one
+              // committed.
+              //
+              // `hydrateFailed` disables both, for the reason Save is
+              // disabled: the highlight below is DEFAULT_SETTINGS, not the
+              // reader's stored provider, so every option here -- including
+              // the one that looks already chosen -- would commit a provider
+              // this screen never showed them.
+              disabled={switchingTo === provider.id || hydrateFailed}
               key={provider.id}
               onClick={() => {
+                // Deliberately leaves `saveError` alone. These are separate
+                // actions with separate error lines, and clearing it here
+                // erased a "disk full" the reader may not have read yet --
+                // about a voice and language that still are not saved.
+                const seq = ++switchSeq.current;
+                setSwitchingTo(provider.id);
                 // setTtsProvider rethrows on a failed persist; this button
                 // doesn't await it, so it must catch here or the rejection
                 // goes unhandled. The `error` block below already renders
                 // the store's shared error field on failure.
-                void setTtsProvider(provider.id).catch(() => {});
+                void setTtsProvider(provider.id)
+                  .catch(() => {})
+                  .finally(() => {
+                    if (switchSeq.current === seq) {
+                      setSwitchingTo(null);
+                    }
+                  });
               }}
               type="button"
             >
-              <span className="block font-medium">{provider.label}</span>
+              <span className="flex items-center gap-2 font-medium">
+                {provider.label}
+                {switchingTo === provider.id ? (
+                  <Loader2
+                    aria-label={`Switching to ${provider.label}`}
+                    className="size-4 animate-spin"
+                  />
+                ) : null}
+              </span>
               <span className="block text-xs text-neutral-500 dark:text-neutral-400">
                 {provider.hint}
               </span>
@@ -357,9 +471,10 @@ export function SettingsPanel() {
               Voice style
               <select
                 className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-                onChange={(event) =>
-                  setVoiceStyle(event.target.value as SupertonicVoiceStyle)
-                }
+                onChange={(event) => {
+                  voiceChosen.current = true;
+                  setVoiceStyle(event.target.value as SupertonicVoiceStyle);
+                }}
                 value={voiceStyle}
               >
                 {SUPERTONIC_VOICES.map((voice) => (
@@ -374,9 +489,10 @@ export function SettingsPanel() {
               Language
               <select
                 className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-                onChange={(event) =>
-                  setLanguage(event.target.value as SupertonicLanguage)
-                }
+                onChange={(event) => {
+                  languageChosen.current = true;
+                  setLanguage(event.target.value as SupertonicLanguage);
+                }}
                 value={language}
               >
                 {SUPERTONIC_LANGUAGES.map((option) => (
@@ -434,10 +550,36 @@ export function SettingsPanel() {
           ) : null}
         </div>
 
+        {hydrateFailed ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-300">
+            <p>
+              Your saved settings could not be loaded, so these are the
+              built-in defaults -- including the engine and the voice you are
+              being read in. Saving and switching engines are off until they
+              load, so this screen cannot write over the settings you actually
+              have.
+            </p>
+            <button
+              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-amber-300 px-3 text-sm font-medium hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-800 dark:hover:bg-amber-900/40"
+              disabled={retryingHydrate}
+              onClick={() => {
+                setRetryingHydrate(true);
+                void hydrate().finally(() => setRetryingHydrate(false));
+              }}
+              type="button"
+            >
+              {retryingHydrate ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : null}
+              Try again
+            </button>
+          </div>
+        ) : null}
+
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             className="inline-flex h-10 items-center gap-2 rounded-md bg-brand-700 px-4 text-sm font-medium text-white hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={saving}
+            disabled={saving || hydrateFailed}
             onClick={() => void save()}
             type="button"
           >
@@ -452,7 +594,11 @@ export function SettingsPanel() {
           </button>
           <button
             className="inline-flex h-10 items-center gap-2 rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            disabled={testing}
+            // `hydrateFailed` too: the provider shown above is
+            // DEFAULT_SETTINGS, not the reader's, and this is the one control
+            // that would act on it -- building that engine and, for
+            // Supertonic, fetching its model.
+            disabled={testing || hydrateFailed}
             onClick={requestTest}
             type="button"
           >
@@ -510,6 +656,13 @@ export function SettingsPanel() {
         }
       />
 
+      {/*
+        The shared banner: a failed hydrate, and the provider buttons above,
+        which have no error line of their own. A failed TTS save never reaches
+        it -- `saveTtsSettings` only rejects, and the two callers that catch it
+        (this panel's Save, and the Fish voice control) each render the message
+        beside their own control.
+      */}
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">
           {error}

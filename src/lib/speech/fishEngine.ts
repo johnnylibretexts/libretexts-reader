@@ -19,16 +19,13 @@ export function createFishEngine(options: { voiceId: string | null }): SpeechEng
         provider: "fish",
         text: request.text,
         speed: request.speed,
-        // The configured voice wins over `request.voice`. The player carries
-        // ONE voice id across engines (see SynthesisRequest.voice) and seeds
-        // it with Supertonic's "M1", which it only replaces when an engine is
-        // swapped mid-session -- never on a fresh launch. So on every launch
-        // with Fish already selected, `request.voice` is "M1", Fish answers
-        // 404, and the reader is told to choose a voice they had already
-        // chosen. `request.voice` is still honoured when this engine has no
-        // voice of its own to prefer, so an explicit per-call voice keeps
-        // working if that path is ever used.
-        voiceId: options.voiceId || request.voice || "",
+        // The reader's configured voice, and only that. Playback used to send
+        // whatever the player carried in a shared `voice` field, seeded with
+        // Supertonic's "M1" -- so on every launch with Fish already selected
+        // the request said "M1", Fish answered 404, and the reader was told
+        // to choose a voice they had already chosen. `ensureReady` refuses an
+        // empty one before it can get here.
+        voiceId: options.voiceId ?? "",
         language: null,
       });
       throwIfAborted(signal);

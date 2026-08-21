@@ -8,6 +8,7 @@ const getFishKeyStatus = vi.fn();
 const setFishApiKey = vi.fn();
 const listFishVoices = vi.fn();
 const clearFishApiKey = vi.fn();
+const setSetting = vi.fn(async (_key: string, _value: unknown) => undefined);
 
 vi.mock("../../lib/tauri", () => ({
   isTauriRuntime: () => true,
@@ -24,10 +25,13 @@ vi.mock("../../lib/tauri", () => ({
     get clearFishApiKey() {
       return clearFishApiKey;
     },
+    setSetting: (key: string, value: unknown) => setSetting(key, value),
+    getAllSettings: vi.fn(async () => ({})),
   },
 }));
 
 const { FishAudioSettings } = await import("./FishAudioSettings");
+const { useSettingsStore } = await import("../../stores/settings");
 
 const SAVED_KEY: FishKeyStatus = { present: true, valid: true, credit: 10 };
 
@@ -40,6 +44,8 @@ describe("FishAudioSettings", () => {
     vi.clearAllMocks();
     getFishKeyStatus.mockResolvedValue(SAVED_KEY);
     clearFishApiKey.mockResolvedValue(undefined);
+    setSetting.mockResolvedValue(undefined);
+    useSettingsStore.setState({ hydrateFailed: false, fishVoiceId: null });
   });
 
   it("refetches the voice list when one API key is replaced with another", async () => {
@@ -92,5 +98,40 @@ describe("FishAudioSettings", () => {
 
     await waitFor(() => expect(getFishKeyStatus).toHaveBeenCalled());
     expect(listFishVoices).not.toHaveBeenCalled();
+  });
+
+  it("keeps a voice on screen while a pasted id is being saved", async () => {
+    // `saveTtsSettings` applies only once the write lands, so the stored id
+    // is the one that has not caught up yet. The pending-pick state added for
+    // that has to drive every derivation, not just the select's value: with
+    // `isPastedVoice` still coming from the stored id, the pasted <option>
+    // was not rendered at all and the control it was meant to steady went
+    // blank -- "Choose a voice", while a voice was very much being chosen.
+    listFishVoices.mockResolvedValue([voice("own-1", "My Own Voice")]);
+    useSettingsStore.setState({ fishVoiceId: "own-1" });
+    let land = () => {};
+    const landed = new Promise<void>((resolve) => {
+      land = resolve;
+    });
+    setSetting.mockImplementation(async () => {
+      await landed;
+    });
+    const user = userEvent.setup();
+    render(<FishAudioSettings />);
+
+    const select = await screen.findByLabelText("Your voices");
+    expect(select).toHaveValue("own-1");
+
+    await user.type(screen.getByPlaceholderText("Voice id"), "public-42");
+    await user.click(screen.getByRole("button", { name: /Use voice/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("option", { name: /pasted voice id/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(select).not.toHaveValue("");
+
+    land();
   });
 });

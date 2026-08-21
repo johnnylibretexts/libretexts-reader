@@ -1,6 +1,18 @@
 export type SpeechEngineId = "supertonic" | "fish";
 
 /**
+ * Where the settings an engine was built from came from.
+ *
+ * `loaded` is the reader's own rows. The other two are DEFAULT_SETTINGS
+ * standing in -- still in flight, or a load that failed -- which means the
+ * provider is a guess, and an engine must not answer a guess by fetching a
+ * ~383MB model. Three states rather than a boolean because the two failures
+ * need different things said to the reader: one resolves on its own, the
+ * other needs the retry in Settings.
+ */
+export type SettingsSource = "loaded" | "unloaded" | "failed";
+
+/**
  * Human-readable names for user-facing strings (buffering status, export
  * gates, settings). The single place this mapping lives, so a label can
  * never drift out of sync with which engine is actually running -- see the
@@ -19,14 +31,14 @@ export interface SpeechVoice {
   ready: boolean;
 }
 
+/**
+ * Deliberately carries no voice. Every engine takes its voice from settings
+ * and exposes it as `defaultVoice`, so a `voice` here would be a field the
+ * two existing engines ignore -- and a trap for a third one written against
+ * it, whose voice playback would then silently drop.
+ */
 export interface SynthesisRequest {
   text: string;
-  /**
-   * A voice id this engine understands. The player carries one voice id across
-   * engines, so an engine may be handed an id belonging to another one and is
-   * expected to fall back rather than fail.
-   */
-  voice: string;
   speed: number;
 }
 
@@ -43,7 +55,19 @@ export interface SynthesisRequest {
  */
 export interface SpeechEngine {
   readonly id: SpeechEngineId;
-  /** Used when the current voice id belongs to a different engine. */
+  /**
+   * The voice this engine actually speaks in, as configured.
+   *
+   * Not a fallback, despite the name. It is the only account anything outside
+   * the engine has of what it is speaking in: `persistPlaybackState` in
+   * `stores/player.ts` writes it as the reader's voice, and `player.ts` seeds
+   * nothing else. So it must name the voice `synthesize` really uses -- an
+   * engine that returns a placeholder here records that placeholder as what
+   * the reader heard, with nothing to catch it.
+   *
+   * The empty string is the one honest exception: an engine with no voice
+   * configured yet, which `ensureReady` then refuses (see `fishEngine`).
+   */
   readonly defaultVoice: string;
 
   synthesize(request: SynthesisRequest, signal?: AbortSignal): Promise<Blob>;

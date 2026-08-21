@@ -3,8 +3,9 @@
 //!
 //! Two postures on purpose. `resolve_*` rejects an unknown value and is used by
 //! user-initiated commands. `playback_voice_style` / `normalize_language` fall
-//! back instead, because the player carries one voice id across engines and
-//! cutting the audio off mid-chapter is worse than reading it in another voice.
+//! back instead: playback sends whatever the settings row holds, which may be
+//! a style retired between releases, and cutting the audio off mid-chapter is
+//! worse than reading it in another voice.
 
 use crate::error::{AppError, AppResult};
 
