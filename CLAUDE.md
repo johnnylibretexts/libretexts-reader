@@ -2,7 +2,9 @@
 
 LibreTexts Reader is a **Tauri 2 desktop app** for listening to OpenStax/LibreTexts textbooks, EPUBs, PDFs, pasted text, and article URLs with neural TTS. React 19 + Vite 6 + TypeScript webview frontend; Rust backend does content import, persistence, and part of TTS. There is no app server. Apache-2.0.
 
-**Local by default, with one optional cloud provider.** The bundled **Supertonic** engine is on-device and works fully offline — no account, no key, no network. **Fish Audio** is an optional second engine the reader configures with their own API key; only requests to Fish (playback synthesis, chapter export) leave the machine, and only once a key is saved. Everything else — import, library, playback control, Supertonic itself — has no server dependency.
+**Local by default, with one optional cloud provider.** The bundled **Supertonic** engine synthesizes on-device — no account, no key, and no network *once its model is present*; that model is a one-time ~383MB download from `huggingface.co` (`tts/supertonic/model.rs`). **Fish Audio** is an optional second engine the reader configures with their own API key, and nothing reaches Fish until a key is saved. There is no telemetry or analytics anywhere in the codebase.
+
+**Do not describe this app as "nothing ever leaves your machine".** It did say that, and it was false — `content/images.rs` downloads every image URL an imported page names, with **no host allowlist**, so an import contacts whatever CDNs and third parties the publisher referenced. Catalog browsing and import obviously reach their Sources too. `PRIVACY.md` carries the full host table and is the file to update if this changes; keep it and the README honest, because they are what a reader is entitled to rely on.
 
 ## Architecture
 

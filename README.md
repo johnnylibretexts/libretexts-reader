@@ -1,12 +1,18 @@
 # LibreTexts Reader
 
-LibreTexts Reader is a free, open-source desktop app for listening to OpenStax
-textbooks, EPUBs, PDFs, pasted text, and article URLs with neural TTS. It runs
-local by default — the bundled **Supertonic** engine works fully offline, with
-no account and no data ever leaving your machine. You can optionally configure
-**Fish Audio**, a cloud voice provider, if you supply your own API key; nothing
-is sent to Fish unless you turn it on. See the "Fish Audio" section below
-before enabling it.
+LibreTexts Reader is a free, open-source desktop app for listening to OpenStax,
+LibreTexts, and Pressbooks textbooks, EPUBs, PDFs, pasted text, and article URLs
+with neural TTS. It runs local by default — the bundled **Supertonic** engine
+speaks entirely on your machine, with no account, no key, and no network, once
+its voice model has been downloaded. You can optionally configure **Fish Audio**,
+a cloud voice provider, if you supply your own API key; nothing is sent to Fish
+unless you turn it on. See the "Fish Audio" section below before enabling it.
+
+There is **no telemetry and no analytics** of any kind. But the app is not a
+zero-network application: importing a book fetches it, and its images, from the
+publisher's servers, and Supertonic needs a one-time model download first.
+**[PRIVACY.md](PRIVACY.md) lists every host the app can contact and why** — read
+that rather than trusting this paragraph.
 
 > **Not affiliated with LibreTexts.** LibreTexts Reader is an independent open-source
 > project. It is not affiliated with, endorsed by, or sponsored by LibreTexts or OpenStax.
@@ -42,8 +48,10 @@ backend with on-demand model downloads.
 ## Fish Audio (optional cloud voice)
 
 Fish Audio is an optional, bring-your-own-key cloud TTS provider. It is off by
-default; Supertonic remains the default engine and needs no key, no account,
-and no network access. Enabling Fish is entirely opt-in from Settings.
+default; Supertonic remains the default engine and needs no key and no account.
+Supertonic also needs no network once its voice model is present — that model is
+a one-time ~383 MB download from `huggingface.co`, started by you from Settings
+or by the first press of Play. Enabling Fish is entirely opt-in from Settings.
 
 If you enable Fish, be aware:
 
