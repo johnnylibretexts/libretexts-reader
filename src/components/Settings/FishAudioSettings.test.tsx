@@ -119,7 +119,13 @@ describe("FishAudioSettings", () => {
     const user = userEvent.setup();
     render(<FishAudioSettings />);
 
-    const select = await screen.findByLabelText("Your voices");
+    // The option, not just the select. `keyStatus` resolving renders the
+    // dropdown one commit before the voices effect sets `loadingVoices`, so
+    // there is a window where it is on screen holding nothing but "No voice
+    // models yet" -- and `findByLabelText` resolving there failed this
+    // assertion on about two runs in five.
+    await screen.findByRole("option", { name: "My Own Voice" });
+    const select = screen.getByLabelText("Your voices");
     expect(select).toHaveValue("own-1");
 
     await user.type(screen.getByPlaceholderText("Voice id"), "public-42");
