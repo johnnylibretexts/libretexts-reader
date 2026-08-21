@@ -1,12 +1,12 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-20
+Last updated: 2026-08-21
 
 > **Current goal: a private beta.** Signed and notarized, fewer than ten named testers,
 > repo staying private. The gating work is the **`Private beta` milestone** on the tracker
 > — run `gh issue list --milestone "Private beta"` for the live list, and see "The plan: a
 > private beta" under Known Limitations for the shape of
-> it and what the decision retired. The app itself is in good health: 207 Rust and 133
+> it and what the decision retired. The app itself is in good health: 207 Rust and 189
 > frontend tests green, and the debug build verified running on 2026-08-20. What is missing
 > is release process, not code.
 
@@ -110,6 +110,47 @@ Copying only the project folder will not copy the local library, downloaded book
 ## Recently Landed
 
 **There is no work in progress.** This section used to track an uncommitted change set; everything in it is merged and pushed. It is kept as a map of what the app gained most recently, newest wave first.
+
+### 5. The Supertonic voice style reaches playback (2026-08-21, `38c9fc5`)
+
+[PR #77](https://github.com/johnnylibretexts/libretexts-reader/pull/77) closed #60.
+Playback had ignored the Voice style setting entirely: `player.ts` seeded a shared
+`voice: "M1"` field that no component ever set, so every request carried the literal
+`"M1"`. Export, Preview and Test each read the setting themselves, so the control looked
+like it worked everywhere a reader might check it and did nothing in the one place it
+matters. Supertonic now captures the style at construction, the way Fish already did with
+`fishVoiceId`, and `SynthesisRequest.voice`, `PlayerState.voice` and `setVoice` are gone —
+a shared field no engine honoured on any reachable path.
+
+The Rust side did not change. Both files in that diff are comment-only.
+
+Four invariants came out of it that are worth knowing before touching playback or settings:
+
+- **`voiceKey` vs `engineKey`.** `voiceKey` is everything that changes how a sentence
+  *sounds*, and is what `speechCacheKey` is built from. `engineKey` is `voiceKey` plus
+  where the settings came from, and is what decides engine rebuilds. Anything the engine
+  captures must be in `engineKey`; anything that leaves the audio identical must stay out
+  of the cache key. Both are per provider, so a Supertonic row cannot re-key Fish's
+  already-billed buffer.
+- **The settings snapshot travels with the engine.** `activeEngine()` returns the pair,
+  and nothing downstream re-reads the store to build a key. `fillSpeechBuffer` reads the
+  live store only to decide whether to *stop* — a liveness check, never a key.
+- **Settings rows are written through a per-row serializer and applied only once the
+  write lands** (`writeRow` in `stores/settings.ts`). The store cannot disagree with
+  SQLite in either direction. `setTheme` is the one optimistic writer, because the theme
+  has to change the instant it is clicked; it reverts to `committedTheme` rather than to
+  what it read before the write.
+- **A failed settings load is distinguishable from a successful one** (`hydrateFailed`).
+  It used to leave every row at `DEFAULT_SETTINGS` while reporting success — which, once
+  playback read those rows, silently moved a Fish reader onto Supertonic and prompted for
+  its ~383MB model. Supertonic refuses to fetch that model for a provider the fallback
+  only guessed at, `hydrate` is retryable, and Settings blocks the writes that would
+  overwrite rows the screen never showed.
+
+Two non-blocking follow-ups came out of the review: **#78** (three low-severity items,
+including a Fish voice picked from the dropdown showing no save confirmation) and **#76**
+(the chapter-export panel forgets its voice when the Reader unmounts — it used to
+"remember" by writing the shared settings rows, which is the write this PR removed).
 
 ### 4. Fish Audio, the optional cloud provider (2026-08-16, `64ead91`)
 
@@ -478,7 +519,7 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 ## Testing And Verification
 
 Current counts on `main`: **207 Rust tests** (3 ignored — the live network import smoke plus
-two others) and **133 frontend tests across 17 files**. Counts drift — run the suites rather than trusting these.
+two others) and **189 frontend tests across 19 files**. Counts drift — run the suites rather than trusting these.
 
 These commands were green before handoff:
 
@@ -626,11 +667,21 @@ working list and is authoritative over this paragraph** — run
 `gh issue list --milestone "Private beta"` rather than trusting what follows, which is a
 snapshot and will drift.
 
-Open as of 2026-08-20:
+Open as of 2026-08-21:
 
 - **Release mechanics** — #48 (the pipeline has *never* run: no runner registered, no `APPLE_SIGNING_IDENTITY`, and the Developer ID cert is not on the dev machine — **find the release Mac first**, everything else here assumes it), #49 (a `-beta` tag fails `check-version.sh`; the only tag is stale and local-only).
 - **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either), #51 (imported books' licence and attribution are stored and displayed nowhere, including in exported MP3s).
-- **Product** — #52 (first Play silently pulls ~383 MB and disables every playback control), #53 (Delete is one unconfirmed click and irreversible), #54 (Fish bills ~10 sentences per Play with no warning and no stop button), #60 (the voice-style setting is silently ignored during playback).
+- **Product** — #52 (first Play silently pulls ~383 MB and disables every playback control), #53 (Delete is one unconfirmed click and irreversible), #54 (Fish bills ~10 sentences per Play with no warning and no stop button).
+
+**Cleared 2026-08-21** — #60, the voice-style setting reaching playback
+([PR #77](https://github.com/johnnylibretexts/libretexts-reader/pull/77), `38c9fc5`). See
+"5. The Supertonic voice style reaches playback" under Recently Landed for the invariants
+it established; read that before touching playback or the settings store.
+
+**Not blocking the beta, filed off the back of #60:** #78 (three low-severity review
+items, one a real regression — a Fish voice picked from the dropdown shows no save
+confirmation) and #76 (the chapter-export panel forgets its voice when the Reader
+unmounts). Neither is on the milestone.
 
 **Cleared 2026-08-20** — the cheap three, all merged: #67 (`bundle.targets` now declares
 only what a release builds), #55 (the false privacy claims corrected and `PRIVACY.md`
