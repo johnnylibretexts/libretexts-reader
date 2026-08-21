@@ -81,6 +81,15 @@ export function FishAudioSettings({
     }, 1600);
   }
 
+  /** Takes the tick down now, cancelling the countdown that would have. */
+  function clearSavedTick() {
+    if (savedTimer.current !== null) {
+      window.clearTimeout(savedTimer.current);
+      savedTimer.current = null;
+    }
+    setSavedFrom(null);
+  }
+
   useEffect(
     () => () => {
       if (savedTimer.current !== null) {
@@ -134,6 +143,13 @@ export function FishAudioSettings({
   }, []);
 
   useEffect(() => {
+    // The tick belongs to the voice list being replaced here. Left standing,
+    // Remove within its 1.6s window put "Voice saved" directly under "Add an
+    // API key above to see your saved voices." -- confirming a save for a
+    // control that is no longer on screen, against an account whose key is
+    // gone.
+    clearSavedTick();
+
     if (!keyStatus?.present) {
       setVoices(null);
       setVoicesError(null);
@@ -238,7 +254,7 @@ export function FishAudioSettings({
     setSavingVoiceId(trimmed);
     setSavingFrom(from);
     setVoiceError(null);
-    setSavedFrom(null);
+    clearSavedTick();
     try {
       // saveTtsSettings reports a failed persist only by rejecting -- it does
       // not touch the store's shared `error` field, precisely so this catch
@@ -460,6 +476,26 @@ export function FishAudioSettings({
           </label>
         )}
 
+        {/*
+          Outside the <label> deliberately. Everything inside one joins the
+          select's accessible name -- the reason the "Saving..." span above is
+          `aria-hidden` and reports through `aria-busy` instead. There is no
+          `aria-busy` for "just saved", so the confirmation reports here, in a
+          live region that is announced without being part of the name.
+
+          The region renders whether or not it has anything to say: content
+          inserted at the same moment as the element holding it is not
+          reliably announced.
+        */}
+        <p role="status">
+          {savedFrom === "list" ? (
+            <span className="mt-2 inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+              <Check className="size-3" aria-hidden="true" />
+              Voice saved
+            </span>
+          ) : null}
+        </p>
+
         {voicesError ? (
           <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-300">
             {voicesError}
@@ -502,6 +538,22 @@ export function FishAudioSettings({
               </button>
             </div>
           </label>
+
+          {/*
+            The `Check` above is `aria-hidden` and the button's name stays
+            "Use voice", so on its own this save lands in silence for anyone
+            not watching the icon. `sr-only` rather than visible text because
+            the icon already tells sighted readers, on the very control they
+            clicked -- unlike the dropdown, which has no button to put a tick
+            on and so says it in the open.
+
+            Its own region, not the dropdown's: a pasted save confirming
+            under "Your voices" would mark a control the reader never
+            touched, which is the thing splitting `savedFrom` set out to fix.
+          */}
+          <p className="sr-only" role="status">
+            {savedFrom === "pasted" ? "Pasted voice id saved" : null}
+          </p>
         </div>
 
         {/*

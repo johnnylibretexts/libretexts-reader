@@ -177,6 +177,43 @@ describe("SupertonicChapterExport", () => {
     expect(screen.getByLabelText("Voice")).toHaveValue("F3");
   });
 
+  it("never prices the chapter for the drafts a retry is replacing", async () => {
+    // A retry lands `hydrateFailed: false` and the reader's rows in one
+    // `set`, so this commit already has the real `fishVoiceId` -- an estimate
+    // dependency -- while Voice and Language still hold the pre-retry
+    // defaults the seeding effect is only now queuing over. A boolean
+    // `seeded` is true by then, so it gates nothing: the estimate fired once
+    // for "M1" before re-firing for the reader's voice. Same shape as the
+    // mount bug `seeded` was added for, one commit later.
+    estimateSupertonicChapter.mockResolvedValue(estimate());
+    useSettingsStore.setState({
+      hydrateFailed: true,
+      supertonicVoiceStyle: "M1",
+      fishVoiceId: null,
+    });
+    render(<SupertonicChapterExport />);
+
+    // The failure path prices for the defaults on purpose -- the panel is up
+    // and usable. It is the retry that must not.
+    await waitFor(() => expect(estimateSupertonicChapter).toHaveBeenCalled());
+    estimateSupertonicChapter.mockClear();
+
+    act(() => {
+      useSettingsStore.setState({
+        hydrateFailed: false,
+        supertonicVoiceStyle: "F3",
+        fishVoiceId: "fish-voice-9",
+      });
+    });
+
+    await waitFor(() => expect(estimateSupertonicChapter).toHaveBeenCalled());
+    expect(
+      estimateSupertonicChapter.mock.calls.map(
+        (call: unknown[]) => (call[0] as { voiceStyle: string }).voiceStyle,
+      ),
+    ).toEqual(["F3"]);
+  });
+
   it("exports in the chosen voice without changing the app default", async () => {
     // Picking a voice for one MP3 is not the same as choosing what the app
     // reads aloud. This panel sits directly above the paragraphs in the
