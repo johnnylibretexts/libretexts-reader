@@ -1,6 +1,13 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-19
+Last updated: 2026-08-20
+
+> **Current goal: a private beta.** Signed and notarized, fewer than ten named testers,
+> repo staying private. The gating work is the **`Private beta` milestone** on the tracker
+> — eleven issues. See "The plan: a private beta" under Known Limitations for the shape of
+> it and what the decision retired. The app itself is in good health: 207 Rust and 129
+> frontend tests green, and the debug build verified running on 2026-08-20. What is missing
+> is release process, not code.
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
@@ -308,7 +315,7 @@ Design and plan: `docs/superpowers/specs/2026-08-13-rename-libretexts-reader-des
 
 **Not verified, and worth doing on the next import:** cover and figure rendering. There was no library on this machine, so the identifier/`$APPDATA` coupling has not been exercised end to end with real images. That is the one failure mode that produces no error — see `check-identifier.sh` and the asset-protocol gotcha.
 
-**Open issues** on `johnnylibretexts/libretexts-reader`: **22 as of 2026-08-20** (#48-#69),
+**Open issues** on `johnnylibretexts/libretexts-reader`: **20 as of 2026-08-20** (#48-#69, less #56 and #68 closed by the private-beta decision),
 all from the release-readiness audit — see "Known Limitations And Next Steps" below for
 the map. This paragraph previously read "none as of 2026-08-17", which was true then and
 is a good reminder that a hand-maintained count goes stale silently; prefer
@@ -607,33 +614,33 @@ The previous version of this section was written before Fish Audio shipped and l
 none of the actual blockers. **If it looks stale again, distrust it and check the
 tracker.**
 
-### Not ready for a public beta, as of 2026-08-20
+### The plan: a private beta (decided 2026-08-20)
 
-Nine issues are filed as release blockers. They fall into three groups, and the grouping
-matters because the groups have different owners:
+**Shape:** fewer than ten named testers, all reachable by email, given access to this
+private repo and a Release published here. The build **is** signed and notarized. The repo
+stays private; going public is a separate, later decision.
 
-- **Release mechanics** — #48 (the pipeline has *never* run; no runner registered, no
-  `APPLE_SIGNING_IDENTITY`), #49 (a `-beta` tag fails `check-version.sh`, and the only
-  tag is stale and local-only), #56 (the repo is private, so a Release has no public
-  download URL).
-- **Legal and compliance** — #50 (LAME is statically linked under LGPL with no notice and,
-  because of `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is also
-  never bundled into the `.app`), #51 (imported books' licence and attribution are stored
-  and then displayed nowhere, including in exported MP3s), #55 (the README's "no data ever
-  leaving your machine" claim is false — image download has no host allowlist).
-- **Product** — #52 (first Play silently pulls ~383 MB and disables every playback control
-  with no progress or cancel), #53 (Delete is one unconfirmed click and irreversible),
-  #54 (Fish playback bills ~10 sentences per Play with no in-app warning and no way to
-  stop it).
+The eleven issues that gate it carry the **`Private beta` milestone** — that milestone is
+the working list, and it is authoritative over this paragraph:
 
-Four more are **decisions rather than tasks** and should be made deliberately: #57 (using
-the LibreTexts name while unaffiliated), #67 (platform scope — `msi`/`nsis` are declared
-but never built), #68 (no auto-updater), #69 (content-fidelity gaps).
+- **Release mechanics** — #48 (the pipeline has *never* run: no runner registered, no `APPLE_SIGNING_IDENTITY`, and the Developer ID cert is not on the dev machine — find the release Mac first), #49 (a `-beta` tag fails `check-version.sh`; the only tag is stale and local-only), #67 (drop `msi`/`nsis` so the config stops claiming Windows).
+- **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either), #51 (imported books' licence and attribution are stored and displayed nowhere, including in exported MP3s), #55 (the README's "no data ever leaving your machine" claim is false — image download has no host allowlist).
+- **Product** — #52 (first Play silently pulls ~383 MB and disables every playback control), #53 (Delete is one unconfirmed click and irreversible), #54 (Fish bills ~10 sentences per Play with no warning and no stop button), #58 (developer scaffolding ships on user-facing routes), #60 (the voice-style setting is silently ignored during playback).
 
-**#68 has an ordering trap worth knowing before you plan anything else:** adding the
-updater *after* a beta means the first cohort can never be auto-migrated, so its cost only
-grows once a tester installs. It pairs with #56 — a small, named-tester private beta makes
-both problems mostly go away.
+**What the decision retired.** #56 (distribution) is closed — a private cohort needs no
+public artifact URL. #68 (no auto-updater) is closed as deferred: ten emailable people can
+simply be told to re-download, which defuses the ordering trap that made it urgent. **Both
+should be reopened as live questions before any public step** — #68 especially, because by
+then there will be two cohorts to migrate by hand rather than one.
+
+**What it did *not* retire.** Distribution to testers is still distribution, so the LGPL
+and CC attribution obligations (#50, #51) attach exactly as they would publicly. And #54
+*escalates*: charging ten people you know personally, with no warning and no way to stop
+it, is worse than doing it to strangers.
+
+**Deferred to the public decision:** #57 (the LibreTexts name — but note renaming gets
+strictly more expensive with every install, and ten testers is the cheapest it will ever
+be), #69 (content fidelity), and the risk-tier issues #59, #61-#66.
 
 ### Import fidelity — still true, unchanged
 
