@@ -108,6 +108,24 @@ describe("LibraryGrid", () => {
       );
     });
 
+    it("keeps the reader's place when the delete fails", async () => {
+      // `remove` reports failure by writing the store's `error` field, not by
+      // throwing, so `await remove(...)` resolves either way. Resetting on
+      // that bare await closes the book the reader is in the middle of for a
+      // deletion that never happened -- and the book is still right there in
+      // the library.
+      deleteDocument.mockRejectedValue(new Error("disk is busy"));
+      const reading = libraryDocument();
+      usePlayerStore.setState({ document: reading });
+      render(<LibraryGrid onOpenDocument={vi.fn()} />);
+      clickTrash();
+      fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
+
+      await waitFor(() => expect(deleteDocument).toHaveBeenCalled());
+      expect(usePlayerStore.getState().document).toEqual(reading);
+      expect(screen.getByText(TITLE)).toBeInTheDocument();
+    });
+
     it("can be reopened after Escape dismisses it", async () => {
       // Escape closes a native dialog through the DOM without telling React.
       // Left unsynced, `pendingDelete` stays set against a shut dialog -- and

@@ -91,10 +91,21 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
 
     await remove(document.id);
 
+    // `remove` reports a failure by writing the store's `error` field, not by
+    // rejecting, so this await resolves either way. The row disappearing is
+    // the actual signal that the delete landed -- `remove` filters it out only
+    // on success -- and reading the store's `error` instead would be
+    // unreliable anyway, since a concurrent action can overwrite it.
+    const stillInLibrary = useLibraryStore
+      .getState()
+      .documents.some((row) => row.id === document.id);
+
     // The Reader and MiniPlayer stay bound to whatever the player store holds.
     // Left pointing at a deleted document, the next section change runs
-    // against rows the backend has already removed from disk.
-    if (isOpenInReader) {
+    // against rows the backend has already removed from disk. Only on a delete
+    // that actually happened, though: closing the book someone is reading
+    // because a failed delete resolved is a worse outcome than the bug.
+    if (isOpenInReader && !stillInLibrary) {
       usePlayerStore.getState().reset();
     }
   }
@@ -160,7 +171,7 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
               document={document}
               key={document.id}
               onContextMenu={openContextMenu}
-              onDelete={(document) => void requestDelete(document)}
+              onDelete={requestDelete}
               onOpen={openDocument}
             />
           ))}
@@ -184,7 +195,7 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
                     openDocument(menu.document);
                   }
                   if (item.id === "delete") {
-                    void requestDelete(menu.document);
+                    requestDelete(menu.document);
                   }
                 }}
                 role="menuitem"
