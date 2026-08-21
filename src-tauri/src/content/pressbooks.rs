@@ -45,7 +45,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// reaches the API. The `Mozilla/5.0 (compatible; …)` form is the convention
 /// the User-Agent header was designed for: it names this client honestly
 /// without impersonating a specific browser, and it is accepted.
-const USER_AGENT: &str = "Mozilla/5.0 (compatible; LibreTexts Reader/0.1.0)";
+const USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (compatible; LibreTexts Reader/",
+    env!("CARGO_PKG_VERSION"),
+    ")"
+);
 
 /// The API's own ceiling, not a choice. Asking for more is a 400.
 const PER_PAGE: usize = 10;
@@ -1103,9 +1107,22 @@ mod tests {
     use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use regex::Regex;
 
-    use super::{EntryKind, PressbooksClient};
+    use super::{EntryKind, PressbooksClient, USER_AGENT};
     use crate::db::connection::temporary_pool;
     use crate::db::models::SourceType;
+
+    #[test]
+    fn user_agent_reports_the_version_this_build_actually_is() {
+        // It went out to third-party Pressbooks servers reading
+        // "LibreTexts Reader/0.1.0" as a literal, so the first version bump
+        // made it misreport the client -- silently, since nothing here reads
+        // it back. Deriving it is what keeps that impossible.
+        assert!(
+            USER_AGENT.contains(env!("CARGO_PKG_VERSION")),
+            "User-Agent {USER_AGENT:?} does not name the crate version {:?}",
+            env!("CARGO_PKG_VERSION"),
+        );
+    }
 
     /// A table of contents with one of everything the flattening rules care
     /// about: readable front matter, an empty title page, a part wrapping two

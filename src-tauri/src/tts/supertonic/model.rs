@@ -11,7 +11,11 @@ use crate::paths;
 
 pub(crate) const SUPERTONIC_MODEL_ID: &str = "Supertone/supertonic-3";
 pub(crate) const SUPERTONIC_MODEL_VERSION: &str = "supertonic-3";
-pub(crate) const SUPERTONIC_USER_AGENT: &str = "libretexts-reader/0.1 supertonic-model-downloader";
+pub(crate) const SUPERTONIC_USER_AGENT: &str = concat!(
+    "libretexts-reader/",
+    env!("CARGO_PKG_VERSION"),
+    " supertonic-model-downloader"
+);
 /// Abort a stalled model download if no chunk arrives within this window. An
 /// overall request timeout is intentionally avoided so large files can finish.
 pub(crate) const SUPERTONIC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -264,4 +268,21 @@ pub(crate) fn emit_supertonic_model_progress<R: Runtime>(
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod user_agent_tests {
+    use super::SUPERTONIC_USER_AGENT;
+
+    #[test]
+    fn user_agent_reports_the_version_this_build_actually_is() {
+        // Sent to huggingface.co on every model download. It read
+        // "libretexts-reader/0.1" as a literal, so it drifts the moment the
+        // crate version moves and nothing in the app would notice.
+        assert!(
+            SUPERTONIC_USER_AGENT.contains(env!("CARGO_PKG_VERSION")),
+            "User-Agent {SUPERTONIC_USER_AGENT:?} does not name the crate version {:?}",
+            env!("CARGO_PKG_VERSION"),
+        );
+    }
 }
