@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
-import { BookOpen, ExternalLink, Search, Trash2 } from "lucide-react";
+import { BookOpen, Search, Trash2 } from "lucide-react";
 import { useLibraryStore } from "../../stores/library";
 import type * as Domain from "../../types/domain";
 import { DocumentCard } from "./DocumentCard";
@@ -15,9 +15,11 @@ interface ContextMenuState {
   y: number;
 }
 
+// Export was listed here permanently disabled, which offers the reader an
+// action the app cannot perform. Chapter audio export lives in the Reader,
+// where it belongs; the item is gone rather than greyed out.
 const contextMenuItems = [
   { id: "open", label: "Open", icon: BookOpen },
-  { id: "export", label: "Export", icon: ExternalLink },
   { id: "delete", label: "Delete", icon: Trash2 },
 ] as const;
 
@@ -143,11 +145,9 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
         >
           {contextMenuItems.map((item) => {
             const Icon = item.icon;
-            const disabled = item.id === "export";
             return (
               <button
-                className="flex h-9 w-full items-center gap-2 px-3 text-left text-neutral-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                disabled={disabled}
+                className="flex h-9 w-full items-center gap-2 px-3 text-left text-neutral-700 hover:bg-stone-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
                 key={item.id}
                 onClick={() => {
                   if (item.id === "open") {

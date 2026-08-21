@@ -211,7 +211,6 @@ function RoutePlaceholder({
   onPdfImported: (documentId: string, title: string) => void;
   onUrlImported: (documentId: string, title: string) => void;
 }) {
-  const statusRows = routeStatusRows(route.id, readerDocument);
   const subtitle =
     route.id === "reader" && readerDocument
       ? readerDocument.title
@@ -257,43 +256,7 @@ function RoutePlaceholder({
         <Reader documentId={readerDocument?.id ?? null} />
       ) : null}
       {route.id === "settings" ? <SettingsPanel /> : null}
-
-      {route.id !== "library" &&
-      route.id !== "settings" &&
-      route.id !== "reader" ? (
-        <StatusTable rows={statusRows} />
-      ) : null}
     </section>
-  );
-}
-
-function StatusTable({
-  rows,
-}: {
-  rows: Array<{ area: string; state: string; detail: string }>;
-}) {
-  return (
-    <div className="overflow-x-auto rounded-md border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="grid min-w-[34rem] grid-cols-[minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(9rem,1.2fr)] border-b border-neutral-200 bg-stone-100 text-xs font-semibold uppercase text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        <div className="px-4 py-3">Area</div>
-        <div className="px-4 py-3">State</div>
-        <div className="px-4 py-3">Detail</div>
-      </div>
-      {rows.map((row) => (
-        <div
-          className="grid min-w-[34rem] grid-cols-[minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(9rem,1.2fr)] border-b border-neutral-100 text-sm last:border-b-0 dark:border-neutral-800"
-          key={row.area}
-        >
-          <div className="min-w-0 px-4 py-3 font-medium">{row.area}</div>
-          <div className="min-w-0 px-4 py-3 text-neutral-600 dark:text-neutral-300">
-            {row.state}
-          </div>
-          <div className="min-w-0 px-4 py-3 text-neutral-600 dark:text-neutral-300">
-            {row.detail}
-          </div>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -321,65 +284,24 @@ function routeIcon(route: RouteId) {
 function routeSubtitle(route: RouteId): string {
   switch (route) {
     case "library":
-      return "No documents selected.";
+      return "Books you have imported.";
     case "openstax":
-      return "Catalog view.";
+      return "Browse and import OpenStax textbooks.";
     case "libretexts":
-      return "LibreTexts catalog.";
+      return "Browse and import LibreTexts textbooks.";
     case "pressbooks":
-      return "Pressbooks catalog.";
+      return "Browse and import books from Pressbooks networks.";
     case "epub":
-      return "File import.";
+      return "Import a book from an EPUB file.";
     case "pdf":
-      return "File import.";
+      return "Import a book from a PDF file.";
     case "paste":
-      return "Scratchpad.";
+      return "Paste text to listen to it.";
     case "url":
-      return "Article source.";
+      return "Import an article from a web address.";
     case "reader":
-      return "No active document.";
+      return "Open a book from your library to start reading.";
     case "settings":
-      return "Preferences.";
-  }
-}
-
-function routeStatusRows(
-  route: RouteId,
-  readerDocument: ReaderDocument | null,
-) {
-  const shared = [
-    { area: "Storage", state: "Ready", detail: "Local SQLite" },
-    { area: "Bridge", state: "Connected", detail: "Tauri IPC" },
-  ];
-
-  switch (route) {
-    case "library":
-      return [
-        { area: "Documents", state: "Empty", detail: "Library" },
-        { area: "Imports", state: "Available", detail: "Sidebar" },
-        ...shared,
-      ];
-    case "reader":
-      return [
-        {
-          area: "Reader",
-          state: readerDocument ? "Loaded" : "Empty",
-          detail: readerDocument ? readerDocument.id : "No document loaded",
-        },
-        { area: "Player", state: "Idle", detail: "Mini-player hidden" },
-        ...shared,
-      ];
-    case "settings":
-      return [
-        { area: "Theme", state: "Persisted", detail: "Light, dark, system" },
-        { area: "Defaults", state: "Seeded", detail: "Voice, speed, export" },
-        ...shared,
-      ];
-    default:
-      return [
-        { area: "Importer", state: "Ready", detail: "Awaiting source" },
-        { area: "Tokenizer", state: "Ready", detail: "Sentence offsets" },
-        ...shared,
-      ];
+      return "Voices, appearance, and export.";
   }
 }
