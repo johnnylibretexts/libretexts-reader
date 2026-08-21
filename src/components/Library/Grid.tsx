@@ -9,6 +9,14 @@ import { EmptyState } from "./EmptyState";
 
 interface LibraryGridProps {
   onOpenDocument: (document: { id: string; title: string }) => void;
+  /**
+   * The book open in the Reader has just been deleted, so whatever else is
+   * still pointing at it has to let go. Resetting the player is not enough on
+   * its own: the route that opened it lives in AppShell, and the Reader nav
+   * entry is always present -- so going back to it re-mounts the Reader with
+   * the dead id and it immediately re-fetches rows the backend has removed.
+   */
+  onOpenDocumentDeleted?: () => void;
 }
 
 interface ContextMenuState {
@@ -25,7 +33,29 @@ const contextMenuItems = [
   { id: "delete", label: "Delete", icon: Trash2 },
 ] as const;
 
-export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
+/**
+ * Whether re-importing this document means downloading it again.
+ *
+ * The dialog below promised every reader that a re-import re-downloads the
+ * whole book. For an EPUB, a PDF, or pasted text there is nothing to download
+ * -- the source was a local file they still have -- so the warning named a
+ * cost that does not exist, in the one place where the copy IS the feature.
+ */
+function isImportedFromSource(sourceType: Domain.Document["sourceType"]) {
+  // "url" is the article importer; "pasted", "epub" and "pdf" all came from
+  // something the reader already has.
+  return (
+    sourceType === "openstax" ||
+    sourceType === "libretexts" ||
+    sourceType === "pressbooks" ||
+    sourceType === "url"
+  );
+}
+
+export function LibraryGrid({
+  onOpenDocument,
+  onOpenDocumentDeleted,
+}: LibraryGridProps) {
   const documents = useLibraryStore((state) => state.documents);
   const loading = useLibraryStore((state) => state.loading);
   const error = useLibraryStore((state) => state.error);
@@ -107,6 +137,7 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
     // because a failed delete resolved is a worse outcome than the bug.
     if (isOpenInReader && !stillInLibrary) {
       usePlayerStore.getState().reset();
+      onOpenDocumentDeleted?.();
     }
   }
 
@@ -213,12 +244,14 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
         body={
           <>
             <p>
-              <strong>{pendingDelete?.title}</strong> and everything downloaded
-              with it -- its cover, every figure, and its cached Source pages --
-              will be deleted from this Mac. This cannot be undone.
+              <strong>{pendingDelete?.title}</strong>, its cover and every
+              figure downloaded with it will be deleted from this Mac. This
+              cannot be undone.
             </p>
             <p className="mt-2">
-              You can import it again, but the whole book has to download afresh.
+              {pendingDelete && isImportedFromSource(pendingDelete.sourceType)
+                ? "You can import it again, but the whole book has to download afresh."
+                : "You can import it again from the original file."}
             </p>
           </>
         }

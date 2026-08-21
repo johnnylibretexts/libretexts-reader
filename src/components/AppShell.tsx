@@ -163,7 +163,15 @@ export function AppShell() {
           <RoutePlaceholder
             route={route}
             icon={mainIcon}
-            readerDocument={readerDocument}
+            onOpenDocumentDeleted={() => {
+          // Clearing this is what stops the Reader re-fetching a deleted book.
+          // `Reader` reloads whenever `documentId` and the player's document
+          // disagree, and resetting the player makes them disagree -- so
+          // without this, the reset itself is what arms the doomed fetch for
+          // the next visit to the Reader, which the sidebar always offers.
+          setReaderDocument(null);
+        }}
+        readerDocument={readerDocument}
             onOpenDocument={openReader}
             onEpubImported={(documentId, title) =>
               void handleEpubImported(documentId, title)
@@ -197,6 +205,7 @@ function RoutePlaceholder({
   icon,
   readerDocument,
   onOpenDocument,
+  onOpenDocumentDeleted,
   onEpubImported,
   onPasteImported,
   onPdfImported,
@@ -206,6 +215,7 @@ function RoutePlaceholder({
   icon: React.ReactNode;
   readerDocument: ReaderDocument | null;
   onOpenDocument: (document: ReaderDocument) => void;
+  onOpenDocumentDeleted: () => void;
   onEpubImported: (documentId: string, title: string) => void;
   onPasteImported: (documentId: string, title: string) => void;
   onPdfImported: (documentId: string, title: string) => void;
@@ -250,7 +260,10 @@ function RoutePlaceholder({
       {route.id === "url" ? <UrlDialog onImported={onUrlImported} /> : null}
 
       {route.id === "library" ? (
-        <LibraryGrid onOpenDocument={onOpenDocument} />
+        <LibraryGrid
+          onOpenDocument={onOpenDocument}
+          onOpenDocumentDeleted={onOpenDocumentDeleted}
+        />
       ) : null}
       {route.id === "reader" ? (
         <Reader documentId={readerDocument?.id ?? null} />

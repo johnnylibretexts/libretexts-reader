@@ -1,7 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 
 interface ConfirmDialogProps {
-  /** Rendered only while true; the dialog is modal for as long as it is. */
+  /**
+   * Drives `showModal()` / `close()`. The dialog and its children stay
+   * mounted either way -- a closed `<dialog>` is `display: none`, not
+   * unmounted -- so `body` must tolerate rendering after the thing it
+   * describes has been cleared.
+   */
   open: boolean;
   title: string;
   /** What the reader is agreeing to. Name the thing being acted on here. */
@@ -29,6 +34,10 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const ref = useRef<HTMLDialogElement | null>(null);
+  // Generated, not a constant: a second ConfirmDialog anywhere in the tree
+  // would otherwise put a duplicate id in the document, and the accessible
+  // name of both would resolve to whichever came first.
+  const titleId = useId();
   // Escape closes a native dialog through the DOM without telling React, which
   // would leave `open` true against a closed dialog -- and `showModal()` on an
   // already-open dialog throws, so the *next* delete would break rather than
@@ -64,12 +73,12 @@ export function ConfirmDialog({
 
   return (
     <dialog
-      aria-labelledby="confirm-dialog-title"
+      aria-labelledby={titleId}
       className="max-w-md rounded-md border border-neutral-200 bg-white p-0 text-neutral-900 backdrop:bg-neutral-950/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
       ref={ref}
     >
       <div className="p-5">
-        <h2 className="text-base font-semibold" id="confirm-dialog-title">
+        <h2 className="text-base font-semibold" id={titleId}>
           {title}
         </h2>
         <div className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">

@@ -143,6 +143,44 @@ describe("LibraryGrid", () => {
       expect(deleteDocument).not.toHaveBeenCalled();
     });
 
+    it("tells its host to let go of the reader route", async () => {
+      // Resetting the player is not enough. AppShell holds the route that
+      // opened the book, and the Reader nav entry is always there, so coming
+      // back to it re-mounts the Reader with the dead id -- and Reader
+      // re-fetches whenever its id and the player's document disagree, which
+      // the reset has just guaranteed.
+      const onOpenDocumentDeleted = vi.fn();
+      usePlayerStore.setState({ document: libraryDocument() });
+      render(
+        <LibraryGrid
+          onOpenDocument={vi.fn()}
+          onOpenDocumentDeleted={onOpenDocumentDeleted}
+        />,
+      );
+      clickTrash();
+      fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
+
+      await waitFor(() => expect(onOpenDocumentDeleted).toHaveBeenCalled());
+    });
+
+    it("does not disturb the reader route for a book it is not showing", async () => {
+      const onOpenDocumentDeleted = vi.fn();
+      usePlayerStore.setState({
+        document: libraryDocument({ id: "doc-2", title: "Another Book" }),
+      });
+      render(
+        <LibraryGrid
+          onOpenDocument={vi.fn()}
+          onOpenDocumentDeleted={onOpenDocumentDeleted}
+        />,
+      );
+      clickTrash();
+      fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
+
+      await waitFor(() => expect(deleteDocument).toHaveBeenCalled());
+      expect(onOpenDocumentDeleted).not.toHaveBeenCalled();
+    });
+
     it("leaves the player alone when a different book is deleted", async () => {
       const reading = libraryDocument({ id: "doc-2", title: "Another Book" });
       usePlayerStore.setState({ document: reading });
