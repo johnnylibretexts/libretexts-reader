@@ -2,7 +2,9 @@
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use tokio::sync::broadcast;
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Runtime, Window};
@@ -55,6 +57,120 @@ impl SupertonicDownloadCancel {
             return Err(AppError::Model(MODEL_DOWNLOAD_CANCELLED.into()));
         }
         Ok(())
+    }
+}
+
+/// What a finished download tells the callers that joined it.
+///
+/// The message rather than the `AppError`, because `AppError` cannot be
+/// `Clone` -- it wraps `rusqlite::Error` and `reqwest::Error`, neither of
+/// which is. A joined caller therefore sees `AppError::Model` whatever the
+/// leader actually hit. That is exact for the case that matters, since
+/// cancellation is already an `AppError::Model` the webview matches by
+/// message, and honest for the rest: from a joiner's side this *is* a failure
+/// of the model download it was waiting on.
+type DownloadOutcome = Result<String, String>;
+
+/// The one model download this process will run, and the flag that stops it.
+///
+/// Two commands can ask for the model -- the player on first Play and the
+/// Settings Download button -- and nothing used to keep them apart. Both
+/// cleared the shared cancel flag on entry, so a Cancel the reader pressed
+/// before the second one arrived was silently voided, and both wrote and
+/// renamed the same `<file>.download` temp path. A second caller now joins the
+/// download already in flight instead of starting a competing one.
+#[derive(Debug, Default, Clone)]
+pub struct SupertonicDownload {
+    cancel: SupertonicDownloadCancel,
+    in_flight: Arc<Mutex<Option<broadcast::Sender<DownloadOutcome>>>>,
+}
+
+impl SupertonicDownload {
+    /// Ask the download in flight to stop, whoever started it.
+    pub(crate) fn request_cancel(&self) {
+        self.cancel.request();
+    }
+
+    /// Fetch the model, or join the fetch already running.
+    ///
+    /// `download` is only called when this caller is the one that starts it;
+    /// everyone else waits for its result. It receives the cancel handle
+    /// rather than reading one from managed state, so the download it runs and
+    /// the Cancel the reader presses cannot refer to different flags.
+    pub(crate) async fn run<F, Fut>(&self, download: F) -> AppResult<String>
+    where
+        F: FnOnce(SupertonicDownloadCancel) -> Fut,
+        Fut: std::future::Future<Output = AppResult<String>>,
+    {
+        let joined = {
+            let mut in_flight = self.lock_slot();
+            match in_flight.as_ref() {
+                // Subscribing here, under the same lock the leader publishes
+                // under, is what makes the handoff safe: a receiver created
+                // while the sender is still in the slot cannot miss the result.
+                Some(running) => Some(running.subscribe()),
+                None => {
+                    let (sender, _) = broadcast::channel(1);
+                    *in_flight = Some(sender);
+                    // Only where a download actually begins. Clearing on every
+                    // entry is what let a second caller void a Cancel the
+                    // reader had already pressed on the first.
+                    self.cancel.clear();
+                    None
+                }
+            }
+        };
+
+        if let Some(mut waiting) = joined {
+            return match waiting.recv().await {
+                Ok(outcome) => outcome.map_err(AppError::Model),
+                // The leader went away without publishing -- dropped mid-flight
+                // or panicked. Saying so beats waiting for a result that is
+                // never coming.
+                Err(_) => Err(AppError::Model(
+                    "the Supertonic model download stopped without reporting a result".into(),
+                )),
+            };
+        }
+
+        // Releases the slot even if the future below is dropped or panics. A
+        // leader that never reaches the publish knows nothing about the callers
+        // parked behind it; without this they wait forever.
+        let _slot = SlotHeld(self.in_flight.clone());
+
+        let outcome = download(self.cancel.clone()).await;
+
+        if let Some(sender) = self.lock_slot().take() {
+            // Fails only when nobody joined, which is the common case.
+            let _ = sender.send(match &outcome {
+                Ok(directory) => Ok(directory.clone()),
+                Err(error) => Err(error.message()),
+            });
+        }
+
+        outcome
+    }
+
+    /// A poisoned slot is recoverable: the value behind it is an `Option` that
+    /// a panicking leader leaves in a valid state either way.
+    fn lock_slot(&self) -> std::sync::MutexGuard<'_, Option<broadcast::Sender<DownloadOutcome>>> {
+        self.in_flight
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+    }
+}
+
+/// Clears the in-flight slot when the leader stops, however it stops.
+///
+/// Dropping the sender is what wakes anyone waiting: they see the channel
+/// close and report a download that ended without a result, rather than
+/// parking on one that will never publish.
+struct SlotHeld(Arc<Mutex<Option<broadcast::Sender<DownloadOutcome>>>>);
+
+impl Drop for SlotHeld {
+    fn drop(&mut self) {
+        let mut slot = self.0.lock().unwrap_or_else(|held| held.into_inner());
+        slot.take();
     }
 }
 
@@ -373,6 +489,210 @@ mod cancel_tests {
         assert!(
             held_by_the_download.check().is_err(),
             "cancelling through one handle must stop the download holding another"
+        );
+    }
+}
+
+#[cfg(test)]
+mod single_flight_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use tokio::sync::oneshot;
+
+    use super::{SupertonicDownload, MODEL_DOWNLOAD_CANCELLED};
+
+    /// Drive a future to the point where it first waits.
+    ///
+    /// Everything `run` does before it awaits happens in that single poll --
+    /// claiming the slot, or joining one and subscribing to its result -- which
+    /// is exactly where the old code cleared the cancel flag. Polling by hand
+    /// rather than spawning keeps the ordering of two callers exact instead of
+    /// leaving it to the scheduler.
+    macro_rules! poll_until_it_waits {
+        ($future:expr, $what:literal) => {
+            assert!(
+                futures::poll!(&mut $future).is_pending(),
+                concat!($what, " should still be waiting at this point")
+            );
+        };
+    }
+
+    #[tokio::test]
+    async fn a_second_request_joins_the_download_already_running() {
+        let download = SupertonicDownload::default();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let (release, held) = oneshot::channel::<()>();
+
+        let mut player = Box::pin(download.run({
+            let starts = starts.clone();
+            |_| async move {
+                starts.fetch_add(1, Ordering::SeqCst);
+                held.await.ok();
+                Ok("the model directory".to_string())
+            }
+        }));
+        poll_until_it_waits!(player, "the player's download");
+
+        let mut settings = Box::pin(download.run({
+            let starts = starts.clone();
+            |_| async move {
+                starts.fetch_add(1, Ordering::SeqCst);
+                Ok("a competing download".to_string())
+            }
+        }));
+        poll_until_it_waits!(settings, "the Settings download");
+
+        release.send(()).ok();
+        let (player, settings) = tokio::join!(player, settings);
+
+        assert_eq!(
+            player.expect("the player's download should finish"),
+            "the model directory"
+        );
+        assert_eq!(
+            settings.expect("the joined download should finish"),
+            "the model directory",
+            "the second caller should be handed the running download's result"
+        );
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            1,
+            "only one download should ever have started"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_request_does_not_void_a_cancel_already_pending() {
+        let download = SupertonicDownload::default();
+        let seen_by_the_download = Arc::new(Mutex::new(None));
+
+        let outcome = download
+            .run(|cancel| {
+                let download = download.clone();
+                let seen = seen_by_the_download.clone();
+                async move {
+                    // The reader presses Cancel on the download now running.
+                    download.request_cancel();
+
+                    // Settings then asks for the model too, while that Cancel
+                    // is still pending.
+                    let mut settings = Box::pin(download.run(|_| async {
+                        panic!("a second download must not start while one is running")
+                    }));
+                    poll_until_it_waits!(settings, "the Settings download");
+
+                    *seen.lock().expect("the observation") = Some(cancel.check().is_err());
+                    Ok("the model directory".to_string())
+                }
+            })
+            .await;
+
+        assert!(
+            outcome.is_ok(),
+            "the leader itself should not have failed here"
+        );
+        assert_eq!(
+            *seen_by_the_download.lock().expect("the observation"),
+            Some(true),
+            "a second request must not clear a Cancel the reader already pressed"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_caller_waiting_on_a_cancelled_download_is_told_it_was_cancelled() {
+        let download = SupertonicDownload::default();
+        let (release, held) = oneshot::channel::<()>();
+
+        let mut player = Box::pin(download.run(|cancel| async move {
+            held.await.ok();
+            cancel.check()?;
+            Ok("the model directory".to_string())
+        }));
+        poll_until_it_waits!(player, "the player's download");
+
+        let mut settings =
+            Box::pin(download.run(|_| async {
+                panic!("a second download must not start while one is running")
+            }));
+        poll_until_it_waits!(settings, "the Settings download");
+
+        download.request_cancel();
+        release.send(()).ok();
+        let (player, settings) = tokio::join!(player, settings);
+
+        for (who, result) in [("the player", player), ("Settings", settings)] {
+            let error = result.expect_err(&format!("{who} should see the cancellation"));
+            assert!(
+                error.to_string().contains(MODEL_DOWNLOAD_CANCELLED),
+                "{who} got {error}, which the webview cannot recognise as a Cancel"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_download_that_has_finished_does_not_capture_the_next_one() {
+        let download = SupertonicDownload::default();
+
+        download
+            .run(|_| async { Ok("the model directory".to_string()) })
+            .await
+            .expect("the first download should finish");
+
+        // Bounded on purpose. A slot the finished download never released
+        // does not make this fail, it makes it *hang* -- a later caller
+        // subscribes to a sender that will never send again, since a broadcast
+        // receiver created after a send never sees it. This repo has already
+        // lost a CI run to the six-hour job cap (#44); a regression here should
+        // cost five seconds.
+        let second = tokio::time::timeout(
+            Duration::from_secs(5),
+            download.run(|_| async { Ok("a later download".to_string()) }),
+        )
+        .await
+        .expect("a finished download must release the slot, not capture every later caller");
+
+        assert_eq!(
+            second.expect("a later download should be allowed to run"),
+            "a later download",
+            "the slot must be released, or every later caller waits on a download that is over"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_download_does_not_park_later_callers_forever() {
+        let download = SupertonicDownload::default();
+        let (started, has_started) = oneshot::channel::<()>();
+
+        let abandoned = tokio::spawn({
+            let download = download.clone();
+            async move {
+                download
+                    .run(|_| async move {
+                        started.send(()).ok();
+                        std::future::pending::<()>().await;
+                        Ok(String::new())
+                    })
+                    .await
+            }
+        });
+        has_started.await.expect("the download should have started");
+
+        // A window closing, or a panic, drops the command's future mid-flight.
+        abandoned.abort();
+        let _ = abandoned.await;
+
+        let later = tokio::time::timeout(
+            Duration::from_secs(5),
+            download.run(|_| async { Ok("a later download".to_string()) }),
+        )
+        .await
+        .expect("a later caller must not wait on a download that will never report");
+
+        assert_eq!(
+            later.expect("the later download should finish"),
+            "a later download"
         );
     }
 }

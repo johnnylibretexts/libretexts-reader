@@ -25,8 +25,9 @@ use crate::tts::supertonic::engine;
 use crate::tts::supertonic::model::{
     emit_supertonic_model_progress, existing_supertonic_model_bytes, file_complete,
     supertonic_model_dir, supertonic_model_file_path, supertonic_model_manifest,
-    supertonic_model_status, temp_download_path, SupertonicDownloadCancel, SupertonicModelStatus,
-    SUPERTONIC_MODEL_VERSION, SUPERTONIC_READ_TIMEOUT, SUPERTONIC_USER_AGENT,
+    supertonic_model_status, temp_download_path, SupertonicDownload, SupertonicDownloadCancel,
+    SupertonicModelStatus, SUPERTONIC_MODEL_VERSION, SUPERTONIC_READ_TIMEOUT,
+    SUPERTONIC_USER_AGENT,
 };
 use crate::tts::supertonic::provider::SupertonicProvider;
 use crate::tts::supertonic::voice::{
@@ -92,16 +93,32 @@ pub async fn get_supertonic_model_status() -> AppResult<SupertonicModelStatus> {
     supertonic_model_status()
 }
 
+/// Fetch the Supertonic model, or join the fetch already in flight.
+///
+/// Two surfaces call this -- the player on first Play and the Settings
+/// Download button -- and they used to be able to run at the same time, both
+/// clearing the same cancel flag and both writing the same `.download` temp
+/// paths. `SupertonicDownload::run` makes it single-flight: the second caller
+/// waits for the first and is handed its result.
 #[tauri::command]
 pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
     window: Window<R>,
-    cancel: State<'_, SupertonicDownloadCancel>,
+    download: State<'_, SupertonicDownload>,
 ) -> AppResult<String> {
-    // Clear on the way in, not on the way out: a Cancel that lands after the
-    // loop has finished would otherwise stay set and kill the next download
-    // before its first chunk.
-    let cancel = SupertonicDownloadCancel::clone(&cancel);
-    cancel.clear();
+    let download = SupertonicDownload::clone(&download);
+    download
+        .run(|cancel| async move { fetch_supertonic_model(&window, &cancel).await })
+        .await
+}
+
+/// The download itself, given the cancel handle of the run it belongs to.
+///
+/// Takes that handle as an argument rather than reading managed state, so the
+/// flag this checks is necessarily the one `run` cleared when it started.
+async fn fetch_supertonic_model<R: Runtime>(
+    window: &Window<R>,
+    cancel: &SupertonicDownloadCancel,
+) -> AppResult<String> {
     let manifest = supertonic_model_manifest()?;
     let directory = supertonic_model_dir()?;
     tokio::fs::create_dir_all(&directory).await?;
@@ -116,7 +133,7 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
         .connect_timeout(std::time::Duration::from_secs(30))
         .build()?;
 
-    emit_supertonic_model_progress(&window, "Preparing", downloaded, total)?;
+    emit_supertonic_model_progress(window, "Preparing", downloaded, total)?;
     for file in manifest.files {
         let target_path = supertonic_model_file_path(&directory, &file)?;
         if file_complete(&target_path, file.size_bytes, &file.sha256)? {
@@ -155,7 +172,7 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
                 // stream immediately instead of finishing the 256MB file first.
                 cancel.check()?;
                 emit_supertonic_model_progress(
-                    &window,
+                    window,
                     &file_label,
                     downloaded + file_downloaded,
                     total.max(downloaded + file_downloaded),
@@ -176,7 +193,7 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
         ));
     }
     emit_supertonic_model_progress(
-        &window,
+        window,
         "Complete",
         status.downloaded_bytes,
         status.total_bytes,
@@ -187,13 +204,15 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
 /// Stop the model download in flight.
 ///
 /// Returns as soon as the flag is set -- the download itself fails on its next
-/// chunk, from inside `ensure_supertonic_model_downloaded`. Setting the flag
-/// with no download running is harmless: the next one clears it on entry.
+/// chunk, from inside `fetch_supertonic_model`. Setting the flag with no
+/// download running is harmless: the next one to *start* clears it, and a
+/// caller that merely joins a running download does not, which is what stopped
+/// a Settings request from voiding a Cancel already pressed.
 #[tauri::command]
 pub async fn cancel_supertonic_model_download(
-    cancel: State<'_, SupertonicDownloadCancel>,
+    download: State<'_, SupertonicDownload>,
 ) -> AppResult<()> {
-    cancel.request();
+    download.request_cancel();
     Ok(())
 }
 
