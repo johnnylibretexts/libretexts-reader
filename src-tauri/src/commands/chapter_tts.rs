@@ -37,6 +37,7 @@ use crate::tts::supertonic::voice::{
 use crate::tts::supertonic::{
     ChapterEstimate, ChapterMaterial, ChapterRequest, SupertonicConfig, SUPERTONIC_DEFAULT_SPEED,
 };
+use crate::tts::tags::tag_chapter_mp3;
 
 /// Everything a provider needs, read once by the caller.
 ///
@@ -423,6 +424,14 @@ pub async fn export_supertonic_chapter_mp3(
 
     if job.cache_path.exists() && !force {
         copy_cached_mp3(&job.cache_path, &job.output_path).await?;
+        // Tagged on the way out rather than in the cache, so a chapter cached
+        // before tagging existed still leaves with its credit attached, and
+        // the byte length below is the file the reader actually gets.
+        tag_chapter_mp3(
+            &job.output_path,
+            &job.material.document,
+            &job.material.section,
+        )?;
         let bytes = tokio::fs::metadata(&job.output_path).await?.len();
         return Ok(ChapterExport {
             output_path: path_to_string(&job.output_path),
@@ -457,11 +466,19 @@ pub async fn export_supertonic_chapter_mp3(
     }
 
     deliver_synthesized_mp3(&mp3, &job.cache_path, &job.output_path).await?;
+    tag_chapter_mp3(
+        &job.output_path,
+        &job.material.document,
+        &job.material.section,
+    )?;
+    // The file on disk, not the synthesized buffer: the tag added above is
+    // part of what the reader receives.
+    let byte_length = tokio::fs::metadata(&job.output_path).await?.len();
 
     Ok(ChapterExport {
         output_path: path_to_string(&job.output_path),
         cached: false,
-        byte_length: mp3.len() as u64,
+        byte_length,
         // The chapter was not cached when the job was resolved, which is why
         // it was synthesized; it is now, so nothing further is billable for
         // it.
