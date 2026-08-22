@@ -1,4 +1,10 @@
-import { throwIfAborted, type SpeechEngine, type SpeechEngineId, type SynthesisRequest } from "./types";
+import {
+  throwIfAborted,
+  type EngineStatus,
+  type SpeechEngine,
+  type SpeechEngineId,
+  type SynthesisRequest,
+} from "./types";
 
 export interface FakeEngine extends SpeechEngine {
   /** Every synthesize call, in order. */
@@ -12,6 +18,16 @@ export interface FakeEngine extends SpeechEngine {
    * single-use failure would be absorbed by a prefetch that never surfaces it.
    */
   failSynthesis(error: Error | null): void;
+  /**
+   * What `ensureReady` reports before it resolves — what a real engine emits
+   * while fetching something large. Reported before the gate below, so a
+   * blocked readying can be inspected mid-download.
+   */
+  reportWhileReadying(...statuses: EngineStatus[]): void;
+  /** Hold the next ensureReady open until the returned function is called. */
+  blockNextReady(): () => void;
+  /** Fail every ensureReady until called with null. */
+  failReady(error: Error | null): void;
 }
 
 /**
@@ -30,6 +46,10 @@ export function createFakeEngine(
   let release: (() => void) | null = null;
   let gate: Promise<void> | null = null;
   let nextError: Error | null = null;
+  let readyStatuses: EngineStatus[] = [];
+  let readyRelease: (() => void) | null = null;
+  let readyGate: Promise<void> | null = null;
+  let readyError: Error | null = null;
 
   return {
     id,
@@ -55,6 +75,25 @@ export function createFakeEngine(
       nextError = error;
     },
 
+    reportWhileReadying(...statuses: EngineStatus[]) {
+      readyStatuses = statuses;
+    },
+
+    failReady(error: Error | null) {
+      readyError = error;
+    },
+
+    blockNextReady() {
+      readyGate = new Promise<void>((resolve) => {
+        readyRelease = resolve;
+      });
+      return () => {
+        readyRelease?.();
+        readyGate = null;
+        readyRelease = null;
+      };
+    },
+
     async synthesize(request, signal) {
       throwIfAborted(signal);
       calls.push({ ...request });
@@ -73,8 +112,17 @@ export function createFakeEngine(
       });
     },
 
-    async ensureReady() {
+    async ensureReady(onStatus) {
       readyCalls += 1;
+      for (const status of readyStatuses) {
+        onStatus?.(status);
+      }
+      if (readyGate) {
+        await readyGate;
+      }
+      if (readyError) {
+        throw readyError;
+      }
     },
 
     async listVoices() {

@@ -10,6 +10,7 @@ export {
   SPEECH_ENGINE_LABELS,
   SpeechAbortedError,
   throwIfAborted,
+  type EngineStatus,
   type SettingsSource,
   type SpeechEngine,
   type SpeechEngineId,

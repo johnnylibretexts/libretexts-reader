@@ -53,6 +53,33 @@ export interface SynthesisRequest {
  * Synthesis already in flight cannot be aborted: the Rust command has no
  * cancellation channel, so the signal shortens nothing that has begun.
  */
+/**
+ * What an engine reports while making itself ready.
+ *
+ * Richer than the plain string it used to be because "getting ready" covers
+ * two very different waits: warming something already on disk, over in a
+ * second, and Supertonic's one-time ~383MB fetch from huggingface.co, which
+ * takes minutes. Told apart only by a message, the player rendered both as the
+ * same indeterminate spinner behind the same disabled controls -- which is
+ * what made the second read as a hung app.
+ */
+export interface EngineStatus {
+  /** One line, already written for a reader. */
+  message: string;
+  /**
+   * Set only while something large is being fetched, and only by an engine
+   * that knows both numbers. Its presence is what lets the player show a real
+   * bar instead of a spinner, so do not fill it in with guesses.
+   */
+  download?: { downloadedBytes: number; totalBytes: number };
+  /**
+   * Present only while a step the reader is allowed to abandon is running.
+   * Resolving it does not mean the step has stopped -- it means the request to
+   * stop was delivered; the step itself fails shortly after, as an abort.
+   */
+  cancel?: () => Promise<void>;
+}
+
 export interface SpeechEngine {
   readonly id: SpeechEngineId;
   /**
@@ -76,7 +103,7 @@ export interface SpeechEngine {
    * Make the engine usable: download what is missing, warm what is cold. Safe
    * to call repeatedly; cheap once ready.
    */
-  ensureReady(onStatus?: (status: string) => void): Promise<void>;
+  ensureReady(onStatus?: (status: EngineStatus) => void): Promise<void>;
 
   listVoices(): Promise<SpeechVoice[]>;
 }

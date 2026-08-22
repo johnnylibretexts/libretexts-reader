@@ -12,6 +12,14 @@ import { usePlayerStore } from "../../stores/player";
 export function PlaybackControls() {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const isBuffering = usePlayerStore((state) => state.isBuffering);
+  const modelDownload = usePlayerStore((state) => state.modelDownload);
+  /**
+   * Pause stays live through the one-time voice download, where it is the one
+   * control that can do anything: it stops the download. Disabling it with
+   * everything else is what made a ~383MB fetch read as a frozen app. Skips
+   * stay disabled -- there is no audio yet to skip through.
+   */
+  const playDisabled = isBuffering && !modelDownload;
   const play = usePlayerStore((state) => state.play);
   const pause = usePlayerStore((state) => state.pause);
   const skipBack = usePlayerStore((state) => state.skipBack);
@@ -42,7 +50,7 @@ export function PlaybackControls() {
       <button
         aria-label={isPlaying ? "Pause" : "Play"}
         className="inline-flex h-10 items-center gap-2 rounded-md bg-brand-700 px-4 text-sm font-medium text-white hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={isBuffering}
+        disabled={playDisabled}
         onClick={() => (isPlaying ? pause() : void play())}
         title={isPlaying ? "Pause" : "Play"}
         type="button"

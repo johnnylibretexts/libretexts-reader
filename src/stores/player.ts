@@ -30,6 +30,16 @@ interface PlayerState {
   isPlaying: boolean;
   isBuffering: boolean;
   bufferingMessage: string;
+  /**
+   * The one-time voice-model fetch, while it is running. Null the rest of the
+   * time, including while ordinary audio buffers.
+   *
+   * Separate from `isBuffering` because the two waits are nothing alike:
+   * buffering a sentence is seconds, this is ~383MB over minutes. Rendered
+   * from the same flag, the download got the same indeterminate spinner and
+   * the same wall of disabled controls, which is what made it read as a hang.
+   */
+  modelDownload: { downloadedBytes: number; totalBytes: number } | null;
   loading: boolean;
   error: string | null;
   /**
@@ -54,6 +64,14 @@ interface PlayerState {
   skipParagraphForward: () => Promise<void>;
   skipParagraphBack: () => Promise<void>;
   setSpeed: (speed: number) => void;
+  /**
+   * Stop the voice-model download in flight and release the player.
+   *
+   * Identical to `pause` in effect -- named separately because that is what
+   * the button next to the progress bar does, and a control labelled Cancel
+   * calling `pause` reads as a different action than it is.
+   */
+  cancelModelDownload: () => void;
   /**
    * The one place playback is allowed to change `ttsProvider`. Reachable only
    * from the reader clicking "Switch to Supertonic" after a Fish failure
@@ -101,6 +119,14 @@ let cachedEngine: { key: string; active: ActiveEngine } | null = null;
 /** Aborts in-flight synthesis for the current utterance. See SpeechEngine. */
 let speechAbort: AbortController | null = null;
 
+/**
+ * The cancel the active engine handed over while it downloads something large.
+ *
+ * Module scope rather than state, next to `speechAbort` and for the same
+ * reason: it is a handle for stopping work, not something anything renders.
+ */
+let modelDownloadCancel: (() => Promise<void>) | null = null;
+
 interface SpeechCacheEntry {
   promise: Promise<Blob>;
   lastUsed: number;
@@ -125,6 +151,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   isPlaying: false,
   isBuffering: false,
   bufferingMessage: "",
+  modelDownload: null,
   loading: false,
   error: null,
   canSwitchToSupertonic: false,
@@ -139,6 +166,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
+      modelDownload: null,
     });
 
     try {
@@ -197,8 +225,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   pause: () => {
+    // A model download is part of what Pause has to stop: it is the only
+    // reason playback has not started, and leaving it running would keep
+    // pulling ~383MB after the reader said stop.
+    stopModelDownload();
     cancelSpeech();
-    set({ isPlaying: false, isBuffering: false, bufferingMessage: "" });
+    set({
+      isPlaying: false,
+      isBuffering: false,
+      bufferingMessage: "",
+      modelDownload: null,
+    });
   },
 
   reset: () => {
@@ -217,6 +254,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
+      modelDownload: null,
       loading: false,
       error: null,
       canSwitchToSupertonic: false,
@@ -265,6 +303,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   setSpeed: (speed: number) => {
     set({ speed });
+  },
+
+  cancelModelDownload: () => {
+    get().pause();
   },
 
   switchToSupertonic: async () => {
@@ -486,6 +528,33 @@ async function speakWithBufferedSpeech(
   });
 
   try {
+    // Readiness first, and from here rather than from whichever sentence
+    // happens to miss the cache first. `fillSpeechBuffer` passes no status
+    // callback and reaches the engine before the sentence being spoken does,
+    // so a model download announced from in there was announced to nobody --
+    // and by the time this sentence asked for its audio, the prefetch had
+    // already filled the cache, so it never asked the engine at all. That is
+    // why the ~383MB fetch in #52 showed no progress of any kind.
+    await engine.ensureReady((status) => {
+      if (token === utteranceToken && get().isPlaying) {
+        // Cleared when the engine stops offering one: a stale cancel would
+        // offer to stop something that is no longer running.
+        modelDownloadCancel = status.cancel ?? null;
+        set({
+          bufferingMessage: status.message,
+          modelDownload: status.download ?? null,
+        });
+      }
+    });
+    if (token !== utteranceToken || !get().isPlaying) {
+      return;
+    }
+    modelDownloadCancel = null;
+    set({
+      bufferingMessage: `Buffering ${label} audio`,
+      modelDownload: null,
+    });
+
     void fillSpeechBuffer(engine, settings, lookaheadPositions, token, get);
     if (requireInitialBuffer) {
       const initialPositions = lookaheadPositions.slice(
@@ -523,11 +592,6 @@ async function speakWithBufferedSpeech(
       speechText: sentenceSpeechAtPosition(get(), position) ?? sentence,
       state: get(),
       settings,
-      onStatus: (bufferingMessage) => {
-        if (token === utteranceToken && get().isPlaying) {
-          set({ bufferingMessage });
-        }
-      },
     });
     if (token !== utteranceToken || !get().isPlaying) {
       return;
@@ -546,6 +610,11 @@ async function speakWithBufferedSpeech(
     if (token !== utteranceToken || error instanceof SpeechAbortedError) {
       return;
     }
+    // The download this belonged to is over, one way or another. A cancel
+    // handle left behind would have a later Pause telling Rust to abort a
+    // download nobody started.
+    modelDownloadCancel = null;
+
     // Never fall back to another engine here, even implicitly: stop and
     // surface why, and — for Fish — offer the switch as something the
     // reader must click, not something that happens on their behalf. See
@@ -555,6 +624,7 @@ async function speakWithBufferedSpeech(
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
+      modelDownload: null,
       error: isFishFailure ? fishFailureMessage(error) : displayError(error),
       canSwitchToSupertonic: isFishFailure,
     });
@@ -591,7 +661,6 @@ async function cachedSpeechBlob({
   speechText,
   state,
   settings,
-  onStatus,
 }: {
   engine: SpeechEngine;
   position: Position;
@@ -599,7 +668,6 @@ async function cachedSpeechBlob({
   speechText: string;
   state: PlayerState;
   settings: SettingsStore;
-  onStatus?: (status: string) => void;
 }) {
   const key = speechCacheKey(position, speechText, state, settings);
   const cached = speechCache.get(key);
@@ -609,8 +677,10 @@ async function cachedSpeechBlob({
   }
 
   const promise = (async () => {
-    // Cold engines report progress while they load; synthesis itself does not.
-    await engine.ensureReady(onStatus);
+    // Cheap once ready, and by here it always is: `speakWithBufferedSpeech`
+    // awaits `ensureReady` before any of this runs. Kept as the belt on the
+    // prefetch path, which can outlive the utterance that started it.
+    await engine.ensureReady();
     return engine.synthesize(
       { text: speechText, speed: state.speed },
       speechAbort?.signal,
@@ -760,6 +830,7 @@ async function playGeneratedAudio(
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
+      modelDownload: null,
       error: "Audio playback failed.",
       canSwitchToSupertonic: false,
     });
@@ -769,6 +840,7 @@ async function playGeneratedAudio(
     isPlaying: true,
     isBuffering: false,
     bufferingMessage: "",
+    modelDownload: null,
     error: null,
     canSwitchToSupertonic: false,
   });
@@ -785,6 +857,7 @@ async function playGeneratedAudio(
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
+      modelDownload: null,
       error: displayError(error),
       canSwitchToSupertonic: false,
     });
@@ -811,6 +884,7 @@ async function advanceBySentence(
       isPlaying: false,
       isBuffering: false,
       bufferingMessage: "",
+      modelDownload: null,
     });
     return;
   }
@@ -872,7 +946,7 @@ async function moveToPosition(
       const section = get().sections[position.sectionIndex];
       if (!section) {
         // Reset the buffering UI instead of leaving it stuck on "Loading section".
-        set({ isBuffering: false, bufferingMessage: "" });
+        set({ isBuffering: false, bufferingMessage: "", modelDownload: null });
         return;
       }
       if (options.preservePlayback) {
@@ -910,6 +984,7 @@ async function moveToPosition(
       currentSentenceIndex: sentenceIndex,
       isBuffering: false,
       bufferingMessage: "",
+      modelDownload: null,
     });
     await persistPlaybackState(get());
   } catch (error) {
@@ -920,6 +995,7 @@ async function moveToPosition(
     set({
       isBuffering: false,
       bufferingMessage: "",
+      modelDownload: null,
       error: displayError(error),
       canSwitchToSupertonic: false,
     });
@@ -1216,6 +1292,19 @@ async function persistPlaybackState(state: PlayerState) {
  * engine skip work it has not started. Neither can stop synthesis already in
  * flight — see SpeechEngine.
  */
+/**
+ * Ask the engine to stop whatever large thing it is fetching.
+ *
+ * Fire-and-forget: the request only has to be delivered. The download itself
+ * fails a moment later, inside the `ensureReady` the play chain is still
+ * awaiting, as an abort -- which `speakWithBufferedSpeech` drops in silence.
+ */
+function stopModelDownload() {
+  const cancel = modelDownloadCancel;
+  modelDownloadCancel = null;
+  void cancel?.();
+}
+
 function cancelSpeech() {
   utteranceToken += 1;
   speechAbort?.abort();

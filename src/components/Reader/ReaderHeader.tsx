@@ -1,5 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { PlaybackControls } from "./PlaybackControls";
+import { ModelDownloadProgress } from "../ModelDownloadProgress";
 import { usePlayerStore } from "../../stores/player";
 
 export function ReaderHeader() {
@@ -11,6 +12,7 @@ export function ReaderHeader() {
   const setSection = usePlayerStore((state) => state.setSection);
   const isBuffering = usePlayerStore((state) => state.isBuffering);
   const bufferingMessage = usePlayerStore((state) => state.bufferingMessage);
+  const modelDownload = usePlayerStore((state) => state.modelDownload);
 
   if (!document) {
     return null;
@@ -44,7 +46,9 @@ export function ReaderHeader() {
         </div>
         <div className="flex items-center justify-between gap-3">
           <PlaybackControls />
-          {isBuffering ? (
+          {modelDownload ? (
+            <ModelDownloadProgress />
+          ) : isBuffering ? (
             <span className="inline-flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
               {bufferingMessage || "Loading"}

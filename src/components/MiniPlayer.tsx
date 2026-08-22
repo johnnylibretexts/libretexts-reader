@@ -7,6 +7,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { ModelDownloadProgress } from "./ModelDownloadProgress";
 import { usePlayerStore } from "../stores/player";
 
 interface MiniPlayerProps {
@@ -25,7 +26,14 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
   );
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const isBuffering = usePlayerStore((state) => state.isBuffering);
+  const modelDownload = usePlayerStore((state) => state.modelDownload);
   const error = usePlayerStore((state) => state.error);
+  /**
+   * See `PlaybackControls`: Pause stays live through the one-time voice
+   * download, because stopping that download is the only thing any control
+   * can usefully do while it runs.
+   */
+  const playDisabled = isBuffering && !modelDownload;
   const canSwitchToSupertonic = usePlayerStore(
     (state) => state.canSwitchToSupertonic,
   );
@@ -67,6 +75,12 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
         </div>
       ) : null}
 
+      {modelDownload ? (
+        <div className="flex items-center rounded-md border border-neutral-200 px-3 py-2 dark:border-neutral-800">
+          <ModelDownloadProgress />
+        </div>
+      ) : null}
+
       <div className="flex min-h-16 items-center justify-between gap-4">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{document.title}</p>
@@ -84,7 +98,7 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
             onClick={() => void skipBack()}
           />
           <IconButton
-            disabled={isBuffering}
+            disabled={playDisabled}
             label={isPlaying ? "Pause" : "Play"}
             icon={isPlaying ? Pause : Play}
             onClick={() => (isPlaying ? pause() : void play())}

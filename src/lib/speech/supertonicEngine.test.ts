@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SettingsSource } from "./types";
+import { SpeechAbortedError } from "./types";
+import type { EngineStatus, SettingsSource } from "./types";
 import type { SupertonicVoiceStyle } from "../supertonic";
-import type { SynthesizeSpeechRequest } from "../tauri";
+import type {
+  SupertonicModelProgress,
+  SynthesizeSpeechRequest,
+} from "../tauri";
 
 const getSupertonicModelStatus = vi.fn(async () => ({ downloaded: true }));
 const ensureSupertonicModelDownloaded = vi.fn(async () => undefined);
+const cancelSupertonicModelDownload = vi.fn(async () => undefined);
 const synthesizeSpeech = vi.fn(async (_request: SynthesizeSpeechRequest) => ({
   audio: [1, 2, 3],
   mimeType: "audio/wav",
 }));
+let tauriRuntime = true;
 
 vi.mock("../tauri", () => ({
   api: {
@@ -16,15 +22,39 @@ vi.mock("../tauri", () => ({
       synthesizeSpeech(request),
     getSupertonicModelStatus: () => getSupertonicModelStatus(),
     ensureSupertonicModelDownloaded: () => ensureSupertonicModelDownloaded(),
+    cancelSupertonicModelDownload: () => cancelSupertonicModelDownload(),
   },
-  isTauriRuntime: () => false,
+  isTauriRuntime: () => tauriRuntime,
 }));
+
+type ProgressHandler = (event: { payload: SupertonicModelProgress }) => void;
+let progressHandlers: ProgressHandler[] = [];
+const unlisten = vi.fn();
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (_name: string, handler: ProgressHandler) => {
+    progressHandlers.push(handler);
+    return unlisten;
+  }),
+}));
+
+/** Stand in for Rust emitting `supertonic-model-download-progress`. */
+function emitProgress(payload: SupertonicModelProgress) {
+  for (const handler of progressHandlers) {
+    handler({ payload });
+  }
+}
 
 afterEach(() => {
   synthesizeSpeech.mockClear();
   getSupertonicModelStatus.mockClear();
   getSupertonicModelStatus.mockResolvedValue({ downloaded: true });
   ensureSupertonicModelDownloaded.mockClear();
+  ensureSupertonicModelDownloaded.mockImplementation(async () => undefined);
+  cancelSupertonicModelDownload.mockClear();
+  unlisten.mockClear();
+  progressHandlers = [];
+  tauriRuntime = true;
 });
 
 async function loadEngine(
@@ -99,5 +129,88 @@ describe("supertonic engine voice selection", () => {
     await engine.ensureReady();
 
     expect(ensureSupertonicModelDownloaded).toHaveBeenCalled();
+  });
+});
+
+describe("supertonic model download progress", () => {
+  /** Run `ensureReady` against a missing model, collecting what it reports. */
+  async function downloadReporting(
+    duringDownload: () => void,
+  ): Promise<EngineStatus[]> {
+    getSupertonicModelStatus.mockResolvedValue({ downloaded: false });
+    ensureSupertonicModelDownloaded.mockImplementation(async () => {
+      duringDownload();
+      return undefined;
+    });
+    const engine = await loadEngine("M1");
+    const statuses: EngineStatus[] = [];
+
+    await engine.ensureReady((status) => statuses.push(status));
+
+    return statuses;
+  }
+
+  it("reports the bytes as they arrive, not one static line", async () => {
+    // The whole reason #52 read as a hang: the only thing the player was ever
+    // told was "Downloading the Supertonic model...", for the several minutes
+    // it takes to pull 383MB, with every control disabled behind it.
+    const statuses = await downloadReporting(() => {
+      emitProgress({ file: "model.onnx", downloaded: 100, total: 400 });
+      emitProgress({ file: "model.onnx", downloaded: 300, total: 400 });
+    });
+
+    const progress = statuses
+      .map((status) => status.download)
+      .filter((download) => download !== undefined);
+    expect(progress).toEqual([
+      { downloadedBytes: 100, totalBytes: 400 },
+      { downloadedBytes: 300, totalBytes: 400 },
+    ]);
+  });
+
+  it("offers a cancel that actually stops the download", async () => {
+    const statuses = await downloadReporting(() => {
+      emitProgress({ file: "model.onnx", downloaded: 100, total: 400 });
+    });
+
+    const cancel = statuses[statuses.length - 1]?.cancel;
+    expect(cancel).toBeTypeOf("function");
+    await cancel?.();
+    expect(cancelSupertonicModelDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops listening once the download is over", async () => {
+    // The listener outliving the download would keep a later Settings-side
+    // download writing into a player that is not downloading anything.
+    await downloadReporting(() => {
+      emitProgress({ file: "model.onnx", downloaded: 100, total: 400 });
+    });
+
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a cancelled download as an abort, not a failure to show", async () => {
+    // `speakWithBufferedSpeech` swallows `SpeechAbortedError` silently and
+    // shows anything else as an error. A reader who pressed Cancel has not
+    // hit a problem and must not be told they have.
+    getSupertonicModelStatus.mockResolvedValue({ downloaded: false });
+    ensureSupertonicModelDownloaded.mockImplementation(async () => {
+      throw new Error("model error: Supertonic model download cancelled.");
+    });
+    const engine = await loadEngine("M1");
+
+    await expect(engine.ensureReady()).rejects.toBeInstanceOf(
+      SpeechAbortedError,
+    );
+  });
+
+  it("still reports a real download failure", async () => {
+    getSupertonicModelStatus.mockResolvedValue({ downloaded: false });
+    ensureSupertonicModelDownloaded.mockImplementation(async () => {
+      throw new Error("model error: download SHA-256 mismatch");
+    });
+    const engine = await loadEngine("M1");
+
+    await expect(engine.ensureReady()).rejects.toThrow(/SHA-256/);
   });
 });

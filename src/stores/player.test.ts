@@ -744,3 +744,131 @@ describe("speech text", () => {
     expect(engine.calls[engine.calls.length - 1].text).toBe("Legacy sentence.");
   });
 });
+
+describe("the one-time model download", () => {
+  /** Let the play chain run as far as the blocked `ensureReady`. */
+  async function settle() {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  /**
+   * A player stopped inside a model download, with the engine's cancel spy.
+   *
+   * `play()` is deliberately left unawaited: the download is the state under
+   * test, and awaiting it would only ever observe the state after it ended.
+   */
+  async function playIntoADownload() {
+    const engine = await createFake();
+    const cancel = vi.fn(async () => undefined);
+    engine.reportWhileReadying(
+      { message: "Downloading the on-device voice (one time)", cancel },
+      {
+        message: "Downloading the on-device voice (one time)",
+        download: { downloadedBytes: 100, totalBytes: 400 },
+        cancel,
+      },
+    );
+    const { usePlayerStore } = await loadPlayer([engine]);
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    const release = engine.blockNextReady();
+    const playing = usePlayerStore.getState().play();
+    await settle();
+
+    return { usePlayerStore, cancel, release, playing };
+  }
+
+  it("carries the download's real byte counts, not just a spinner", async () => {
+    // #52: the player was told one static string for the several minutes a
+    // 383MB fetch takes, so there was nothing to render but an indeterminate
+    // spinner -- which is what made a working download read as a hung app.
+    const { usePlayerStore, release, playing } = await playIntoADownload();
+
+    expect(usePlayerStore.getState().modelDownload).toEqual({
+      downloadedBytes: 100,
+      totalBytes: 400,
+    });
+    expect(usePlayerStore.getState().bufferingMessage).toBe(
+      "Downloading the on-device voice (one time)",
+    );
+
+    release();
+    await playing;
+  });
+
+  it("clears the download once the model is on disk", async () => {
+    const { usePlayerStore, release, playing } = await playIntoADownload();
+
+    release();
+    await playing;
+
+    expect(usePlayerStore.getState().modelDownload).toBeNull();
+  });
+
+  it("stops the download when the reader cancels it", async () => {
+    const { usePlayerStore, cancel, release, playing } =
+      await playIntoADownload();
+
+    usePlayerStore.getState().cancelModelDownload();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    const state = usePlayerStore.getState();
+    expect(state.modelDownload).toBeNull();
+    expect(state.isBuffering).toBe(false);
+    expect(state.isPlaying).toBe(false);
+    // Cancelling is not failing: an error here would tell the reader
+    // something went wrong with the thing they just asked to stop.
+    expect(state.error).toBeNull();
+
+    release();
+    await playing;
+  });
+
+  it("stops the download when the reader presses Pause", async () => {
+    // Pause is the control a reader reaches for when the app looks stuck, and
+    // the download is the only reason playback has not started. Leaving it
+    // running would keep pulling 383MB after they said stop.
+    const { usePlayerStore, cancel, release, playing } =
+      await playIntoADownload();
+
+    usePlayerStore.getState().pause();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(usePlayerStore.getState().modelDownload).toBeNull();
+
+    release();
+    await playing;
+  });
+
+  it("does not offer to stop a download that has already failed", async () => {
+    // The cancel handle outliving its download means a later Pause tells Rust
+    // to abort a download nobody started.
+    const engine = await createFake();
+    const cancel = vi.fn(async () => undefined);
+    engine.reportWhileReadying({
+      message: "Downloading the on-device voice (one time)",
+      download: { downloadedBytes: 100, totalBytes: 400 },
+      cancel,
+    });
+    engine.failReady(new Error("download stalled: no data received"));
+    const { usePlayerStore } = await loadPlayer([engine]);
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    await usePlayerStore.getState().play();
+    expect(usePlayerStore.getState().error).toMatch(/stalled/);
+
+    usePlayerStore.getState().pause();
+
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("does not report a download for an engine that never started one", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine]);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    expect(usePlayerStore.getState().modelDownload).toBeNull();
+  });
+});
