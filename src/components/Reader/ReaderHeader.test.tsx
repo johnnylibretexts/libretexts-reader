@@ -54,6 +54,63 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("licence and attribution on the reading surface", () => {
+  it("credits a book whose attribution is an author name", async () => {
+    // Pressbooks stores an author in `attribution`; OpenStax, LibreTexts and
+    // article all store a URL there. The field is polymorphic, so it cannot be
+    // rendered one way -- an author is text, not a link.
+    showReader({
+      document: {
+        ...DOCUMENT,
+        license: "CC BY-NC-SA 4.0",
+        attribution: "Craig DeLancey",
+      },
+    });
+
+    expect(screen.getByText(/CC BY-NC-SA 4\.0/)).toBeInTheDocument();
+    expect(screen.getByText(/Craig DeLancey/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Craig DeLancey/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("links back to the source when the attribution is a URL", async () => {
+    // CC BY 4.0 3(a)(1) asks for a link to the material where reasonable, and
+    // for three of the four Sources this field already is one.
+    showReader({
+      document: {
+        ...DOCUMENT,
+        license: "CC BY 4.0",
+        attribution: "https://openstax.org/books/biology-2e",
+      },
+    });
+
+    const link = screen.getByRole("link", { name: /openstax\.org/ });
+    expect(link).toHaveAttribute("href", "https://openstax.org/books/biology-2e");
+  });
+
+  it("says nothing at all when the source supplied neither", async () => {
+    // A pasted-text import has no licence and no attribution. An empty field
+    // or a bare separator would claim the app knows something it does not.
+    showReader({ document: { ...DOCUMENT, license: null, attribution: null } });
+
+    expect(screen.queryByText(/·/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    // The header itself still renders -- asserted on the heading, since the
+    // section title also appears as an <option> in the Section select.
+    expect(screen.getByRole("heading", { name: "A Book" })).toBeInTheDocument();
+  });
+
+  it("shows the licence alone when there is no attribution", async () => {
+    showReader({
+      document: { ...DOCUMENT, license: "CC BY 4.0", attribution: null },
+    });
+
+    expect(screen.getByText(/CC BY 4\.0/)).toBeInTheDocument();
+    expect(screen.queryByText(/·/)).not.toBeInTheDocument();
+  });
+});
+
 describe("the one-time voice download in the reader", () => {
   it("shows how far it has actually got", async () => {
     // #52: an indeterminate spinner was the entire report on a ~383MB fetch

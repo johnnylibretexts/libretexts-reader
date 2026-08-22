@@ -6,3 +6,4 @@
 pub mod fish;
 pub mod provider;
 pub mod supertonic;
+pub mod tags;
