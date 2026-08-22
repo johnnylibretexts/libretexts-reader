@@ -6,9 +6,9 @@ Last updated: 2026-08-21
 > repo staying private. The gating work is the **`Private beta` milestone** on the tracker
 > — run `gh issue list --milestone "Private beta"` for the live list, and see "The plan: a
 > private beta" under Known Limitations for the shape of
-> it and what the decision retired. The app itself is in good health: 207 Rust and 189
-> frontend tests green, and the debug build verified running on 2026-08-20. What is missing
-> is release process, not code.
+> it and what the decision retired. The app itself is in good health: 209 Rust and 203
+> frontend tests green, and `npm run tauri:build` produced a real DMG for the first time on
+> 2026-08-21. What is missing is release process, not code.
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
@@ -108,6 +108,68 @@ The app database and downloaded models/images are not stored in the repo. On mac
 Copying only the project folder will not copy the local library, downloaded books, TTS models, cover images, or downloaded section images. To preserve a test library across machines, copy that app data directory too. The app can also use `LIBRETEXTS_READER_APP_DATA_DIR` to point tests or local runs at a temporary data directory.
 
 ## Recently Landed
+
+### Session of 2026-08-21 — five PRs, four issues closed
+
+**#78 → [PR #80](https://github.com/johnnylibretexts/libretexts-reader/pull/80)** — the three
+low-severity findings from the #60 review. A Fish voice save started from the *Your voices*
+dropdown set `savedFrom` and rendered it nowhere, so it spun and went silent; both controls now
+confirm, in **separate** live regions (a shared one would mark a control the reader never
+touched, which is the bug splitting `savedFrom` fixed). The settings store's `error` doc comment
+claimed a failed hydrate is cleared by a later theme or provider action — it is not, only
+another `hydrate` clears it. And the chapter export's `seeded` gate missed the retry path it
+names.
+
+**That last one is the reusable lesson: every effect in one commit sees that commit's
+closures**, so a flag a *sibling effect* sets can only ever gate the first transition. On the
+`hydrateFailed: true -> false` retry `seeded` was already true and gated nothing, so the
+estimate priced the chapter for the pre-retry `DEFAULT_SETTINGS`. It is now **derived during
+render** — which settings snapshot the drafts came from, against the one this render sees — so
+it is false in the very commit a change arrives. If you touch that effect, keep the derivation;
+a boolean set by the seeding effect cannot work.
+
+**[PR #81](https://github.com/johnnylibretexts/libretexts-reader/pull/81)** — a test that failed
+**5 runs in 12**. `findByLabelText("Your voices")` can resolve in the commit where `keyStatus`
+has landed but the voices effect has not yet set `loadingVoices`, so the `<select>` is on screen
+holding only "No voice models yet". **Wait on the `<option>`, not the label** — that is the
+house pattern in that file now.
+
+**#49 → [PR #82](https://github.com/johnnylibretexts/libretexts-reader/pull/82)** — the repo is
+on **`0.1.0-beta.1`**. The version lives in **five** files, not the three `check-version.sh`
+guards: the lockfiles matter because `release.yml` runs `npm ci`, which fails outright when
+`package-lock.json` disagrees with `package.json`. The stale local `v0.1.0-beta` tag (188 commits
+behind, never pushed) is deleted. Two User-Agents hardcoded the version and were lying to
+Pressbooks servers and huggingface.co; both now derive from `CARGO_PKG_VERSION` with a test each.
+
+**#48 → [PR #83](https://github.com/johnnylibretexts/libretexts-reader/pull/83)** — not closed,
+and cannot be by an agent. `scripts/release-setup.sh` walks the four human-only provisioning
+steps and ends by dispatching the dry run. Nothing is provisioned as of 2026-08-21:
+`security find-identity -v -p codesigning` reports **0 valid identities**, zero runners, zero
+repo variables, no `jr-notary` profile.
+
+**#53 → [PR #84](https://github.com/johnnylibretexts/libretexts-reader/pull/84)** — Delete now
+confirms, naming the book, from both the trash button and the context menu. Built on the native
+`<dialog>`; **Cancel is first in the DOM on purpose**, because `showModal()` focuses the first
+focusable child and on a destructive confirmation that must never be the destructive button.
+Two bugs found while building it: `remove` reports failure by writing the store's `error` field
+rather than rejecting, so `await remove(...)` resolves either way and the first version reset the
+player on a *failed* delete; and resetting the player was itself arming a doomed load, because
+`AppShell` owns the reader route and `Reader` re-fetches whenever its `documentId` and the
+player's document disagree.
+
+### Two things this session established that are easy to rediscover the hard way
+
+**`npm run tauri:build` fails locally unless `CI=true` is set.** It compiles, bundles the `.app`,
+then dies in `bundle_dmg.sh` with `Finder got an error: AppleEvent timed out. (-1712)`. That step
+is Finder cosmetics and needs a GUI session. Tauri **swallows the script's stderr**, so it reads
+as a broken build. The Actions runner sets `CI` itself, so `release.yml` is unaffected. First
+successful bundle: `LibreTexts Reader_0.1.0-beta.1_aarch64.dmg`, 41.9 MB — exactly what
+`release.yml:101` expects.
+
+**jsdom 30 ships the `HTMLDialogElement` constructor but none of its methods.** `showModal` and
+`close` are `undefined`, so anything built on `<dialog>` throws on open. `src/test/setup.ts`
+models enough of the spec for component tests.
+
 
 **There is no work in progress.** This section used to track an uncommitted change set; everything in it is merged and pushed. It is kept as a map of what the app gained most recently, newest wave first.
 
@@ -518,8 +580,8 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 
 ## Testing And Verification
 
-Current counts on `main`: **207 Rust tests** (3 ignored — the live network import smoke plus
-two others) and **189 frontend tests across 19 files**. Counts drift — run the suites rather than trusting these.
+Current counts on `main`: **209 Rust tests** (3 ignored — the live network import smoke plus
+two others) and **203 frontend tests across 19 files**. Counts drift — run the suites rather than trusting these.
 
 These commands were green before handoff:
 
