@@ -6,7 +6,7 @@ Last updated: 2026-08-22
 > repo staying private. The gating work is the **`Private beta` milestone** on the tracker
 > — run `gh issue list --milestone "Private beta"` for the live list, and see "The plan: a
 > private beta" under Known Limitations for the shape of
-> it and what the decision retired. The app itself is in good health: 216 Rust and 226
+> it and what the decision retired. The app itself is in good health: 221 Rust and 226
 > frontend tests green, and `npm run tauri:build` produced a real DMG for the first time on
 > 2026-08-21. What is missing is release process, not code.
 
@@ -109,10 +109,13 @@ Copying only the project folder will not copy the local library, downloaded book
 
 ## Recently Landed
 
-### Session of 2026-08-22 — the first-run download, made visible and then made resumable
+### Session of 2026-08-22 — the first-run download, fixed end to end
 
-Two PRs, both against the one thing a fresh install hits before it can play a word: the
-383 MB Supertonic fetch from `huggingface.co`.
+Three PRs against the one thing a fresh install hits before it can play a word: the 383 MB
+Supertonic fetch from `huggingface.co`. It now reports real progress, can be cancelled, resumes
+instead of restarting, and can only ever have one instance running. **Each ticket was found by
+the one before it** — making the download cancellable is what made losing a partial reachable on
+purpose, and making it resumable is what put the shared cancel flag under real scrutiny.
 
 **#52 → [PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86)** (`ebea718`) —
 the first Play fetched 383 MB behind one static string with all eight playback controls
@@ -175,6 +178,44 @@ first attempt, and the assertion was tightened until it did not. **When a fix's 
 makes a test un-failable against the old code, mutate the new code until the test dies** — the
 repo's "revert the fix and watch the test fail" rule has no purchase there, and skipping the
 step leaves a test that asserts nothing.
+
+**#88 → [PR #91](https://github.com/johnnylibretexts/libretexts-reader/pull/91)** (`0585e1c`) —
+the third and last of the chain, filed off the back of #86 and taken the same day. Two surfaces
+can ask for the model — the player on first Play, and the Settings Download button — and nothing
+kept them apart. Both cleared the same cancel flag on entry, so a Cancel the reader had already
+pressed was voided by whichever request arrived next, and both wrote and renamed the same
+`<file>.download` temp paths.
+
+`SupertonicDownload` replaces `SupertonicDownloadCancel` as managed state and owns both the flag
+and the one download slot. The first caller runs the download; every later one joins it and is
+handed its result. **`clear()` now happens only where a download actually starts** — a caller
+that merely joins does not clear, which is the whole fix.
+
+Three things about the mechanism that are not obvious from reading it:
+
+- A joiner subscribes to the result **under the same lock the leader publishes under**. That is
+  what makes the handoff safe; a receiver created after the leader has taken its sender back out
+  would miss the result entirely, because a `broadcast` subscriber never sees a value sent before
+  it subscribed.
+- The leader holds an RAII guard over the slot. A command future dropped or panicking mid-flight
+  releases the slot and wakes its waiters; without it they park forever on a result nobody will
+  ever publish.
+- **`AppError` cannot be `Clone`** — it wraps `rusqlite::Error` and `reqwest::Error` — so a joiner
+  inherits the *message*, rebuilt as `AppError::Model`. Exact for cancellation, which is already a
+  `Model` error the webview matches by substring, and lossy but honest for everything else. Do not
+  "fix" that with a reverse kind-to-variant map: `check-error-kinds.sh` guards Rust↔TypeScript, not
+  a reverse mapping, so one would drift silently.
+
+**Two of the five tests could not be written red-first here either**, and the mutation that killed
+them is worth copying: a slot guard that never releases, plus a sender left in the slot after
+publishing. Both are bounded by a 5s `timeout` **on purpose** — a captured slot does not *fail* a
+test, it *stops* one, and #44 already cost this repo a CI run at the six-hour job cap. Never leave
+a concurrency test unbounded in this repo.
+
+**A `State<T>` that is not `manage`d panics at invoke time, not compile time.** Swapping the
+managed type compiles clean either way, so every `State<'_, T>` any command takes was audited
+against `lib.rs` by hand. If you add or change managed state, do that audit — the test suite will
+not do it for you.
 
 ### Session of 2026-08-21 — five PRs, four issues closed
 
@@ -647,7 +688,7 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 
 ## Testing And Verification
 
-Current counts on `main`: **216 Rust tests** (3 ignored — the live network import smoke plus
+Current counts on `main`: **221 Rust tests** (3 ignored — the live network import smoke plus
 two others) and **226 frontend tests across 22 files**. Counts drift — run the suites rather than trusting these.
 
 These commands were green before handoff:
@@ -802,18 +843,16 @@ Open as of 2026-08-22 — **four left, and every one of them is a release blocke
 - **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either), #51 (imported books' licence and attribution are stored and displayed nowhere, including in exported MP3s).
 - **Product** — #54 (Fish bills ~10 sentences per Play with no warning and no stop button). The last one standing in this group: #52 and #53 both cleared, and #49 cleared off Release mechanics.
 
-**Cleared 2026-08-22** — #52, the first-run download made visible and cancellable
-([PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86), `ebea718`), and #87,
-the same download made resumable ([PR #89](https://github.com/johnnylibretexts/libretexts-reader/pull/89),
-`5135ded`). Both are written up under "Session of 2026-08-22" in Recently Landed.
+**Cleared 2026-08-22** — the whole first-run download chain, in one day. #52, made visible and
+cancellable ([PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86), `ebea718`);
+#87, made resumable ([PR #89](https://github.com/johnnylibretexts/libretexts-reader/pull/89),
+`5135ded`); and #88, made single-flight
+([PR #91](https://github.com/johnnylibretexts/libretexts-reader/pull/91), `0585e1c`). Each was
+found by the one before it. All three are written up under "Session of 2026-08-22" in Recently
+Landed.
 
-**Filed off the back of #86, not on the milestone: #88.** `ensure_supertonic_model_downloaded`
-clears the shared cancel flag on entry, which is right for the common case but assumes only one
-download runs at a time — and nothing enforces that. Two commands can start one: the player via
-`ensureReady` on first Play, and Settings via its explicit Download button. Pressing the second
-while the first runs voids a Cancel pending on the first. **Read #88 before touching
-`SupertonicDownloadCancel`**; the clear-on-entry comment in `chapter_tts.rs` explains why the
-clear is there but not why one flag is enough, because it is not.
+**`SupertonicDownloadCancel` is no longer managed state** — `SupertonicDownload` is, and it owns
+both the cancel flag and the single download slot. Read the #88 entry before touching either.
 
 **Cleared 2026-08-21** — #60, the voice-style setting reaching playback
 ([PR #77](https://github.com/johnnylibretexts/libretexts-reader/pull/77), `38c9fc5`). See
