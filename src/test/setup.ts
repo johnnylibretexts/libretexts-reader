@@ -41,3 +41,47 @@ Object.defineProperty(HTMLMediaElement.prototype, "load", {
   writable: true,
   value: function load() {},
 });
+
+// jsdom 30 ships the HTMLDialogElement constructor but implements none of its
+// methods -- `showModal` and `close` are both undefined -- so a component built
+// on the native <dialog> throws the moment it opens. Model just enough of the
+// spec for component tests: `open` reflects the content attribute, and closing
+// fires `close`. Escape is not simulated here; a test that wants it dispatches
+// `cancel` itself, which is the event the browser would send.
+if (typeof HTMLDialogElement !== "undefined") {
+  const proto = HTMLDialogElement.prototype as unknown as Record<
+    string,
+    unknown
+  >;
+
+  if (!Object.getOwnPropertyDescriptor(proto, "open")) {
+    Object.defineProperty(proto, "open", {
+      configurable: true,
+      get(this: HTMLDialogElement) {
+        return this.hasAttribute("open");
+      },
+      set(this: HTMLDialogElement, value: boolean) {
+        if (value) {
+          this.setAttribute("open", "");
+        } else {
+          this.removeAttribute("open");
+        }
+      },
+    });
+  }
+
+  for (const name of ["show", "showModal"]) {
+    if (typeof proto[name] !== "function") {
+      proto[name] = function open(this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      };
+    }
+  }
+
+  if (typeof proto.close !== "function") {
+    proto.close = function close(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+      this.dispatchEvent(new Event("close"));
+    };
+  }
+}

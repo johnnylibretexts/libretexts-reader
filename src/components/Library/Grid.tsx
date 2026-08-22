@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { BookOpen, Search, Trash2 } from "lucide-react";
 import { useLibraryStore } from "../../stores/library";
+import { usePlayerStore } from "../../stores/player";
+import { ConfirmDialog } from "../ConfirmDialog";
 import type * as Domain from "../../types/domain";
 import { DocumentCard } from "./DocumentCard";
 import { EmptyState } from "./EmptyState";
 
 interface LibraryGridProps {
   onOpenDocument: (document: { id: string; title: string }) => void;
+  /**
+   * The book open in the Reader has just been deleted, so whatever else is
+   * still pointing at it has to let go. Resetting the player is not enough on
+   * its own: the route that opened it lives in AppShell, and the Reader nav
+   * entry is always present -- so going back to it re-mounts the Reader with
+   * the dead id and it immediately re-fetches rows the backend has removed.
+   */
+  onOpenDocumentDeleted?: () => void;
 }
 
 interface ContextMenuState {
@@ -23,13 +33,41 @@ const contextMenuItems = [
   { id: "delete", label: "Delete", icon: Trash2 },
 ] as const;
 
-export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
+/**
+ * Whether re-importing this document means downloading it again.
+ *
+ * The dialog below promised every reader that a re-import re-downloads the
+ * whole book. For an EPUB, a PDF, or pasted text there is nothing to download
+ * -- the source was a local file they still have -- so the warning named a
+ * cost that does not exist, in the one place where the copy IS the feature.
+ */
+function isImportedFromSource(sourceType: Domain.Document["sourceType"]) {
+  // "url" is the article importer; "pasted", "epub" and "pdf" all came from
+  // something the reader already has.
+  return (
+    sourceType === "openstax" ||
+    sourceType === "libretexts" ||
+    sourceType === "pressbooks" ||
+    sourceType === "url"
+  );
+}
+
+export function LibraryGrid({
+  onOpenDocument,
+  onOpenDocumentDeleted,
+}: LibraryGridProps) {
   const documents = useLibraryStore((state) => state.documents);
   const loading = useLibraryStore((state) => state.loading);
   const error = useLibraryStore((state) => state.error);
   const remove = useLibraryStore((state) => state.remove);
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  // The delete the reader has asked for but not yet agreed to. Holding the
+  // whole document rather than an id so the dialog can name the book: a
+  // confirmation that does not say what it is about to destroy is not one.
+  const [pendingDelete, setPendingDelete] = useState<Domain.Document | null>(
+    null,
+  );
 
   useEffect(() => {
     function closeMenu() {
@@ -64,9 +102,43 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
     onOpenDocument({ id: document.id, title: document.title });
   }
 
-  async function deleteDocument(document: Domain.Document) {
+  function requestDelete(document: Domain.Document) {
     setMenu(null);
+    setPendingDelete(document);
+  }
+
+  async function confirmDelete() {
+    const document = pendingDelete;
+    if (!document) {
+      return;
+    }
+    setPendingDelete(null);
+
+    // Read before the delete, not after: `remove` drops the row locally as
+    // part of the same transition, so asking afterwards races it.
+    const isOpenInReader =
+      usePlayerStore.getState().document?.id === document.id;
+
     await remove(document.id);
+
+    // `remove` reports a failure by writing the store's `error` field, not by
+    // rejecting, so this await resolves either way. The row disappearing is
+    // the actual signal that the delete landed -- `remove` filters it out only
+    // on success -- and reading the store's `error` instead would be
+    // unreliable anyway, since a concurrent action can overwrite it.
+    const stillInLibrary = useLibraryStore
+      .getState()
+      .documents.some((row) => row.id === document.id);
+
+    // The Reader and MiniPlayer stay bound to whatever the player store holds.
+    // Left pointing at a deleted document, the next section change runs
+    // against rows the backend has already removed from disk. Only on a delete
+    // that actually happened, though: closing the book someone is reading
+    // because a failed delete resolved is a worse outcome than the bug.
+    if (isOpenInReader && !stillInLibrary) {
+      usePlayerStore.getState().reset();
+      onOpenDocumentDeleted?.();
+    }
   }
 
   function openContextMenu(
@@ -130,7 +202,7 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
               document={document}
               key={document.id}
               onContextMenu={openContextMenu}
-              onDelete={(document) => void deleteDocument(document)}
+              onDelete={requestDelete}
               onOpen={openDocument}
             />
           ))}
@@ -154,7 +226,7 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
                     openDocument(menu.document);
                   }
                   if (item.id === "delete") {
-                    void deleteDocument(menu.document);
+                    requestDelete(menu.document);
                   }
                 }}
                 role="menuitem"
@@ -167,6 +239,28 @@ export function LibraryGrid({ onOpenDocument }: LibraryGridProps) {
           })}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        body={
+          <>
+            <p>
+              <strong>{pendingDelete?.title}</strong>, its cover and every
+              figure downloaded with it will be deleted from this Mac. This
+              cannot be undone.
+            </p>
+            <p className="mt-2">
+              {pendingDelete && isImportedFromSource(pendingDelete.sourceType)
+                ? "You can import it again, but the whole book has to download afresh."
+                : "You can import it again from the original file."}
+            </p>
+          </>
+        }
+        confirmLabel="Delete"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
+        open={pendingDelete !== null}
+        title="Delete this book?"
+      />
     </section>
   );
 }

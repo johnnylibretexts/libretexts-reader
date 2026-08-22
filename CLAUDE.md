@@ -40,7 +40,7 @@ npm run build                               # frontend typecheck + build: tsc &&
 npm test                                    # vitest run — frontend unit tests (jsdom)
 cargo check -p libretexts-reader                # Rust typecheck
 cargo test -p libretexts-reader                 # Rust tests
-npm run tauri:build                         # full signed/bundled release build (dmg/app/msi/nsis)
+npm run tauri:build                         # full signed/bundled release build (dmg + app; macOS only, see RELEASE.md)
 
 # fast runnable binary without installers (run it directly — NOT via `open`, see Gotchas):
 npm run tauri -- build --debug --no-bundle && ./target/debug/libretexts-reader
