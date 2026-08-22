@@ -1,0 +1,172 @@
+name: Verify
+
+# The project's whole verification gate, in one place so more than one workflow
+# can run *the same* one. `ci.yml` calls it on every pull request and push to
+# main; `release.yml` calls it before it builds anything publishable, because a
+# tag can point at any commit and the release path used to run no tests at all.
+#
+# Copying these steps into release.yml would have satisfied that on the day it
+# was written and drifted by the second edit.
+on:
+  workflow_call:
+
+# Declared here rather than inherited. A called workflow takes the caller's
+# permissions by default, and release.yml needs `contents: write` to publish --
+# which the gate has no business holding.
+permissions:
+  contents: read
+
+jobs:
+  # Linux, not macOS. GitHub bills macOS runners at a 10x multiplier, so a
+  # ~10 minute verify run cost 100 billable minutes and exhausted the account's
+  # Actions minutes on 2026-08-16. Nothing verified here is macOS-specific: the
+  # only cfg(target_os) sites are macOS and Windows arms in paths.rs plus a
+  # Windows arm in db/settings.rs, and Linux takes the XDG fallthrough that
+  # check-app-data-isolation.sh already exports XDG_DATA_HOME for. build.rs
+  # carries x86_64-unknown-linux-gnu assets for both PDFium and ffmpeg.
+  #
+  # release.yml must stay on macOS -- it codesigns the .app and the bundled
+  # dylibs. Only this job moves.
+  verify:
+    runs-on: ubuntu-latest
+    # A successful run completes in well under an hour (~35 minutes observed).
+    # Left unset, a hung step -- `apt-get install` stalling on a mirror has
+    # done this at least once -- runs until GitHub's own 6-hour per-job cap
+    # cancels it, burning a runner for a quarter of a day with no signal that
+    # anything was wrong until it finally gave up.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # Cheap, needs no toolchain -- run it before anything that takes minutes.
+      - name: Error kind sync check
+        run: |
+          scripts/ci/check-error-kinds.test.sh
+          scripts/ci/check-error-kinds.sh
+
+      - name: Source type sync check
+        run: |
+          scripts/ci/check-source-types.test.sh
+          scripts/ci/check-source-types.sh
+
+      - name: Identifier sync check
+        run: |
+          scripts/ci/check-identifier.test.sh
+          scripts/ci/check-identifier.sh
+
+      - name: Updater signing key check
+        run: |
+          scripts/ci/check-updater-key.test.sh
+          scripts/ci/check-updater-key.sh
+
+      # The crate depends on tauri, which links webkit2gtk through pkg-config on
+      # Linux -- there is no vendored fallback, so this must run before any Rust
+      # step. This is Tauri's documented Ubuntu prerequisite list; several
+      # entries are already present on ubuntu-latest and no-op quickly, kept
+      # whole so a runner image change cannot quietly remove one.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.20.0'
+          cache: npm
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      # Keyed on Cargo.lock and the resolved rustc, so a dependency or
+      # toolchain change invalidates it rather than silently reusing stale
+      # artifacts. Saved only from main: a cache write per PR branch would
+      # churn the repo's 10GB budget and evict the entry every branch restores
+      # from. PRs still restore main's.
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # PDFium and ffmpeg are fetched by src-tauri/build.rs into gitignored
+      # directories outside target/, so rust-cache does not cover them and they
+      # were re-downloaded on every run. build.rs pins the asset versions, so
+      # hashing it is what expires this.
+      #
+      # Split restore/save rather than `actions/cache`, for the same reason the
+      # step above sets save-if: the save is limited to main. `restore-keys`
+      # makes an edit to build.rs that does not touch an asset pin -- a comment,
+      # a new target arm -- reuse the existing ~60MB rather than refetch it.
+      #
+      # That fallback is only safe because the `.sha256` markers ensure_pdfium
+      # and ensure_ffmpeg gate on record *both* the pinned archive_sha256 and
+      # an extraction version. They used to record the archive alone, which
+      # identifies the bytes downloaded and says nothing about what was
+      # unpacked from them -- so a restored tree extracted by superseded logic
+      # passed the check and was reused, and a fix to the extraction landed
+      # with no effect at all. Change how an archive is unpacked and you must
+      # bump its *_EXTRACT_VERSION, or this cache will hand back the old tree.
+      - name: Restore bundled native assets
+        id: native-assets
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            src-tauri/resources/pdfium
+            src-tauri/binaries
+          key: native-assets-${{ runner.os }}-${{ hashFiles('src-tauri/build.rs') }}
+          restore-keys: native-assets-${{ runner.os }}-
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Rust format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Wraps the suite rather than running beside it, so this is not a second
+      # test run. Fails if any test reached a paths:: helper, which would create
+      # the real app-data tree as a side effect of resolving a path.
+      - name: Rust tests
+        run: |
+          scripts/ci/check-app-data-isolation.test.sh
+          scripts/ci/check-app-data-isolation.sh
+
+      # After the Rust steps, because it inspects what build.rs extracted. This
+      # is the only place the bundled ffmpeg is ever executed: no Rust source
+      # references it, so no test runs it, and until CI moved to Linux the tar
+      # extraction path had never run at all.
+      - name: Bundled ffmpeg loads its libraries
+        run: |
+          scripts/ci/check-ffmpeg-bundle.test.sh
+          scripts/ci/check-ffmpeg-bundle.sh
+
+      # Last, and only once the build that populated these has actually passed.
+      # Steps skip by default when an earlier one fails, which is the same
+      # guarantee `actions/cache`'s `post-if: success()` gives -- stated here
+      # because with a split save it is this step's placement that provides it,
+      # not the action.
+      - name: Save bundled native assets
+        if: github.ref == 'refs/heads/main' && steps.native-assets.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            src-tauri/resources/pdfium
+            src-tauri/binaries
+          key: native-assets-${{ runner.os }}-${{ hashFiles('src-tauri/build.rs') }}

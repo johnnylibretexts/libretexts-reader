@@ -90,11 +90,28 @@ If notarization returns Invalid, read the log:
 
 ## 3. Pre-publish verification
 
+**The automated path runs this for you.** `release.yml` calls the same gate
+`ci.yml` does — `.github/workflows/verify.yml` — as a `verify` job that the
+build job `needs:`, so a tag pointing at an unvalidated commit fails before
+anything publishable is built. It was not always so: the release workflow used
+to run no tests at all, and this section was the only thing standing between a
+tag and a published DMG.
+
+Run it by hand only when releasing outside the workflow:
+
 ```bash
 npm run build
+npm test
 cargo test -p libretexts-reader
 git diff --check
 ```
+
+The gate also runs `scripts/ci/check-updater-key.sh`, which fails if
+`tauri-plugin-updater` is ever added as a dependency without a real
+`plugins.updater.pubkey`. `build.rs` guards the same thing from the
+configuration side but cannot see the dependency graph, so neither check
+replaces the other. The updater is deliberately absent in v0.1.0, and both are
+quiet until it comes back.
 
 ## 4. Platforms and architectures
 
