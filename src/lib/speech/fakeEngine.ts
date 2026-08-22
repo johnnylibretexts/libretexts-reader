@@ -19,6 +19,13 @@ export interface FakeEngine extends SpeechEngine {
    */
   failSynthesis(error: Error | null): void;
   /**
+   * Fail only the requests whose text matches, so some succeed and some do
+   * not. `failSynthesis` is all-or-nothing, which cannot express "one bad
+   * sentence" -- and one bad sentence is exactly what used to abandon the
+   * whole read-ahead.
+   */
+  failSynthesisFor(matches: ((text: string) => boolean) | null, error: Error): void;
+  /**
    * What `ensureReady` reports before it resolves — what a real engine emits
    * while fetching something large. Reported before the gate below, so a
    * blocked readying can be inspected mid-download.
@@ -46,6 +53,8 @@ export function createFakeEngine(
   let release: (() => void) | null = null;
   let gate: Promise<void> | null = null;
   let nextError: Error | null = null;
+  let selectiveMatch: ((text: string) => boolean) | null = null;
+  let selectiveError: Error | null = null;
   let readyStatuses: EngineStatus[] = [];
   let readyRelease: (() => void) | null = null;
   let readyGate: Promise<void> | null = null;
@@ -73,6 +82,11 @@ export function createFakeEngine(
 
     failSynthesis(error: Error | null) {
       nextError = error;
+    },
+
+    failSynthesisFor(matches: ((text: string) => boolean) | null, error: Error) {
+      selectiveMatch = matches;
+      selectiveError = error;
     },
 
     reportWhileReadying(...statuses: EngineStatus[]) {
@@ -103,6 +117,9 @@ export function createFakeEngine(
       }
       if (nextError) {
         throw nextError;
+      }
+      if (selectiveMatch?.(request.text) && selectiveError) {
+        throw selectiveError;
       }
 
       throwIfAborted(signal);

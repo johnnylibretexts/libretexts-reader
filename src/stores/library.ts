@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { api } from "../lib/tauri";
+import { listen } from "@tauri-apps/api/event";
+import { api, isTauriRuntime } from "../lib/tauri";
 import type * as Domain from "../types/domain";
 import { displayError } from "../lib/errors";
 
@@ -83,3 +84,46 @@ export const useLibraryStore = create<LibraryState>((set) => ({
     }
   },
 }));
+
+/**
+ * Keep the Library in step with imports and deletions happening elsewhere.
+ *
+ * Lives here rather than in `AppShell` for the same reason
+ * `attachImportListener` lives beside the imports store: the subscription
+ * exists to write this store, and as a component effect it had no seam a test
+ * could reach. Returns a disposer for unmount.
+ */
+export function attachLibraryListener(): () => void {
+  let unlisten: (() => void) | undefined;
+  let disposed = false;
+
+  // `listen` rejects wherever there is no Tauri event bus -- every jsdom test,
+  // any `vite` browser preview. A missing runtime is not a failure.
+  if (!isTauriRuntime()) {
+    return () => undefined;
+  }
+
+  void listen("library-changed", () => {
+    void useLibraryStore.getState().refresh();
+  })
+    .then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
+      }
+      unlisten = dispose;
+    })
+    .catch((failure) => {
+      // Nothing else refreshes the Library while the app is open, so a
+      // swallowed failure here means a finished import never appears on the
+      // shelf -- indistinguishable from an import that silently did nothing.
+      useLibraryStore.setState({
+        error: `The library will not refresh on its own this session; restart the app to restore it. (${displayError(failure)})`,
+      });
+    });
+
+  return () => {
+    disposed = true;
+    unlisten?.();
+  };
+}

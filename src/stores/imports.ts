@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type * as Domain from "../types/domain";
 import { displayError } from "../lib/errors";
+import { isTauriRuntime } from "../lib/tauri";
 
 export interface ActiveImport {
   bookId: string;
@@ -88,6 +89,14 @@ export function attachImportListener(): () => void {
   let unlisten: (() => void) | undefined;
   let disposed = false;
 
+  // `listen` rejects wherever there is no Tauri event bus -- every jsdom test,
+  // any `vite` browser preview. That is a missing runtime, not a failure, and
+  // reporting it would put an error in front of readers who have no problem.
+  // The same guard is why `SettingsPanel` checks before subscribing.
+  if (!isTauriRuntime()) {
+    return () => undefined;
+  }
+
   void listen<Domain.ImportProgress>("import-progress", (event) => {
     useImportsStore.getState().applyProgress(event.payload);
   })
@@ -98,7 +107,15 @@ export function attachImportListener(): () => void {
       }
       unlisten = dispose;
     })
-    .catch(() => undefined);
+    .catch((failure) => {
+      // Nothing retries this and nothing else will notice. Swallowed, the
+      // progress strip stays dead for the whole session, and an import that is
+      // running looks like one that never started -- so the message names the
+      // only thing that fixes it.
+      useImportsStore.setState({
+        error: `Import progress updates are unavailable for this session; restart the app to restore them. (${displayError(failure)})`,
+      });
+    });
 
   return () => {
     disposed = true;

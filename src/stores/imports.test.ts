@@ -1,6 +1,18 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Domain from "../types/domain";
-import { useImportsStore } from "./imports";
+
+const listen = vi.fn();
+const isTauriRuntime = vi.fn(() => true);
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (...args: unknown[]) => listen(...args),
+}));
+
+vi.mock("../lib/tauri", () => ({
+  isTauriRuntime: () => isTauriRuntime(),
+}));
+
+const { useImportsStore, attachImportListener } = await import("./imports");
 
 function progress(
   documentId: string,
@@ -28,7 +40,39 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  isTauriRuntime.mockReturnValue(true);
+  listen.mockResolvedValue(() => undefined);
   useImportsStore.setState({ active: null, completed: null, error: null });
+});
+
+describe("import progress subscription", () => {
+  it("reports a subscription that failed instead of leaving the strip dead", async () => {
+    // Nothing retries this. Swallowed, the progress strip is dead for the
+    // whole session and an import that is running looks like one that never
+    // started -- so the message has to say the session is what needs ending.
+    listen.mockRejectedValue(new Error("event bus unavailable"));
+
+    attachImportListener();
+
+    await vi.waitFor(() =>
+      expect(useImportsStore.getState().error).toMatch(/progress/i),
+    );
+    expect(useImportsStore.getState().error).toMatch(/restart/i);
+  });
+
+  it("says nothing when there is no desktop event bus to subscribe to", async () => {
+    // `listen` rejects outside Tauri -- in every jsdom test and any browser
+    // preview. That is the absence of a runtime, not a failure, and reporting
+    // it would put an error in front of readers who have no problem.
+    isTauriRuntime.mockReturnValue(false);
+
+    attachImportListener();
+
+    await Promise.resolve();
+    expect(listen).not.toHaveBeenCalled();
+    expect(useImportsStore.getState().error).toBeNull();
+  });
 });
 
 describe("imports store", () => {

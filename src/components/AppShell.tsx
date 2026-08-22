@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import {
   BookOpen,
   FileText,
@@ -22,7 +21,7 @@ import { OpenStaxBrowser } from "./OpenStaxBrowser/OpenStaxBrowser";
 import { Reader } from "./Reader/Reader";
 import { SettingsPanel } from "./Settings/SettingsPanel";
 import { attachImportListener } from "../stores/imports";
-import { useLibraryStore } from "../stores/library";
+import { attachLibraryListener, useLibraryStore } from "../stores/library";
 import { usePlayerStore } from "../stores/player";
 
 export type RouteId =
@@ -74,20 +73,10 @@ export function AppShell() {
     void refreshLibrary();
   }, [refreshLibrary]);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen("library-changed", () => {
-      void refreshLibrary();
-    })
-      .then((dispose) => {
-        unlisten = dispose;
-      })
-      .catch(() => {});
-
-    return () => {
-      unlisten?.();
-    };
-  }, [refreshLibrary]);
+  // Both subscriptions live with the stores they write, so each can guard the
+  // desktop runtime and report a failure the same way. As an effect here, the
+  // library one swallowed its rejection and had no seam a test could reach.
+  useEffect(() => attachLibraryListener(), []);
 
   useEffect(() => attachImportListener(), []);
 

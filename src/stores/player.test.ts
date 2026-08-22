@@ -45,11 +45,45 @@ const PARAGRAPHS: Domain.Paragraph[] = [
 ];
 
 /**
+ * Six sentences in one paragraph. The prefetch runs two workers, so a single
+ * failed sentence is absorbed by the other -- only a contiguous run of
+ * failures can strand the sentences past it, and six is the shortest list that
+ * leaves an unmistakable one at the end.
+ */
+const LONG_PARAGRAPHS: Domain.Paragraph[] = [
+  {
+    id: "para-long",
+    sectionId: "sec-1",
+    ordinal: 0,
+    text: "One. Two. Three. Four. Five. Six.",
+    sentenceOffsets: [
+      [0, 4],
+      [5, 9],
+      [10, 16],
+      [17, 22],
+      [23, 28],
+      [29, 33],
+    ],
+    sentenceSpeech: [
+      "Sentence one spoken.",
+      "Sentence two spoken.",
+      "Sentence three spoken.",
+      "Sentence four spoken.",
+      "Sentence five spoken.",
+      "Sentence six spoken.",
+    ],
+  },
+];
+
+/**
  * Every test gets a fresh module graph: the player keeps its speech cache,
  * utterance tokens and memoized engine in module scope, and they would
  * otherwise leak between cases.
  */
-async function loadPlayer(engines: FakeEngine[]) {
+async function loadPlayer(
+  engines: FakeEngine[],
+  paragraphs: Domain.Paragraph[] = PARAGRAPHS,
+) {
   vi.resetModules();
 
   const savePlaybackState = vi.fn(
@@ -70,7 +104,7 @@ async function loadPlayer(engines: FakeEngine[]) {
     api: {
       getDocument: vi.fn(async () => DOCUMENT),
       listSections: vi.fn(async () => SECTIONS),
-      listParagraphs: vi.fn(async () => PARAGRAPHS),
+      listParagraphs: vi.fn(async () => paragraphs),
       listSectionImages: vi.fn(async () => []),
       savePlaybackState,
       // switchToSupertonic goes through useSettingsStore.setTtsProvider,
@@ -95,6 +129,36 @@ async function createFake(options?: Parameters<typeof import("../lib/speech").cr
   const { createFakeEngine } = await import("../lib/speech/fakeEngine");
   return createFakeEngine(options);
 }
+
+describe("read-ahead buffering", () => {
+  it("keeps buffering past a sentence it cannot synthesize", async () => {
+    // One bad sentence used to end the whole read-ahead: the worker returned
+    // on its first failure, so every sentence past it went unbuffered and
+    // playback fell back to synthesizing each one as it reached it. Failing a
+    // contiguous run kills both workers, which is the only way to strand the
+    // tail with a concurrency of two.
+    //
+    // Deliberately not a test that playback stops: it does not, and it must
+    // not. Sentence one succeeds, so `speakWithBufferedSpeech` plays it and
+    // anything genuinely fatal is still that function's catch to report.
+    const engine = await createFake();
+    engine.failSynthesisFor(
+      (text) => /two|three|four|five/.test(text),
+      new Error("synthesis failed"),
+    );
+    const { usePlayerStore } = await loadPlayer([engine], LONG_PARAGRAPHS);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    await vi.waitFor(() =>
+      expect(engine.calls.map((call) => call.text)).toContain(
+        "Sentence six spoken.",
+      ),
+    );
+    expect(usePlayerStore.getState().isPlaying).toBe(true);
+  });
+});
 
 describe("playback through SpeechEngine", () => {
   it("synthesizes the current sentence through whichever engine is active", async () => {

@@ -749,7 +749,20 @@ async function fillSpeechBuffer(
         ready += 1;
         onReady?.(ready);
       } catch {
-        return;
+        // Skip this sentence, do not abandon the rest. Returning here ended
+        // the whole read-ahead on the first failure, so every sentence past a
+        // single bad one went unbuffered and playback fell back to
+        // synthesizing each as it reached it.
+        //
+        // Nothing is reported from here on purpose. This is a cache warmer:
+        // when playback actually reaches the sentence, `speakWithBufferedSpeech`
+        // synthesizes it again on the playing path, and *its* catch is what
+        // stops playback and shows the reason. Surfacing a prefetch failure
+        // would stop playback that recovers on its own.
+        //
+        // `cursor` was already advanced above, so this moves on rather than
+        // retrying the sentence that just failed.
+        continue;
       }
     }
   }
