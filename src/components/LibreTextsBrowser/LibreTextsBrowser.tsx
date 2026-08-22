@@ -15,6 +15,10 @@ interface LibreTextsBrowserProps {
 export function LibreTextsBrowser({ onOpenDocument }: LibreTextsBrowserProps) {
   const [books, setBooks] = useState<Domain.LibreTextsBook[]>([]);
   const [libraries, setLibraries] = useState<Domain.LibreTextsLibrary[]>([]);
+  // Its own state, not the `error` below. That one is cleared by
+  // `setError(null)` at the top of every debounced catalog fetch, so a single
+  // keystroke would wipe this message while the filter was still broken.
+  const [librariesError, setLibrariesError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [library, setLibrary] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -32,9 +36,14 @@ export function LibreTextsBrowser({ onOpenDocument }: LibreTextsBrowserProps) {
           setLibraries(catalog);
         }
       })
-      .catch(() => {
+      .catch((failure) => {
         if (active) {
+          // Emptying the dropdown silently made this read as a fact about
+          // LibreTexts -- "this Source has no libraries" -- rather than as a
+          // request that failed. Browsing is unaffected, so this says so
+          // rather than presenting itself as fatal.
           setLibraries([]);
+          setLibrariesError(displayError(failure));
         }
       });
 
@@ -123,6 +132,13 @@ export function LibreTextsBrowser({ onOpenDocument }: LibreTextsBrowserProps) {
           </select>
         </label>
       </div>
+
+      {librariesError ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-200">
+          Could not load the library filter, so every library is being searched:{" "}
+          {librariesError}
+        </p>
+      ) : null}
 
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">

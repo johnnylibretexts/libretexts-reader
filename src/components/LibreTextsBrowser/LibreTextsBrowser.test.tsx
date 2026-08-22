@@ -73,6 +73,19 @@ describe("LibreTextsBrowser in-library cards", () => {
     useLibraryStore.setState({ documents: [] });
   });
 
+  it("says the library filter failed rather than showing no libraries", async () => {
+    // An empty dropdown is a claim about LibreTexts -- "this Source has no
+    // libraries" -- and the reader has no way to tell it from a request that
+    // failed. Browsing still works meanwhile, so this must not read as fatal.
+    listLibreTextsLibraries.mockRejectedValue(new Error("network unreachable"));
+
+    render(<LibreTextsBrowser onOpenDocument={vi.fn()} />);
+
+    expect(
+      await screen.findByText(/could not load the library filter/i),
+    ).toBeInTheDocument();
+  });
+
   it("offers Add for a book that is not in the library", async () => {
     await renderBrowser();
 
