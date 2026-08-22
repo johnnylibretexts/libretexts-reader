@@ -1,14 +1,92 @@
+import { listen } from "@tauri-apps/api/event";
+import { displayError } from "../errors";
 import {
   SUPERTONIC_VOICES,
   type SupertonicLanguage,
   type SupertonicVoiceStyle,
 } from "../supertonic";
-import { api, type SpeechAudio } from "../tauri";
 import {
+  api,
+  isTauriRuntime,
+  type SpeechAudio,
+  type SupertonicModelProgress,
+} from "../tauri";
+import {
+  SpeechAbortedError,
   throwIfAborted,
+  type EngineStatus,
   type SettingsSource,
   type SpeechEngine,
 } from "./types";
+
+/**
+ * What Rust fails a cancelled download with. Matched as a substring because it
+ * reaches the webview wrapped in the command's error; it must not drift from
+ * `MODEL_DOWNLOAD_CANCELLED` in `src-tauri/src/tts/supertonic/model.rs`.
+ */
+const MODEL_DOWNLOAD_CANCELLED = "Supertonic model download cancelled.";
+
+/**
+ * The one line shown alongside the bar. Deliberately says how long this lasts
+ * and where the bytes come from -- it used to be the *only* thing the reader
+ * was told for several minutes, and said neither.
+ */
+const DOWNLOADING_MESSAGE = "Downloading the on-device voice (one time)";
+
+/**
+ * Fetch the model, reporting every byte Rust announces.
+ *
+ * Split out of `ensureReady` because it owns a subscription with a lifetime:
+ * the listener must not outlive the download, or a later Settings-side
+ * download would keep reporting into a player that is not downloading
+ * anything.
+ */
+async function downloadModel(onStatus?: (status: EngineStatus) => void) {
+  const cancel = () => api.cancelSupertonicModelDownload();
+  // Reported before the first byte arrives: on a slow connection the first
+  // progress event is seconds away, and until then the reader would be looking
+  // at the same blank spinner this exists to replace.
+  onStatus?.({ message: DOWNLOADING_MESSAGE, cancel });
+
+  const unlisten = await subscribeToModelProgress((progress) => {
+    onStatus?.({
+      message: DOWNLOADING_MESSAGE,
+      download: {
+        downloadedBytes: progress.downloaded,
+        totalBytes: progress.total,
+      },
+      cancel,
+    });
+  });
+
+  try {
+    await api.ensureSupertonicModelDownloaded();
+  } catch (error) {
+    // A reader who pressed Cancel has not hit a problem. `SpeechAbortedError`
+    // is what `speakWithBufferedSpeech` swallows silently; anything else it
+    // shows, which here would be an error message for something they asked
+    // for.
+    if (displayError(error).includes(MODEL_DOWNLOAD_CANCELLED)) {
+      throw new SpeechAbortedError();
+    }
+    throw error;
+  } finally {
+    unlisten?.();
+  }
+}
+
+/** Null outside the desktop runtime, where there is no event bus to listen on. */
+async function subscribeToModelProgress(
+  onProgress: (progress: SupertonicModelProgress) => void,
+) {
+  if (!isTauriRuntime()) {
+    return null;
+  }
+  return listen<SupertonicModelProgress>(
+    "supertonic-model-download-progress",
+    (event) => onProgress(event.payload),
+  );
+}
 
 /**
  * Turn the raw bytes a Tauri command returns into something playable.
@@ -85,8 +163,7 @@ export function createSupertonicEngine(options: {
         );
       }
 
-      onStatus?.("Downloading the Supertonic model...");
-      await api.ensureSupertonicModelDownloaded();
+      await downloadModel(onStatus);
     },
 
     async listVoices() {

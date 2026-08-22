@@ -196,6 +196,13 @@ export const api = {
     invokeDesktop<SupertonicModelStatus>("get_supertonic_model_status"),
   ensureSupertonicModelDownloaded: () =>
     invokeDesktop<string>("ensure_supertonic_model_downloaded"),
+  /**
+   * Ask the model download in flight to stop. Resolves once the request is
+   * delivered, not once the download has ended -- the download itself fails
+   * on its next chunk, from inside `ensureSupertonicModelDownloaded`.
+   */
+  cancelSupertonicModelDownload: () =>
+    invokeDesktop<void>("cancel_supertonic_model_download"),
   previewSupertonicTts: (request: SupertonicPreviewRequest) =>
     invokeDesktop<SpeechAudio>("preview_supertonic_tts", { request }),
   estimateSupertonicChapter: (request: SupertonicChapterRequest) =>

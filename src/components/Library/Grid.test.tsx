@@ -18,6 +18,16 @@ vi.mock("../../lib/tauri", () => ({
     deleteDocument: (id: string) => deleteDocument(id),
     listDocuments: () => listDocuments(),
     searchDocuments: (q: string) => searchDocuments(q),
+    // The empty state asks whether the reader's first Play will have to
+    // download a voice. Answered "already there" so this file keeps testing
+    // the grid; the warning itself is covered in EmptyState.test.tsx.
+    getSupertonicModelStatus: async () => ({
+      downloaded: true,
+      directory: "/models",
+      downloadedBytes: 401_276_744,
+      totalBytes: 401_276_744,
+      missingFiles: [],
+    }),
   },
 }));
 

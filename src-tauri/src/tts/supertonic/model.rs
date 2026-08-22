@@ -1,6 +1,8 @@
 //! Getting the Supertonic model onto disk and knowing whether it is there.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Runtime, Window};
@@ -16,6 +18,46 @@ pub(crate) const SUPERTONIC_USER_AGENT: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " supertonic-model-downloader"
 );
+/// What a cancelled download fails with. The webview matches on it to tell
+/// "the reader pressed Cancel" apart from a real failure, so it must not drift
+/// from `MODEL_DOWNLOAD_CANCELLED` in `src/lib/speech/supertonicEngine.ts`.
+pub(crate) const MODEL_DOWNLOAD_CANCELLED: &str = "Supertonic model download cancelled.";
+
+/// The flag the reader's Cancel flips, shared between the command doing the
+/// downloading and the command asking it to stop.
+///
+/// Deliberately Tauri managed state rather than a `static`: a process-global
+/// would be shared by every test in this crate, which Rust runs as threads in
+/// one process, so one test's cancel could abort another's download.
+#[derive(Debug, Default, Clone)]
+pub struct SupertonicDownloadCancel(Arc<AtomicBool>);
+
+impl SupertonicDownloadCancel {
+    /// Ask the download in flight to stop. Takes effect on its next chunk.
+    pub(crate) fn request(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    /// Forget a cancel that has already done its work. Called when a download
+    /// starts, never when one ends: the request can land after the loop has
+    /// exited, and clearing it there would leave it set for the next Play.
+    pub(crate) fn clear(&self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+
+    /// Fail the download the reader asked to stop.
+    ///
+    /// Called from the progress closure, which `download_verified` invokes on
+    /// every chunk and `?`-propagates -- so returning an error here drops the
+    /// HTTP stream mid-file rather than waiting for the current 256MB file.
+    pub(crate) fn check(&self) -> AppResult<()> {
+        if self.0.load(Ordering::SeqCst) {
+            return Err(AppError::Model(MODEL_DOWNLOAD_CANCELLED.into()));
+        }
+        Ok(())
+    }
+}
+
 /// Abort a stalled model download if no chunk arrives within this window. An
 /// overall request timeout is intentionally avoided so large files can finish.
 pub(crate) const SUPERTONIC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -283,6 +325,54 @@ mod user_agent_tests {
             SUPERTONIC_USER_AGENT.contains(env!("CARGO_PKG_VERSION")),
             "User-Agent {SUPERTONIC_USER_AGENT:?} does not name the crate version {:?}",
             env!("CARGO_PKG_VERSION"),
+        );
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::{SupertonicDownloadCancel, MODEL_DOWNLOAD_CANCELLED};
+
+    #[test]
+    fn a_cancelled_download_stops_and_a_cleared_flag_lets_the_next_one_start() {
+        let cancel = SupertonicDownloadCancel::default();
+        assert!(
+            cancel.check().is_ok(),
+            "a download nobody cancelled must be allowed to continue"
+        );
+
+        cancel.request();
+        let error = cancel
+            .check()
+            .expect_err("a cancelled download must not keep fetching chunks");
+        assert!(
+            error.to_string().contains(MODEL_DOWNLOAD_CANCELLED),
+            "cancellation must be recognisable to the webview, got {error}"
+        );
+
+        // A cancel left set outlives the download it stopped: the next Play
+        // would die before its first chunk, with nothing on screen saying why.
+        cancel.clear();
+        assert!(
+            cancel.check().is_ok(),
+            "clearing the flag must let a later download run"
+        );
+    }
+
+    #[test]
+    fn cancelling_through_one_handle_stops_the_download_holding_another() {
+        // The two commands never share a handle: `cancel_supertonic_model_download`
+        // is given one by Tauri while `ensure_supertonic_model_downloaded` is
+        // already inside its loop holding its own. A handle that copied the flag
+        // instead of sharing it would leave Cancel doing nothing at all.
+        let held_by_the_download = SupertonicDownloadCancel::default();
+        let held_by_the_reader = held_by_the_download.clone();
+
+        held_by_the_reader.request();
+
+        assert!(
+            held_by_the_download.check().is_err(),
+            "cancelling through one handle must stop the download holding another"
         );
     }
 }

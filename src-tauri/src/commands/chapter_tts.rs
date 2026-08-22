@@ -25,8 +25,8 @@ use crate::tts::supertonic::engine;
 use crate::tts::supertonic::model::{
     emit_supertonic_model_progress, existing_supertonic_model_bytes, file_complete,
     supertonic_model_dir, supertonic_model_file_path, supertonic_model_manifest,
-    supertonic_model_status, temp_download_path, SupertonicModelStatus, SUPERTONIC_MODEL_VERSION,
-    SUPERTONIC_READ_TIMEOUT, SUPERTONIC_USER_AGENT,
+    supertonic_model_status, temp_download_path, SupertonicDownloadCancel, SupertonicModelStatus,
+    SUPERTONIC_MODEL_VERSION, SUPERTONIC_READ_TIMEOUT, SUPERTONIC_USER_AGENT,
 };
 use crate::tts::supertonic::provider::SupertonicProvider;
 use crate::tts::supertonic::voice::{
@@ -95,7 +95,13 @@ pub async fn get_supertonic_model_status() -> AppResult<SupertonicModelStatus> {
 #[tauri::command]
 pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
     window: Window<R>,
+    cancel: State<'_, SupertonicDownloadCancel>,
 ) -> AppResult<String> {
+    // Clear on the way in, not on the way out: a Cancel that lands after the
+    // loop has finished would otherwise stay set and kill the next download
+    // before its first chunk.
+    let cancel = SupertonicDownloadCancel::clone(&cancel);
+    cancel.clear();
     let manifest = supertonic_model_manifest()?;
     let directory = supertonic_model_dir()?;
     tokio::fs::create_dir_all(&directory).await?;
@@ -144,6 +150,10 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
                 error: AppError::Model,
             },
             |file_downloaded, _total| {
+                // Checked here because `download_verified` calls this on every
+                // chunk and `?`-propagates the result: an error drops the HTTP
+                // stream immediately instead of finishing the 256MB file first.
+                cancel.check()?;
                 emit_supertonic_model_progress(
                     &window,
                     &file_label,
@@ -172,6 +182,19 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
         status.total_bytes,
     )?;
     Ok(status.directory)
+}
+
+/// Stop the model download in flight.
+///
+/// Returns as soon as the flag is set -- the download itself fails on its next
+/// chunk, from inside `ensure_supertonic_model_downloaded`. Setting the flag
+/// with no download running is harmless: the next one clears it on entry.
+#[tauri::command]
+pub async fn cancel_supertonic_model_download(
+    cancel: State<'_, SupertonicDownloadCancel>,
+) -> AppResult<()> {
+    cancel.request();
+    Ok(())
 }
 
 #[tauri::command]

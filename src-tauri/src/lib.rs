@@ -10,6 +10,7 @@ pub mod tts;
 
 use db::connection::init_pool;
 use tauri::Manager;
+use tts::supertonic::model::SupertonicDownloadCancel;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -45,6 +46,7 @@ pub fn run() {
             commands::tts::synthesize_speech,
             commands::chapter_tts::get_supertonic_model_status,
             commands::chapter_tts::ensure_supertonic_model_downloaded,
+            commands::chapter_tts::cancel_supertonic_model_download,
             commands::chapter_tts::preview_supertonic_tts,
             commands::chapter_tts::estimate_supertonic_chapter,
             commands::chapter_tts::export_supertonic_chapter_mp3,
@@ -65,6 +67,9 @@ pub fn run() {
             cleanup::reclaim_stale_tts_cache();
             let pool = init_pool(&db_path)?;
             app.manage(pool);
+            // Shared by the two model-download commands: one sets the flag, the
+            // other fails on it. See `SupertonicDownloadCancel`.
+            app.manage(SupertonicDownloadCancel::default());
             Ok(())
         })
         .run(tauri::generate_context!())

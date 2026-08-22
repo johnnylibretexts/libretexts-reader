@@ -8,6 +8,7 @@ import {
   type SupertonicModelStatus,
   isTauriRuntime,
 } from "../../lib/tauri";
+import { formatBytes } from "../../lib/format";
 import { displayError } from "../../lib/errors";
 import { createSpeechEngine } from "../../lib/speech";
 import {
@@ -296,7 +297,9 @@ export function SettingsPanel() {
         // loaded, so it can never be asking about a guessed provider.
         settingsSource: "loaded",
       });
-      await engine.ensureReady(setTestStatus);
+      // Only the line, not the byte counts: this panel already renders those
+      // from its own subscription to the same progress events.
+      await engine.ensureReady((status) => setTestStatus(status.message));
 
       setTestStatus(`Generating ${providerLabel} sample...`);
       // No voice on the request: the engine built above already holds the
@@ -703,22 +706,6 @@ export function SettingsPanel() {
 
 let testAudio: HTMLAudioElement | null = null;
 let testAudioUrl: string | null = null;
-
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
-  }
-
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
-}
 
 async function playBlob(blob: Blob) {
   if (blob.size === 0) {
