@@ -1,12 +1,12 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 
 > **Current goal: a private beta.** Signed and notarized, fewer than ten named testers,
 > repo staying private. The gating work is the **`Private beta` milestone** on the tracker
 > — run `gh issue list --milestone "Private beta"` for the live list, and see "The plan: a
 > private beta" under Known Limitations for the shape of
-> it and what the decision retired. The app itself is in good health: 209 Rust and 203
+> it and what the decision retired. The app itself is in good health: 216 Rust and 226
 > frontend tests green, and `npm run tauri:build` produced a real DMG for the first time on
 > 2026-08-21. What is missing is release process, not code.
 
@@ -108,6 +108,73 @@ The app database and downloaded models/images are not stored in the repo. On mac
 Copying only the project folder will not copy the local library, downloaded books, TTS models, cover images, or downloaded section images. To preserve a test library across machines, copy that app data directory too. The app can also use `LIBRETEXTS_READER_APP_DATA_DIR` to point tests or local runs at a temporary data directory.
 
 ## Recently Landed
+
+### Session of 2026-08-22 — the first-run download, made visible and then made resumable
+
+Two PRs, both against the one thing a fresh install hits before it can play a word: the
+383 MB Supertonic fetch from `huggingface.co`.
+
+**#52 → [PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86)** (`ebea718`) —
+the first Play fetched 383 MB behind one static string with all eight playback controls
+disabled, so a working download and a hung app looked identical for several minutes. There is
+now a determinate bar (`156 MB of 383 MB · 41%`) in both the reader header and the mini player,
+a Cancel button on each, and a pre-warning in the library empty state that reads its figure from
+the model manifest so it cannot drift. Play/Pause stays enabled throughout — pressing Pause
+cancels. Skips and the section dropdown stay disabled; there is no audio yet to skip.
+
+**The progress channel was never reached at all**, and that is the part worth keeping.
+`fillSpeechBuffer` → `cachedSpeechBlob` reaches `ensureReady` *before* the sentence being spoken
+does, and passes no status callback; by the time that sentence asks for its audio the prefetch
+has already filled the cache, so the engine is never called and even the static string mostly
+never rendered. Readiness now happens once, at the top of `speakWithBufferedSpeech`, where its
+status has somewhere to go. **A prefetch that warms a cache will silently swallow any status the
+on-demand path was supposed to report** — check which caller actually reaches the code that
+emits, not which one looks like it should.
+
+Cancellation is real rather than cosmetic: `SupertonicDownloadCancel` is Tauri managed state,
+checked inside the progress closure that `download_verified` already `?`-propagates on every
+chunk, so Cancel drops the HTTP stream mid-file instead of finishing the 256 MB one first. It is
+deliberately **not** a `static` — the crate's tests run as threads in one process and would
+share it.
+
+**#87 → [PR #89](https://github.com/johnnylibretexts/libretexts-reader/pull/89)** (`5135ded`) —
+and that Cancel button is what made the next defect reachable on purpose rather than only by bad
+luck. A failed download threw away every byte fetched for the file in flight, so the single
+256 MB file could fail at 90% and start again from byte zero, repeatedly. `download_verified`
+now keeps the `.download` temp file, sends `Range: bytes=<existing>-`, and seeds both the byte
+count and the SHA-256 hasher **from what is actually on disk** — not from the count the last
+attempt believed it had written, because an interrupted write can land short and the digest has
+to cover the real bytes.
+
+Resuming is only ever an optimisation; it can never install bytes of unknown provenance:
+
+| Answer | What happens |
+| --- | --- |
+| `206` | Append to the partial, digest over the whole file |
+| `200` | The server ignored `Range` and sent everything — truncate the partial away rather than append to it |
+| `416` | The partial runs past the end of the file — discard it, rather than let `error_for_status` turn a bad partial into a permanent failure |
+| digest fails after a **resume** | Discard the partial, refetch from scratch, once |
+| digest fails on a **fresh** fetch | Error. No retry loop. |
+
+A partial already at or past the expected size is not a prefix of anything and is never resumed,
+which is what makes the `416` row the one branch without a test: the Supertonic manifest always
+states a size, so that guard makes 416 unreachable in practice. It is there for a manifest that
+does not, and for a server whose file is shorter than the manifest claims.
+
+**Two halves had to change and only one was in `download.rs`.** The caller at
+`chapter_tts.rs:131-133` deleted the temp file at the top of *every* attempt, so a perfect
+`Range` implementation would still have had nothing to resume from. Check the caller before
+concluding that a networking fix lives entirely in the networking module.
+
+**A tests-after trap worth naming.** Three of the five new tests *cannot* fail against `main` —
+the old code always restarted, which is trivially correct — so watching them go red first was
+impossible and passing proved nothing. Each was pinned by mutating the **new** code instead:
+dropping the `206` check makes the ignores-`Range` test cost two full fetches; dropping the size
+guard makes the oversized-partial test send a pointless `Range`. One mutation *survived* on the
+first attempt, and the assertion was tightened until it did not. **When a fix's own safety net
+makes a test un-failable against the old code, mutate the new code until the test dies** — the
+repo's "revert the fix and watch the test fail" rule has no purchase there, and skipping the
+step leaves a test that asserts nothing.
 
 ### Session of 2026-08-21 — five PRs, four issues closed
 
@@ -580,8 +647,8 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 
 ## Testing And Verification
 
-Current counts on `main`: **209 Rust tests** (3 ignored — the live network import smoke plus
-two others) and **203 frontend tests across 19 files**. Counts drift — run the suites rather than trusting these.
+Current counts on `main`: **216 Rust tests** (3 ignored — the live network import smoke plus
+two others) and **226 frontend tests across 22 files**. Counts drift — run the suites rather than trusting these.
 
 These commands were green before handoff:
 
@@ -729,21 +796,35 @@ working list and is authoritative over this paragraph** — run
 `gh issue list --milestone "Private beta"` rather than trusting what follows, which is a
 snapshot and will drift.
 
-Open as of 2026-08-21:
+Open as of 2026-08-22 — **four left, and every one of them is a release blocker**:
 
-- **Release mechanics** — #48 (the pipeline has *never* run: no runner registered, no `APPLE_SIGNING_IDENTITY`, and the Developer ID cert is not on the dev machine — **find the release Mac first**, everything else here assumes it), #49 (a `-beta` tag fails `check-version.sh`; the only tag is stale and local-only).
+- **Release mechanics** — #48 (the pipeline has *never* run: no runner registered, no `APPLE_SIGNING_IDENTITY`, and the Developer ID cert is not on the dev machine — **find the release Mac first**, everything else here assumes it).
 - **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either), #51 (imported books' licence and attribution are stored and displayed nowhere, including in exported MP3s).
-- **Product** — #52 (first Play silently pulls ~383 MB and disables every playback control), #53 (Delete is one unconfirmed click and irreversible), #54 (Fish bills ~10 sentences per Play with no warning and no stop button).
+- **Product** — #54 (Fish bills ~10 sentences per Play with no warning and no stop button). The last one standing in this group: #52 and #53 both cleared, and #49 cleared off Release mechanics.
+
+**Cleared 2026-08-22** — #52, the first-run download made visible and cancellable
+([PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86), `ebea718`), and #87,
+the same download made resumable ([PR #89](https://github.com/johnnylibretexts/libretexts-reader/pull/89),
+`5135ded`). Both are written up under "Session of 2026-08-22" in Recently Landed.
+
+**Filed off the back of #86, not on the milestone: #88.** `ensure_supertonic_model_downloaded`
+clears the shared cancel flag on entry, which is right for the common case but assumes only one
+download runs at a time — and nothing enforces that. Two commands can start one: the player via
+`ensureReady` on first Play, and Settings via its explicit Download button. Pressing the second
+while the first runs voids a Cancel pending on the first. **Read #88 before touching
+`SupertonicDownloadCancel`**; the clear-on-entry comment in `chapter_tts.rs` explains why the
+clear is there but not why one flag is enough, because it is not.
 
 **Cleared 2026-08-21** — #60, the voice-style setting reaching playback
 ([PR #77](https://github.com/johnnylibretexts/libretexts-reader/pull/77), `38c9fc5`). See
 "5. The Supertonic voice style reaches playback" under Recently Landed for the invariants
 it established; read that before touching playback or the settings store.
 
-**Not blocking the beta, filed off the back of #60:** #78 (three low-severity review
-items, one a real regression — a Fish voice picked from the dropdown shows no save
-confirmation) and #76 (the chapter-export panel forgets its voice when the Reader
-unmounts). Neither is on the milestone.
+**Not blocking the beta, filed off the back of #60:** #78 (three low-severity review items,
+one a real regression — a Fish voice picked from the dropdown shows no save confirmation),
+closed 2026-08-21 by [PR #80](https://github.com/johnnylibretexts/libretexts-reader/pull/80),
+and **#76 (the chapter-export panel forgets its voice when the Reader unmounts), still open**.
+Neither was ever on the milestone.
 
 **Cleared 2026-08-20** — the cheap three, all merged: #67 (`bundle.targets` now declares
 only what a release builds), #55 (the false privacy claims corrected and `PRIVACY.md`
