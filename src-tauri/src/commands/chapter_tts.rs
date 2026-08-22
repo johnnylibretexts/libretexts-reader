@@ -127,10 +127,10 @@ pub async fn ensure_supertonic_model_downloaded<R: Runtime>(
             tokio::fs::create_dir_all(parent).await?;
         }
 
+        // The partial is deliberately left where it is: `download_verified`
+        // resumes it with a `Range` request, so a drop or a Cancel partway
+        // through the 256 MB file no longer costs the reader the whole file.
         let temp_path = temp_download_path(&target_path)?;
-        if temp_path.exists() {
-            tokio::fs::remove_file(&temp_path).await?;
-        }
         if target_path.exists() {
             tokio::fs::remove_file(&target_path).await?;
         }
