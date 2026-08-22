@@ -6,7 +6,7 @@ Last updated: 2026-08-22
 > repo staying private. The gating work is the **`Private beta` milestone** on the tracker
 > — run `gh issue list --milestone "Private beta"` for the live list, and see "The plan: a
 > private beta" under Known Limitations for the shape of
-> it and what the decision retired. The app itself is in good health: 221 Rust and 236
+> it and what the decision retired. The app itself is in good health: 226 Rust and 240
 > frontend tests green, and `npm run tauri:build` produced a real DMG for the first time on
 > 2026-08-21. What is missing is release process, not code.
 
@@ -109,9 +109,9 @@ Copying only the project folder will not copy the local library, downloaded book
 
 ## Recently Landed
 
-### Session of 2026-08-22 — the first-run download, then five silent failures
+### Session of 2026-08-22 — the first-run download, five silent failures, then the release path
 
-Five PRs, six issues closed, in two threads.
+Ten PRs, eight issues closed, in three threads.
 
 **Thread one: the 383 MB Supertonic fetch from `huggingface.co`** — the one thing a fresh install
 hits before it can play a word. It now reports real progress, can be cancelled, resumes instead
@@ -121,6 +121,10 @@ and making it resumable is what put the shared cancel flag under real scrutiny.
 
 **Thread two: things that failed without saying so** — a forgotten export voice (#76) and four
 swallowed errors (#62). Written up after the download thread below.
+
+**Thread three: making the release worth running** — the release workflow ran no tests at all
+(#66), and imported books' licence and attribution were captured and then used nowhere (#51).
+Both are prerequisites for a beta that is still gated on #48.
 
 **#52 → [PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86)** (`ebea718`) —
 the first Play fetched 383 MB behind one static string with all eight playback controls
@@ -269,6 +273,61 @@ because the existing `failSynthesis` is all-or-nothing and its own comment descr
 could not express. And **at a prefetch concurrency of 2 a single failure is invisible** — the
 other worker absorbs it — so the test fails a contiguous run and asserts on the stranded tail.
 Run 8× for stability, given #32.
+
+**#66 → [PR #96](https://github.com/johnnylibretexts/libretexts-reader/pull/96)** (`66e8727`) —
+`release.yml` ran **no tests at all**. `RELEASE.md` listed a pre-publish gate; the workflow ran
+none of it, and a tag can point at any commit, so the automated path could publish a tree
+`ci.yml` had never validated.
+
+The gate now lives in **`.github/workflows/verify.yml`** as a `workflow_call`, and `ci.yml` and
+`release.yml` both call it, with the release job `needs:`-ing it. **Extracted rather than
+copied**: a copy satisfies that on the day it lands and drifts by the second edit. It also lets
+the gate declare its own `contents: read` instead of inheriting `release.yml`'s
+`contents: write` — a called workflow takes the caller's permissions by default.
+
+Two consequences to know. The status check is now named **`verify / verify`**, not `verify`;
+there is no branch protection today, but that is the name a required check would need. And the
+job timeout went **60 → 120**, because 60 does not cover a cold `cargo build --release` (with
+`ort`'s ~73MB fetch), a second full Tauri build, and `notarytool submit --wait` at up to 40
+minutes — and hitting it burns the tag.
+
+**#66's AC 3 was wrong, and was corrected on the ticket before implementing** — the third such
+case on this repo. The `LIBRETEXTS_READER_REQUIRE_UPDATER_KEY` belt is *not* inert when the
+updater is reintroduced without a key: `build.rs` returns early only when the `plugins.updater`
+block is entirely absent, and a block with a missing or placeholder pubkey does panic. The real
+gap was **dependency/config coherence**, which `build.rs` structurally cannot see. New
+`scripts/ci/check-updater-key.sh` closes it, keyed on the **dependency** rather than the config:
+an updater block with no plugin behind it is inert, a plugin with no block is not.
+
+One mutation-testing lesson from it: deleting the missing-block branch still exits non-zero,
+because the empty-pubkey check below catches the same input. A status-only assertion proved
+nothing, and the reader would have been told the *pubkey* was missing when the whole *block*
+was. That case now asserts the message.
+
+**#51 → [PR #97](https://github.com/johnnylibretexts/libretexts-reader/pull/97)** (`22a2af5`) —
+licence and attribution were captured at import and used nowhere: the only licence on screen was
+pre-import, and a chapter MP3 left as a derivative work with the credit stripped.
+
+**The fact that shaped the whole fix, and which the ticket does not mention:
+`documents.attribution` is polymorphic by Source.** OpenStax, LibreTexts and article store a URL
+there; **Pressbooks stores an author name**. It cannot render one way and cannot map to one ID3
+frame — a URL written as `TPE1` fills every music player's artist column with a link, and
+hyperlinking a person is worse. The shape decides: `WOAS` when it parses as http(s), `TPE1`
+otherwise, in both the reader line and the tags. **Check the shape before touching either.**
+
+In the app it is a line under the section title in `ReaderHeader` — the surface where the work is
+actually consumed. Neither field present renders *nothing*: not an empty field, not a bare
+separator, because a pasted-text import genuinely has no licence.
+
+In exports, new `src-tauri/src/tts/tags.rs` **tags the file, not the bytes** — Fish returns MP3
+data that may already carry a tag, and prepending a second one is not replacing it. Tagging
+happens **on the way out rather than in the cache**, so a chapter cached before this still leaves
+with credit attached, and `byte_length` now reports the file on disk rather than the pre-tag
+buffer.
+
+`id3` 1.17.1 (MIT, pure Rust) is a new dependency. Its notice is in `LICENSES/id3.txt` and named
+in the README, **so #50 does not inherit a fresh gap from it** — bundling `LICENSES/` into the
+`.app` is still #50's job.
 
 ### Session of 2026-08-21 — five PRs, four issues closed
 
@@ -741,8 +800,8 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 
 ## Testing And Verification
 
-Current counts on `main`: **221 Rust tests** (3 ignored — the live network import smoke plus
-two others) and **236 frontend tests across 23 files**. Counts drift — run the suites rather than trusting these.
+Current counts on `main`: **226 Rust tests** (3 ignored — the live network import smoke plus
+two others) and **240 frontend tests across 23 files**. Counts drift — run the suites rather than trusting these.
 
 These commands were green before handoff:
 
@@ -890,12 +949,20 @@ working list and is authoritative over this paragraph** — run
 `gh issue list --milestone "Private beta"` rather than trusting what follows, which is a
 snapshot and will drift.
 
-Open as of 2026-08-22 — **twelve on the tracker, four on this milestone, and all four are
-release blockers**:
+Open as of 2026-08-22 (end of session) — **ten on the tracker, three on this milestone**:
 
-- **Release mechanics** — #48 (the pipeline has *never* run: no runner registered, no `APPLE_SIGNING_IDENTITY`, and the Developer ID cert is not on the dev machine — **find the release Mac first**, everything else here assumes it).
-- **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either), #51 (imported books' licence and attribution are stored and displayed nowhere, including in exported MP3s).
-- **Product** — #54 (Fish bills ~10 sentences per Play with no warning and no stop button). The last one standing in this group: #52 and #53 both cleared, and #49 cleared off Release mechanics.
+- **Release mechanics** — #48 (the pipeline has *never* run — **find the release Mac first**, everything else here assumes it). Re-verified at end of session: `security find-identity -v -p codesigning` reports **0 valid identities**, no Developer ID in the login keychain, no `jr-notary` notary profile, **0** self-hosted runners, and no repo variables or secrets. Nothing is provisioned. The owner has the certificate available in their Apple account and intends to bring it over.
+- **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either). **#50 needs a decision before code**: preserving the LGPL relink right means picking one of dynamic linking, shipping object files, or a written offer. That is a licensing call, not an implementation one.
+- **Product** — #54 (Fish bills ~10 sentences per Play with no warning and no stop button). The only remaining blocker an agent can finish unaided; estimated ~4h.
+
+Cleared off this milestone during the session: #49, #52, #53, and **#51**.
+
+**What #66 changed about the release, and why the first dry run is now worth running.**
+`release.yml` runs the real gate before it builds anything publishable, and its timeout has
+headroom for a slow notarization. Both halves are shipped but **unproven** — the `ci.yml` side is
+exercised on every PR, the `release.yml` side cannot be until the pipeline runs at all. Do not
+read #66 as "the release pipeline works"; read it as "the first dry run will now tell you
+something".
 
 **Cleared 2026-08-22** — the whole first-run download chain, in one day. #52, made visible and
 cancellable ([PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86), `ebea718`);
@@ -906,12 +973,20 @@ found by the one before it. Then two more the same day, off the milestone: **#76
 chapter-export panel forgot its voice,
 [PR #93](https://github.com/johnnylibretexts/libretexts-reader/pull/93), `d9a3b6d`) and **#62**
 (four silent error swallows,
-[PR #94](https://github.com/johnnylibretexts/libretexts-reader/pull/94), `b6ebb17`). Six issues,
-five PRs. All are written up under "Session of 2026-08-22" in Recently Landed.
+[PR #94](https://github.com/johnnylibretexts/libretexts-reader/pull/94), `b6ebb17`). Then the
+release thread: **#66** (release.yml ran no tests,
+[PR #96](https://github.com/johnnylibretexts/libretexts-reader/pull/96), `66e8727`) and **#51**
+(licence and attribution surfaced and tagged,
+[PR #97](https://github.com/johnnylibretexts/libretexts-reader/pull/97), `22a2af5`).
 
-**#62's AC 2 was never amended.** The ticket is closed, but its text still asks a prefetch
-failure to "tell the reader why playback stopped" — which does not happen, and building it
-would be a regression. If it is ever reopened, read the premise comment on it first.
+**Eight issues, ten PRs, every CI run green first try.** Tests went 209 Rust / 203 frontend to
+226 / 240. All are written up under "Session of 2026-08-22" in Recently Landed.
+
+**Three tickets have now been wrong about their own premise: #30, #62 and #66.** All three were
+caught by reproducing before implementing, and #62 and #66 were corrected on the ticket itself —
+#62's AC 2 and #66's AC 3 now read as what actually landed, with the original struck through and
+dated. **Reproduce first. It is three for three that the ticket text, not the code, was the
+thing at fault.**
 
 **`SupertonicDownloadCancel` is no longer managed state** — `SupertonicDownload` is, and it owns
 both the cancel flag and the single download slot. Read the #88 entry before touching either.
