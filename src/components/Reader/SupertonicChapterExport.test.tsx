@@ -31,6 +31,7 @@ vi.mock("../../lib/tauri", () => ({
 const { SupertonicChapterExport } = await import("./SupertonicChapterExport");
 const { usePlayerStore } = await import("../../stores/player");
 const { useSettingsStore } = await import("../../stores/settings");
+const { useChapterExportStore } = await import("../../stores/chapterExport");
 
 const DOCUMENT: Domain.Document = {
   id: "doc-1",
@@ -94,6 +95,14 @@ describe("SupertonicChapterExport", () => {
     vi.clearAllMocks();
     setSetting.mockResolvedValue(undefined);
     seedReader();
+    // The export drafts outlive an unmount on purpose -- that is the point of
+    // the store -- so they also outlive a test. No test below currently
+    // depends on this (checked: the file passes without it, in order and
+    // shuffled), because every test that reads Voice either picks it or
+    // asserts a value that survives anyway. It is here so the next test
+    // written does not have to discover that, the same way `hydrateFailed` is
+    // reset above.
+    useChapterExportStore.getState().reset();
     useSettingsStore.setState({
       hydrated: true,
       // Reset explicitly: one test sets this true, and the store is shared
@@ -175,6 +184,37 @@ describe("SupertonicChapterExport", () => {
     });
 
     expect(screen.getByLabelText("Voice")).toHaveValue("F3");
+  });
+
+  it("remembers its export voice across a trip out of the Reader", async () => {
+    // `AppShell` switch-renders routes, so stepping out to the Library
+    // unmounts this panel outright. Voice lived in `useState` and the "has
+    // the reader picked?" flag beside it in a `useRef`, so both reset on the
+    // way back -- the seeding effect ran again and replaced the pick with the
+    // app's reading voice, displaying it as though the reader chose it.
+    estimateSupertonicChapter.mockResolvedValue(estimate());
+    const user = userEvent.setup();
+    const reader = render(<SupertonicChapterExport />);
+
+    await user.selectOptions(await screen.findByLabelText("Voice"), "F3");
+    reader.unmount();
+    render(<SupertonicChapterExport />);
+
+    expect(await screen.findByLabelText("Voice")).toHaveValue("F3");
+  });
+
+  it("remembers its export language across a trip out of the Reader", async () => {
+    // Its own flag, not one shared with Voice: a single "chosen" flag would
+    // freeze Language on whatever it held the moment Voice was touched.
+    estimateSupertonicChapter.mockResolvedValue(estimate());
+    const user = userEvent.setup();
+    const reader = render(<SupertonicChapterExport />);
+
+    await user.selectOptions(await screen.findByLabelText("Language"), "ko");
+    reader.unmount();
+    render(<SupertonicChapterExport />);
+
+    expect(await screen.findByLabelText("Language")).toHaveValue("ko");
   });
 
   it("never prices the chapter for the drafts a retry is replacing", async () => {

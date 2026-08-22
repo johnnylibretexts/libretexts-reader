@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, FileAudio, Loader2, Play, RefreshCw } from "lucide-react";
 import {
   SUPERTONIC_LANGUAGES,
@@ -10,16 +10,13 @@ import {
 import { displayError } from "../../lib/errors";
 import { SPEECH_ENGINE_LABELS, speechAudioToBlob } from "../../lib/speech";
 import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
+import {
+  useChapterExportStore,
+  type SeedSignal,
+} from "../../stores/chapterExport";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
 import { requiresExportConfirmation } from "./exportGate";
-
-/**
- * The settings snapshot the export drafts were seeded from: the reader's
- * stored rows, or the built-ins the store reports while a load has failed.
- * `null` before either exists.
- */
-type SeedSignal = "defaults" | "stored" | null;
 
 export function SupertonicChapterExport() {
   const document = usePlayerStore((state) => state.document);
@@ -37,9 +34,21 @@ export function SupertonicChapterExport() {
   const settingsHydrated = useSettingsStore((state) => state.hydrated);
   const settingsFailed = useSettingsStore((state) => state.hydrateFailed);
 
-  const [voiceStyle, setVoiceStyle] =
-    useState<SupertonicVoiceStyle>(defaultVoiceStyle);
-  const [language, setLanguage] = useState<SupertonicLanguage>(defaultLanguage);
+  const chosenVoiceStyle = useChapterExportStore((state) => state.voiceStyle);
+  const chosenLanguage = useChapterExportStore((state) => state.language);
+  const chooseVoiceStyle = useChapterExportStore(
+    (state) => state.chooseVoiceStyle,
+  );
+  const chooseLanguage = useChapterExportStore((state) => state.chooseLanguage);
+  // Falling back during render, not seeding early: the panel renders in the
+  // same commit hydration lands, one commit before the effect below seeds, and
+  // a `<select>` handed `null` there would go uncontrolled and blank. This
+  // shows the app voice for that commit exactly as the old `useState`
+  // initialiser did -- and deliberately does not make `seeded` true, so the
+  // estimate still waits for a real seed rather than pricing the chapter for
+  // a fallback.
+  const voiceStyle: SupertonicVoiceStyle = chosenVoiceStyle ?? defaultVoiceStyle;
+  const language: SupertonicLanguage = chosenLanguage ?? defaultLanguage;
   const [estimate, setEstimate] = useState<SupertonicChapterEstimate | null>(
     null,
   );
@@ -127,37 +136,28 @@ export function SupertonicChapterExport() {
     : settingsFailed
       ? "defaults"
       : "stored";
-  const [seededFrom, setSeededFrom] = useState<SeedSignal>(null);
+  const seededFrom = useChapterExportStore((state) => state.seededFrom);
   const seeded = seedSignal !== null && seededFrom === seedSignal;
-  // One flag per draft: they are independent picks, and a shared one would
-  // make re-seeding all-or-nothing -- touching Voice would freeze Language on
-  // whatever it happened to hold.
-  const voiceChosen = useRef(false);
-  const languageChosen = useRef(false);
+  const seed = useChapterExportStore((state) => state.seed);
   useEffect(() => {
     if (seedSignal === null) {
       return;
     }
-    const settings = useSettingsStore.getState();
-    // Never over a pick the reader made themselves. This panel renders during
-    // a failed load -- with a notice saying the dropdowns are defaults -- so
-    // they can choose there, and a retry that finally brings the real rows in
-    // would otherwise replace that choice with no indication, right before
-    // they click Generate.
-    if (!voiceChosen.current) {
-      setVoiceStyle(settings.supertonicVoiceStyle);
-    }
-    if (!languageChosen.current) {
-      setLanguage(settings.supertonicLanguage);
-    }
-    setSeededFrom(seedSignal);
+    // Never over a pick the reader made themselves -- `seed` leaves a chosen
+    // draft alone, one flag per draft. This panel renders during a failed load
+    // (with a notice saying the dropdowns are defaults) so they can choose
+    // there, and a retry that finally brings the real rows in would otherwise
+    // replace that choice with no indication, right before they click
+    // Generate. The same flags are what stop a remount from re-seeding over a
+    // pick made before a trip out of the Reader.
+    seed(seedSignal, useSettingsStore.getState());
     // A retry from Settings changes `seedSignal` from "defaults" to "stored",
     // which is what re-seeds these drafts with the reader's real rows;
     // `settingsHydrated` is already true by then and would never fire this
     // again on its own. The panel still renders on the failure path -- see
     // the notice below -- so this seeds the defaults meanwhile rather than
     // leaving it blank.
-  }, [seedSignal]);
+  }, [seed, seedSignal]);
 
   // A provider or section change invalidates any confirmation already on
   // screen -- it named a character count and provider that no longer apply.
@@ -482,8 +482,7 @@ export function SupertonicChapterExport() {
               <select
                 className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
                 onChange={(event) => {
-                  voiceChosen.current = true;
-                  setVoiceStyle(event.target.value as SupertonicVoiceStyle);
+                  chooseVoiceStyle(event.target.value as SupertonicVoiceStyle);
                 }}
                 value={voiceStyle}
               >
@@ -500,8 +499,7 @@ export function SupertonicChapterExport() {
               <select
                 className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
                 onChange={(event) => {
-                  languageChosen.current = true;
-                  setLanguage(event.target.value as SupertonicLanguage);
+                  chooseLanguage(event.target.value as SupertonicLanguage);
                 }}
                 value={language}
               >
