@@ -122,7 +122,18 @@ fn check_updater_pubkey() {
             .get("plugins")
             .and_then(|plugins| plugins.get("updater"))
     });
-    // No updater plugin configured -> nothing to guard.
+    // No updater block -> nothing here to inspect, so this returns rather than
+    // failing. That is deliberate, and it is also the limit of what this guard
+    // can do: it sees the *configuration*, so it catches a block whose pubkey is
+    // missing or still the placeholder, and cannot catch the plugin being added
+    // as a dependency with no block written at all. Nothing in this file can --
+    // build.rs has no view of the dependency graph.
+    //
+    // `scripts/ci/check-updater-key.sh` closes that case from the other side: it
+    // fails when `tauri-plugin-updater` is a dependency without a real pubkey
+    // configured, and runs in the shared gate both ci.yml and release.yml call.
+    // Do not weaken this into failing on a missing block -- the updater is
+    // deliberately absent in v0.1.0, so that would fail every build today.
     if updater.is_none() {
         return;
     }

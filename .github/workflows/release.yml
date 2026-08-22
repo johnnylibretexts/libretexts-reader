@@ -18,10 +18,25 @@ permissions:
   contents: write
 
 jobs:
+  # The same gate ci.yml runs, not a copy of it. A tag can point at any commit --
+  # the stale local v0.1.0-beta was proof (#49) -- so without this the release
+  # path could publish a tree nothing had ever validated. It runs on Linux, off
+  # the release Mac, so a ~35 minute gate does not eat the build job's budget.
+  verify:
+    if: github.repository == 'johnnylibretexts/libretexts-reader'
+    uses: ./.github/workflows/verify.yml
+
   release:
+    needs: verify
     if: github.repository == 'johnnylibretexts/libretexts-reader'
     runs-on: [self-hosted, macos, release]
-    timeout-minutes: 60
+    # 60 was too tight for what this job does: a cold `cargo build --release`
+    # including ort's ~73MB ONNX Runtime fetch, then a second full Tauri build,
+    # then `notarytool submit --wait`, which Apple answers anywhere between 5 and
+    # 40 minutes. Hitting the timeout burns the tag and forces a delete-and-
+    # re-push, so the headroom is worth more than an early cancel: a genuinely
+    # hung job is still bounded, just not tightly.
+    timeout-minutes: 120
     env:
       APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -91,7 +106,11 @@ jobs:
           source "$HOME/.nvm/nvm.sh"; nvm use 22.20.0
           source "$HOME/.cargo/env"
           export APPLE_SIGNING_IDENTITY
-          export LIBRETEXTS_READER_REQUIRE_UPDATER_KEY=1   # fail-closed safety belt (no-op today)
+          # Fails the build if plugins.updater exists with a missing or placeholder
+          # pubkey. It cannot catch the plugin being added with no config block
+          # at all -- build.rs returns early there -- which is what
+          # scripts/ci/check-updater-key.sh covers, in the gate above.
+          export LIBRETEXTS_READER_REQUIRE_UPDATER_KEY=1
           npm run tauri:build
 
       - name: Locate DMG
