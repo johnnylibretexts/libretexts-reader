@@ -6,7 +6,7 @@ Last updated: 2026-08-22
 > repo staying private. The gating work is the **`Private beta` milestone** on the tracker
 > — run `gh issue list --milestone "Private beta"` for the live list, and see "The plan: a
 > private beta" under Known Limitations for the shape of
-> it and what the decision retired. The app itself is in good health: 221 Rust and 226
+> it and what the decision retired. The app itself is in good health: 221 Rust and 236
 > frontend tests green, and `npm run tauri:build` produced a real DMG for the first time on
 > 2026-08-21. What is missing is release process, not code.
 
@@ -109,13 +109,18 @@ Copying only the project folder will not copy the local library, downloaded book
 
 ## Recently Landed
 
-### Session of 2026-08-22 — the first-run download, fixed end to end
+### Session of 2026-08-22 — the first-run download, then five silent failures
 
-Three PRs against the one thing a fresh install hits before it can play a word: the 383 MB
-Supertonic fetch from `huggingface.co`. It now reports real progress, can be cancelled, resumes
-instead of restarting, and can only ever have one instance running. **Each ticket was found by
-the one before it** — making the download cancellable is what made losing a partial reachable on
-purpose, and making it resumable is what put the shared cancel flag under real scrutiny.
+Five PRs, six issues closed, in two threads.
+
+**Thread one: the 383 MB Supertonic fetch from `huggingface.co`** — the one thing a fresh install
+hits before it can play a word. It now reports real progress, can be cancelled, resumes instead
+of restarting, and can only ever have one instance running. **Each ticket was found by the one
+before it** — making the download cancellable is what made losing a partial reachable on purpose,
+and making it resumable is what put the shared cancel flag under real scrutiny.
+
+**Thread two: things that failed without saying so** — a forgotten export voice (#76) and four
+swallowed errors (#62). Written up after the download thread below.
 
 **#52 → [PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86)** (`ebea718`) —
 the first Play fetched 383 MB behind one static string with all eight playback controls
@@ -216,6 +221,54 @@ a concurrency test unbounded in this repo.
 managed type compiles clean either way, so every `State<'_, T>` any command takes was audited
 against `lib.rs` by hand. If you add or change managed state, do that audit — the test suite will
 not do it for you.
+
+**#76 → [PR #93](https://github.com/johnnylibretexts/libretexts-reader/pull/93)** (`d9a3b6d`) —
+`AppShell` switch-renders routes, so a trip to the Library unmounts the Reader outright and the
+chapter-export panel's Voice and Language went with it. A new `chapterExport` store holds them
+for the session. Deliberately **not** the `supertonic_voice_style` / `supertonic_language` rows:
+the panel used to write those, and once playback started reading them that write switched the
+narration of the book open in the same view, mid-chapter. #60 removed it and this does not bring
+it back.
+
+**Moving the drafts alone would have fixed nothing**, which is the part worth remembering.
+`voiceChosen` / `languageChosen` were `useRef`s and `seededFrom` was `useState`; all three reset
+on unmount, so the seeding effect ran again on the way back and overwrote the remembered pick.
+State that decides *whether* to re-seed has to outlive the component exactly as far as the values
+it guards. The `seedSignal`-computed-during-render rule from #78 is unchanged, and `voiceStyle`
+now falls back to the app default during render so the `<select>` cannot go uncontrolled in the
+commit hydration lands — a fallback that deliberately does **not** make `seeded` true.
+
+**#62 → [PR #94](https://github.com/johnnylibretexts/libretexts-reader/pull/94)** (`b6ebb17`) —
+four `catch` sites that disabled something durable with no sign. Three were as reported. The
+fourth was not, and **the ticket is now the third on this repo to be wrong about its own
+premise** — see the [premise comment](https://github.com/johnnylibretexts/libretexts-reader/issues/62#issuecomment-5382266557),
+posted before any code was written.
+
+- **Two dead subscriptions** (import progress, library auto-refresh) swallowed a failed
+  `listen()`. Both now **guard on `isTauriRuntime()` first** — `listen` rejects in every jsdom
+  test and any `vite` preview, and that is a missing runtime rather than a failure. Removing the
+  swallow without the guard puts an error banner in front of every test run. Inside Tauri a
+  rejection sets the store's existing `error`, which `ImportStatus` and `Library/Grid` already
+  render, so no new components were needed.
+- **The library subscription moved out of `AppShell` into the library store**, beside
+  `attachImportListener`. A subscription belongs with the store it writes; as a component effect
+  it also had no seam a test could reach.
+- **The LibreTexts library filter** emptied its dropdown on failure, reading as "this Source has
+  no libraries". It needed **its own** error state — the existing one is cleared at the top of
+  every debounced catalog fetch, so a keystroke would have wiped the message.
+- **The player was misdiagnosed.** `player.ts:751` (the ticket said 548; the file grew when #86
+  landed) is in the *read-ahead worker*, not the playing path. Auto-advance re-enters
+  `speakWithBufferedSpeech`, whose catch already stops playback, shows the reason and offers the
+  Fish switch — so playback never silently stopped. The real defect was that one bad sentence
+  ended the entire read-ahead; `return` became `continue`. **Nothing is reported from there on
+  purpose**: surfacing a prefetch failure would stop playback that recovers on its own, which is
+  what AC 2 literally asked for. That AC is still unamended on the closed ticket.
+
+Two testing notes from #62 worth reusing. `createFakeEngine` gained **`failSynthesisFor`**,
+because the existing `failSynthesis` is all-or-nothing and its own comment described the bug it
+could not express. And **at a prefetch concurrency of 2 a single failure is invisible** — the
+other worker absorbs it — so the test fails a contiguous run and asserts on the stranded tail.
+Run 8× for stability, given #32.
 
 ### Session of 2026-08-21 — five PRs, four issues closed
 
@@ -689,7 +742,7 @@ OpenStax MathML is encoded as `[[mathml:<base64>]]` tokens during import, render
 ## Testing And Verification
 
 Current counts on `main`: **221 Rust tests** (3 ignored — the live network import smoke plus
-two others) and **226 frontend tests across 22 files**. Counts drift — run the suites rather than trusting these.
+two others) and **236 frontend tests across 23 files**. Counts drift — run the suites rather than trusting these.
 
 These commands were green before handoff:
 
@@ -837,7 +890,8 @@ working list and is authoritative over this paragraph** — run
 `gh issue list --milestone "Private beta"` rather than trusting what follows, which is a
 snapshot and will drift.
 
-Open as of 2026-08-22 — **four left, and every one of them is a release blocker**:
+Open as of 2026-08-22 — **twelve on the tracker, four on this milestone, and all four are
+release blockers**:
 
 - **Release mechanics** — #48 (the pipeline has *never* run: no runner registered, no `APPLE_SIGNING_IDENTITY`, and the Developer ID cert is not on the dev machine — **find the release Mac first**, everything else here assumes it).
 - **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either), #51 (imported books' licence and attribution are stored and displayed nowhere, including in exported MP3s).
@@ -848,8 +902,16 @@ cancellable ([PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull
 #87, made resumable ([PR #89](https://github.com/johnnylibretexts/libretexts-reader/pull/89),
 `5135ded`); and #88, made single-flight
 ([PR #91](https://github.com/johnnylibretexts/libretexts-reader/pull/91), `0585e1c`). Each was
-found by the one before it. All three are written up under "Session of 2026-08-22" in Recently
-Landed.
+found by the one before it. Then two more the same day, off the milestone: **#76** (the
+chapter-export panel forgot its voice,
+[PR #93](https://github.com/johnnylibretexts/libretexts-reader/pull/93), `d9a3b6d`) and **#62**
+(four silent error swallows,
+[PR #94](https://github.com/johnnylibretexts/libretexts-reader/pull/94), `b6ebb17`). Six issues,
+five PRs. All are written up under "Session of 2026-08-22" in Recently Landed.
+
+**#62's AC 2 was never amended.** The ticket is closed, but its text still asks a prefetch
+failure to "tell the reader why playback stopped" — which does not happen, and building it
+would be a regression. If it is ever reopened, read the premise comment on it first.
 
 **`SupertonicDownloadCancel` is no longer managed state** — `SupertonicDownload` is, and it owns
 both the cancel flag and the single download slot. Read the #88 entry before touching either.
