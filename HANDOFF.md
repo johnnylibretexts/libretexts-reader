@@ -5,7 +5,8 @@ Last updated: 2026-08-23
 > **The private beta is cut.** [**v0.1.0-beta.1**](https://github.com/johnnylibretexts/libretexts-reader/releases/tag/v0.1.0-beta.1)
 > is published as a GitHub pre-release — signed, notarized, stapled, and produced by
 > `release.yml` running unattended from a tag. The **`Private beta` milestone is 11/11
-> closed**. Hand the DMG to fewer than ten named testers; the repo stays private.
+> closed**. **The repo went public at v0.1.0-beta.2** -- every passage below
+> saying otherwise predates that and is stale.
 >
 > **The release pipeline works — say so.** Every older passage claiming otherwise has been
 > corrected, but if you find one that was missed, it is stale, not news. See "Release: the
@@ -1146,8 +1147,8 @@ tracker.**
 ### The plan: a private beta (decided 2026-08-20)
 
 **Shape:** fewer than ten named testers, all reachable by email, given access to this
-private repo and a Release published here. The build **is** signed and notarized. The repo
-stays private; going public is a separate, later decision.
+private repo and a Release published here. The build **is** signed and notarized. (The
+repo went public at v0.1.0-beta.2 -- this passage describes the private-beta cut.)
 
 The issues that gate it carry the **`Private beta` milestone**. **That milestone is the
 working list and is authoritative over this paragraph** — run
