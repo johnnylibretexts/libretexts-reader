@@ -23,7 +23,7 @@ pub enum AppError {
     Readability(#[from] readability::error::Error),
 
     #[error("epub error: {0}")]
-    Epub(#[from] epub::doc::DocError),
+    Epub(String),
 
     #[error("pdf error: {0}")]
     Pdf(String),

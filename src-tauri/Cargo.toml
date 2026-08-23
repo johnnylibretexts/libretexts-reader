@@ -43,7 +43,6 @@ sha2 = "0.10"
 reqwest = { version = "0.12", features = ["rustls-tls", "json", "gzip", "stream"], default-features = false }
 
 pdfium-render = { version = "0.8", features = ["sync"] }
-epub = "2.1"
 readability = "0.3"
 scraper = "0.20"
 zip = "3.0"
@@ -74,6 +73,7 @@ unicode-segmentation = "1.12"
 unicode-normalization = "0.1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 async-trait = "0.1"
+rbook = "0.7.10"
 
 # Test-only. Neither crate is reachable from the built application: cargo does
 # not compile dev-dependencies into the lib or bin targets, so nothing here

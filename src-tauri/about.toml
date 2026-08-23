@@ -17,12 +17,6 @@ accepted = [
     "Apache-2.0",
     # A certificate-data bundle (webpki-roots), permissive.
     "CDLA-Permissive-2.0",
-    # NOT an endorsement. The `epub` crate is GPL-3.0 and is linked into a
-    # binary distributed under Apache-2.0, which is a licence-compatibility
-    # problem rather than an attribution one -- tracked in #107. Listed here
-    # so the generated notice states the fact plainly instead of the generator
-    # refusing to describe the app as it actually ships.
-    "GPL-3.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
