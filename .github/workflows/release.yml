@@ -123,15 +123,99 @@ jobs:
           test -f "$DMG"
           echo "path=$DMG" >> "$GITHUB_OUTPUT"
 
-      - name: Notarize, staple, verify
+      # Pass 1 of 2. Notarizing the DMG also notarizes the .app inside it, and
+      # that is what makes a ticket available to staple onto the .app below.
+      # Nothing needs signing here -- `npm run tauri:build` already codesigned
+      # both the .app and this DMG.
+      - name: Notarize, and staple the .app (pass 1)
         if: steps.meta.outputs.dry_run != 'true'
         run: |
           set -euo pipefail
-          DMG="${{ steps.dmg.outputs.path }}"
-          xcrun notarytool submit "$DMG" --keychain-profile jr-notary --wait
-          xcrun stapler staple "$DMG"
+          xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
+            --keychain-profile jr-notary --wait
           xcrun stapler staple "target/release/bundle/macos/LibreTexts Reader.app"
+
+      # Pass 2 of 2 -- #102. Tauri bundles the DMG from the .app BEFORE anything
+      # is stapled, so pass 1 on its own ships a DMG whose inner .app has no
+      # ticket. That build is not broken (Gatekeeper fetches the ticket over the
+      # network) but a tester whose FIRST LAUNCH IS OFFLINE sees "cannot be
+      # verified". Rebuilding the image around the now-stapled .app closes it.
+      #
+      # Runs on dry runs too, minus the notarizing: a dry run is the rehearsal
+      # this pipeline gets (#48), and rehearsing pass 1 while skipping the step
+      # that rebuilds and re-signs the shipped artifact would rehearse the wrong
+      # half. Nothing is published either way.
+      - name: Rebuild the DMG around the stapled .app (pass 2)
+        run: |
+          set -euo pipefail
+          ID="$APPLE_SIGNING_IDENTITY"
+          if [ -z "$ID" ]; then echo "APPLE_SIGNING_IDENTITY variable is not set" >&2; exit 1; fi
+          ROOT="$PWD"
+          DMG="${{ steps.dmg.outputs.path }}"
+
+          STAGE="$(mktemp -d)"
+          ditto "$ROOT/target/release/bundle/macos/LibreTexts Reader.app" \
+            "$STAGE/LibreTexts Reader.app"
+
+          # Build under the CANONICAL filename: codesign derives the signature
+          # Identifier from the file name, and it has to match what tauri:build
+          # produced ("LibreTexts Reader_<version>_aarch64").
+          BUILDDIR="$(mktemp -d)"
+          NEW="$BUILDDIR/$(basename "$DMG")"
+          cd "$ROOT/target/release/bundle/dmg"
+          # --skip-jenkins is explicit here. CI=true only reaches this script when
+          # the Tauri bundler invokes it; called directly, the flag is ours to pass,
+          # and without it the run dies in Finder AppleScript on a headless runner.
+          ./bundle_dmg.sh \
+            --volname "LibreTexts Reader" --icon "LibreTexts Reader.app" 180 170 \
+            --app-drop-link 480 170 --window-size 660 400 \
+            --hide-extension "LibreTexts Reader.app" --volicon "icon.icns" \
+            --skip-jenkins "$NEW" "$STAGE"
+          cd "$ROOT"
+
+          # codesign BEFORE notarizing, always. tauri:build signs the .dmg for you;
+          # a DMG built by hand from bundle_dmg.sh is NOT signed, and an unsigned
+          # DMG notarizes and staples perfectly happily while spctl still rejects
+          # it with "no usable signature". Signing afterwards is not a fix either --
+          # it rewrites the file and voids the ticket.
+          codesign --force --sign "$ID" --timestamp "$NEW"
+          # Cheap and local. Do it before the 5-40 minute round trip, not after.
+          codesign --verify --strict "$NEW"
+
+          if [ "${{ steps.meta.outputs.dry_run }}" != "true" ]; then
+            xcrun notarytool submit "$NEW" --keychain-profile jr-notary --wait
+            xcrun stapler staple "$NEW"
+          fi
+          mv -f "$NEW" "$DMG"
+
+      # The check #102 exists for. spctl uses the NETWORK, so it reports
+      # "accepted / Notarized Developer ID" for an unstapled app and is
+      # structurally unable to catch this bug -- only `stapler validate` can.
+      # That is why both run, and why the inner-app check is not optional.
+      - name: Verify the shipped artifact
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.path }}"
+          codesign -dvv "$DMG" 2>&1 | grep "Authority=Developer ID Application" \
+            || { echo "DMG is not Developer-ID signed" >&2; exit 1; }
+          codesign --verify --strict "$DMG"
+
+          if [ "${{ steps.meta.outputs.dry_run }}" = "true" ]; then
+            echo "dry run: signature verified, skipping notarization checks"
+            exit 0
+          fi
+
+          xcrun stapler validate "$DMG"
           spctl -a -t open --context context:primary-signature -vvv "$DMG"
+
+          MNT="$(mktemp -d)"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null
+          trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
+          # Fails loudly with "does not have a ticket stapled to it" if pass 2
+          # ever regresses.
+          xcrun stapler validate "$MNT/LibreTexts Reader.app"
+          codesign --verify --deep --strict "$MNT/LibreTexts Reader.app"
+          spctl -a -t exec -vvv "$MNT/LibreTexts Reader.app"
 
       - name: Publish GitHub Release
         if: steps.meta.outputs.dry_run != 'true' && github.event_name == 'push'

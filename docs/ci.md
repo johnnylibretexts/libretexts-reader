@@ -10,7 +10,8 @@ Two workflows live in `.github/workflows/`:
   `release`), triggered only by pushing a `vX.Y.Z` tag (or a manual dry-run). It
   builds, Developer-ID-signs the bundled native libs, runs `tauri build`,
   notarizes with the local `jr-notary` profile, staples, and publishes a GitHub
-  Release with the DMG + SHA-256.
+  Release with the DMG + SHA-256. **It notarizes twice, on purpose** — see
+  "Why the release notarizes twice" below.
 
 ## Why self-hosted, and the security rules
 
@@ -92,7 +93,39 @@ GitHub **pre-release**; a plain `vX.Y.Z` becomes a full release.
 ## Dry run / testing
 
 - `workflow_dispatch` with `dry_run: true` (Actions tab → Release → Run workflow)
-  builds + Developer-ID-signs but skips notarize/publish.
+  builds + Developer-ID-signs but skips notarize/publish. It **does** still run
+  the pass-2 DMG rebuild and re-sign, so the dry run rehearses the artifact that
+  actually ships rather than only the half that precedes it.
+
+## Why the release notarizes twice
+
+Tauri bundles the DMG from the `.app` *before* anything is stapled. Notarize
+once and staple in the obvious order and you ship a DMG whose inner `.app` —
+the only copy anyone installs — has no ticket:
+
+```
+$ xcrun stapler validate "/Volumes/LibreTexts Reader/LibreTexts Reader.app"
+LibreTexts Reader.app does not have a ticket stapled to it.
+```
+
+Gatekeeper still accepts it by fetching the ticket over the network, so this is
+invisible until a tester's **first launch is offline** and they get "cannot be
+verified". `release.yml` therefore runs: notarize → staple the `.app` → rebuild
+the DMG around it → **codesign** → notarize → staple.
+
+Two traps live in those steps, both load-bearing:
+
+- **`spctl` uses the network**, so it reports `accepted / Notarized Developer ID`
+  for an unstapled app and cannot detect this at all. Only `stapler validate`
+  can. The "Verify the shipped artifact" step runs both, and validates the `.app`
+  *inside* the mounted DMG so the bug cannot silently return.
+- **`tauri:build` codesigns the `.dmg`; `bundle_dmg.sh` does not.** The rebuilt
+  image must be signed before it is notarized — signing afterwards rewrites the
+  file and voids the ticket. An unsigned DMG notarizes and staples happily and
+  then fails `spctl` with `no usable signature`.
+
+See #102 and `RELEASE.md` §2, which documents the same sequence for the manual
+fallback path.
 - Full end-to-end test: push a throwaway `v0.0.0-citest` tag (auto-detected as a
   pre-release) with the runner up, verify the release is created, then delete the
   test release and tag.
