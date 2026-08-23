@@ -16,15 +16,33 @@ Two workflows live in `.github/workflows/`:
 ## Why self-hosted, and the security rules
 
 The signing certificate and the `jr-notary` notarization profile live in the
-release Mac's keychain, so building there keeps all secrets off GitHub. Because
-this repo is **public**, a self-hosted runner is only safe under these rules
-(enforced by the workflow — do not weaken them):
+release Mac's keychain, so building there keeps all secrets off GitHub.
+
+**This repo is private** (decided in #56) and has no forks. An earlier version of
+this file said "because this repo is **public**" and used that as the reason the
+rules below exist — that was simply wrong, and the correction matters in both
+directions: the fork-PR attack the public framing worried about cannot happen
+here, and yet every rule below still stands. They are kept because of what a
+self-hosted runner *is*, not because of who can see the repo:
+
+- A self-hosted runner has **no job-level isolation**. It is a real Mac with a
+  Developer ID signing key and a notarization profile in its login keychain. Any
+  workflow that can schedule a job onto it can use that key.
+- Visibility limits *who* can trigger a workflow. It does not limit what a
+  triggered workflow can do once it lands on that Mac.
+- If this repo is ever made public, the rules have to already be in place.
+  Discovering them at that moment is too late.
+
+So, unchanged and not to be weakened:
 
 - `release.yml` triggers **only** on `v*` tag pushes and `workflow_dispatch`.
-  Never `pull_request`. Tags require write access, so the runner never executes
-  code from a fork PR.
+  Never `pull_request`. Both require write access, so the runner never executes
+  code from an untrusted branch.
 - Only `release.yml` uses the `release` runner label. Never add that label to any
-  other (especially PR-triggered) workflow.
+  other (especially PR-triggered) workflow. **This is the rule most likely to be
+  broken by accident**, it is the one that would silently hand a future
+  PR-triggered workflow the signing Mac, and it does not depend on visibility at
+  all.
 - Run the runner **on-demand / ephemeral** — register and start it when cutting a
   release, and let it remove itself afterward. Do not leave it idling 24/7. Note
   that with `--ephemeral` "start it again" means **re-register**, not just re-run
