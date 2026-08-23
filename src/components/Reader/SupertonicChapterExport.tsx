@@ -8,7 +8,11 @@ import {
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
 import { displayError } from "../../lib/errors";
-import { SPEECH_ENGINE_LABELS, speechAudioToBlob } from "../../lib/speech";
+import {
+  SPEECH_ENGINE_EXPORT_FORMAT,
+  SPEECH_ENGINE_LABELS,
+  speechAudioToBlob,
+} from "../../lib/speech";
 import { api, type SupertonicChapterEstimate } from "../../lib/tauri";
 import {
   useChapterExportStore,
@@ -89,6 +93,8 @@ export function SupertonicChapterExport() {
   );
   const isFish = ttsProvider === "fish";
   const providerLabel = SPEECH_ENGINE_LABELS[ttsProvider];
+  // What the reader will actually receive -- see SPEECH_ENGINE_EXPORT_FORMAT.
+  const exportFormat = SPEECH_ENGINE_EXPORT_FORMAT[ttsProvider];
   // Fish has no sensible built-in voice (see FishProvider::voice in
   // src-tauri/src/tts/fish/provider.rs), so a request is only sent once one
   // is configured -- matching the backend's own guard rather than racing it.
@@ -280,7 +286,9 @@ export function SupertonicChapterExport() {
     setExporting(true);
     setError(null);
     setStatus(
-      force ? "Regenerating chapter MP3..." : "Generating chapter MP3...",
+      force
+        ? `Regenerating chapter ${exportFormat}...`
+        : `Generating chapter ${exportFormat}...`,
     );
 
     try {
@@ -302,7 +310,7 @@ export function SupertonicChapterExport() {
       });
       setEstimate(result.estimate);
       setStatus(
-        `${result.cached ? "Loaded cached MP3" : "Saved MP3"}: ${result.outputPath}`,
+        `${result.cached ? `Loaded cached ${exportFormat}` : `Saved ${exportFormat}`}: ${result.outputPath}`,
       );
     } catch (error) {
       setError(displayError(error));
@@ -412,7 +420,7 @@ export function SupertonicChapterExport() {
         <div className="min-w-0">
           <h2 className="inline-flex items-center gap-2 text-base font-semibold">
             <FileAudio className="size-4 text-brand-700" aria-hidden="true" />
-            {providerLabel} chapter MP3
+            {providerLabel} chapter {exportFormat}
           </h2>
           <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
             {section.title}
@@ -469,7 +477,7 @@ export function SupertonicChapterExport() {
         // ones in Settings, so the difference has to be said rather than
         // inferred.
         <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-          These apply to this MP3 only. The voice you are listening in is in
+          These apply to this {exportFormat} only. The voice you are listening in is in
           Settings.
         </p>
       )}
@@ -542,7 +550,9 @@ export function SupertonicChapterExport() {
           ) : (
             <FileAudio className="size-4" aria-hidden="true" />
           )}
-          {estimate?.cached ? "Save Cached MP3" : "Generate MP3"}
+          {estimate?.cached
+            ? `Save Cached ${exportFormat}`
+            : `Generate ${exportFormat}`}
         </button>
 
         <button

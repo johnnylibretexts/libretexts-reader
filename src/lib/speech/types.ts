@@ -41,6 +41,23 @@ export const SPEECH_ENGINE_BILLS: Record<SpeechEngineId, boolean> = {
   fish: true,
 };
 
+/**
+ * The container each engine's chapter export arrives in.
+ *
+ * Not cosmetic: it names the file the reader receives. Supertonic encodes
+ * locally through macOS AudioToolbox since the LGPL LAME dependency was
+ * dropped, and macOS ships no MP3 *encoder*, so its exports are AAC in an M4A
+ * container. Fish returns MP3 from its API and is left alone -- re-encoding
+ * lossy audio to make the extensions match would cost quality for nothing.
+ *
+ * Mirrors `export_extension` in `src-tauri/src/tts/provider.rs`; the two must
+ * agree or a button promises a file the backend does not write. See ADR-0004.
+ */
+export const SPEECH_ENGINE_EXPORT_FORMAT: Record<SpeechEngineId, string> = {
+  supertonic: "M4A",
+  fish: "MP3",
+};
+
 export interface SpeechVoice {
   id: string;
   name: string;

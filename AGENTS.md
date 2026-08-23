@@ -15,7 +15,7 @@ cargo check -p libretexts-reader
 npm run build
 ```
 
-If a copied `target/` fails with stale absolute paths, `cargo clean -p mp3lame-sys` (or `cargo clean`) fixes it.
+If a copied `target/` fails with stale absolute paths, `cargo clean` fixes it.
 
 ## Build & Run
 
@@ -64,7 +64,7 @@ git diff --check                            # whitespace/conflict-marker gate
 - Outbound network is **allowlisted via CSP** in `src-tauri/tauri.conf.json` (`connect-src`/`img-src`: OpenStax, LibreTexts, Hugging Face model hosts, jsDelivr, GitHub). Widen it deliberately when adding a source, and keep the `assetProtocol` scope tight (`$APPDATA/covers/**`, `images/**`).
 - Bundled native binaries/models are gitignored (`src-tauri/binaries/`, `resources/pdfium/`, `resources/voices/`) — never commit them.
 - **Release builds are signed + notarized** (macOS Developer ID). `libpdfium.dylib` must be signed manually with hardened runtime before `tauri:build`, and notarization secrets are stored in a `notarytool` keychain profile — never in the shell or the repo. Full checklist: `RELEASE.md`.
-- Distributed bundles include third-party components under their own licenses (PDFium, and LAME via `mp3lame-encoder`) — notices are collected in `LICENSES/`, and `build.rs` also writes them to `src-tauri/resources/LICENSES/` so they actually ship inside the `.app`.
+- Distributed bundles include third-party components under their own licenses (PDFium; the `id3` and `mp4ameta` crates) — notices are collected in `LICENSES/`, and `build.rs` mirrors them into `src-tauri/resources/LICENSES/` so they actually ship inside the `.app`. No LGPL component is bundled any more: ffmpeg was removed unused, and LAME went with the move to AudioToolbox (ADR-0004).
 
 ## Agent skills
 

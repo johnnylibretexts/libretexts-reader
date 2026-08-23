@@ -13,17 +13,68 @@ use id3::{Frame, Tag, TagLike, Version};
 use crate::db::models::{Document, Section};
 use crate::error::{AppError, AppResult};
 
-/// Write the chapter's identity, licence and credit into the file's ID3 tags.
+/// Write the chapter's identity, licence and credit into the exported file.
 ///
-/// Tags the file rather than the bytes, because Fish returns MP3 data that may
-/// already carry a tag of its own and prepending a second one is not the same
-/// as replacing it. `id3` handles that; hand-rolling the syncsafe header would
-/// be the kind of code that is subtly wrong for years.
-pub(crate) fn tag_chapter_mp3(
+/// Dispatches on the extension because the two providers no longer share a
+/// container: Supertonic encodes AAC/M4A locally (ADR-0004) and Fish returns
+/// MP3 from its API. ID3 frames do not exist in an MP4 container, so a single
+/// tagger cannot serve both -- and writing an ID3 tag onto an M4A would
+/// corrupt it rather than fail, which is why this matches explicitly and
+/// errors on anything it does not recognise instead of guessing.
+pub(crate) fn tag_chapter_export(
     path: &Path,
     document: &Document,
     section: &Section,
 ) -> AppResult<()> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("mp3") => tag_chapter_mp3(path, document, section),
+        Some("m4a") | Some("mp4") | Some("m4b") => tag_chapter_mp4(path, document, section),
+        other => Err(AppError::Tts(format!(
+            "cannot tag an export with extension {}",
+            other.unwrap_or("(none)")
+        ))),
+    }
+}
+
+/// The MP4/M4A half: iTunes-style atoms rather than ID3 frames.
+///
+/// The frame choices mirror `tag_chapter_mp3` deliberately, so a reader who
+/// exports the same chapter through either provider gets the same facts in
+/// whatever their player calls those fields. MP4 has no dedicated copyright or
+/// source-URL atom pair matching TCOP/WOAS, so both land where a player will
+/// actually surface them.
+fn tag_chapter_mp4(path: &Path, document: &Document, section: &Section) -> AppResult<()> {
+    let mut tag = mp4ameta::Tag::read_from_path(path)
+        .map_err(|error| AppError::Tts(format!("could not read M4A tags: {error}")))?;
+
+    tag.set_album(&document.title);
+    tag.set_title(&section.title);
+
+    if let Some(license) = present(&document.license) {
+        tag.set_copyright(license);
+    }
+
+    if let Some(attribution) = present(&document.attribution) {
+        // Same polymorphism as the MP3 path: a URL for OpenStax, LibreTexts
+        // and article; an author name for Pressbooks. A URL in the artist
+        // field fills a player's artist column with a link, so it goes to the
+        // comment instead, where a long string is expected.
+        match source_url(attribution) {
+            Some(url) => tag.set_comment(url),
+            None => tag.set_artist(attribution),
+        }
+    }
+
+    tag.write_to_path(path)
+        .map_err(|error| AppError::Tts(format!("could not write M4A tags: {error}")))
+}
+
+fn tag_chapter_mp3(path: &Path, document: &Document, section: &Section) -> AppResult<()> {
     let mut tag = Tag::new();
 
     // Always known, so the tag is never empty even for a Source that supplied
@@ -198,5 +249,55 @@ mod tests {
         assert!(tag.get("WOAS").is_none());
         // The titles are always known, so the tag is never empty.
         assert_eq!(tag.album(), Some("Introduction to Philosophy"));
+    }
+
+    /// Round-trips through the real AudioToolbox encoder rather than a fake
+    /// file: mp4ameta parses the container it is handed, so a handmade stub
+    /// would test the stub. macOS-only for the same reason the encoder is.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn writes_licence_and_credit_into_an_m4a() {
+        use crate::tts::supertonic::audio::{encode_f32_to_m4a, SUPERTONIC_SAMPLE_RATE};
+
+        let samples: Vec<f32> = (0..44_100)
+            .map(|i| (i as f32 / 100.0).sin() * 0.5)
+            .collect();
+        let audio = encode_f32_to_m4a(&samples, SUPERTONIC_SAMPLE_RATE).unwrap();
+        let dir = std::env::temp_dir().join(format!("tags-m4a-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("chapter.m4a");
+        std::fs::write(&path, &audio).unwrap();
+
+        super::tag_chapter_export(
+            &path,
+            &document(Some("CC BY 4.0"), Some("Jane Author")),
+            &section(),
+        )
+        .expect("tagging an m4a should succeed");
+
+        let tag = mp4ameta::Tag::read_from_path(&path).unwrap();
+        assert_eq!(tag.album(), Some("Introduction to Philosophy"));
+        assert_eq!(tag.title(), Some("Chapter One"));
+        assert_eq!(tag.copyright(), Some("CC BY 4.0"));
+        // A plain name is an artist; a URL would go to the comment instead.
+        assert_eq!(tag.artist(), Some("Jane Author"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn refuses_a_container_it_cannot_tag() {
+        // Silently skipping would drop the licence and credit from any future
+        // format, which is the failure #97 existed to prevent.
+        let dir = std::env::temp_dir().join(format!("tags-unknown-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("chapter.ogg");
+        std::fs::write(&path, b"not audio").unwrap();
+
+        let error =
+            super::tag_chapter_export(&path, &document(None, None), &section()).unwrap_err();
+
+        assert!(format!("{error}").contains("ogg"), "unexpected: {error}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

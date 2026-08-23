@@ -8,6 +8,7 @@ export { createFishEngine } from "./fishEngine";
 export { createFakeEngine, type FakeEngine } from "./fakeEngine";
 export {
   SPEECH_ENGINE_BILLS,
+  SPEECH_ENGINE_EXPORT_FORMAT,
   SPEECH_ENGINE_LABELS,
   SpeechAbortedError,
   throwIfAborted,
