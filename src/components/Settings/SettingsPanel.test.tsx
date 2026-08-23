@@ -289,6 +289,21 @@ describe("attribution", () => {
     });
   });
 
+  it("states what the app silently does not do", async () => {
+    // Each of these generates an "it is broken" report rather than a feature
+    // request, because the app gives no sign anything is missing: a dropped
+    // table simply is not there, an equation is read approximately, and there
+    // is no way to search inside a book. Saying so costs far less than
+    // implementing tables or accessibility-grade math speech.
+    render(<SettingsPanel />);
+
+    const limits = await screen.findByTestId("known-limitations");
+
+    expect(limits).toHaveTextContent(/table/i);
+    expect(limits).toHaveTextContent(/equation|math/i);
+    expect(limits).toHaveTextContent(/search/i);
+  });
+
   it("states the LibreTexts partnership rather than disclaiming it", async () => {
     // This shipped as "not affiliated with, endorsed by, or sponsored by
     // LibreTexts or OpenStax" while the work was commissioned by LibreTexts --

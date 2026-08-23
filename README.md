@@ -20,6 +20,26 @@ that rather than trusting this paragraph.
 > Pressbooks, which are separate organisations, nor by the individual Pressbooks
 > networks it imports from.
 
+## Known limitations
+
+Stated here rather than left to be discovered, because each one is invisible in
+the app and reads as a bug rather than a boundary.
+
+- **Books are imported as a reading flow, not a copy of the page.** A table is
+  replaced by a note saying one was omitted; sidebars and exercises may not be
+  carried across at all. In a STEM chapter that can be a real fraction of the
+  page.
+- **Equations are read aloud approximately**, and some are read only as
+  "equation". They are typeset correctly on screen with KaTeX — it is the
+  *speech* that is heuristic, not the display. This is not accessibility-grade
+  math narration.
+- **There is no search inside a book and no bookmarks.** Library search matches
+  book titles only. A book does reopen where you left it. See
+  [ADR 0005](docs/adr/0005-in-book-search-is-deferred.md) for why this is
+  deferred rather than shipped small.
+- **There are no in-app updates.** The auto-updater is deliberately absent, so a
+  new version means downloading a new build.
+
 ## Development
 
 ```bash

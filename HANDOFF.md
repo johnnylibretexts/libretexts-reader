@@ -1164,10 +1164,12 @@ milestone is 11/11 closed; #48, #50, #54 and #102 are all done. Nothing below bl
   catalog.
 - **#65** — no third-party dependency attribution, and the Supertonic model's licence is
   unrecorded. The sharper half is the model: testers keep exported audio generated from it.
-- **#57** — using "LibreTexts" as the product name while unaffiliated. Explicitly scoped to a
-  *public* beta, so it does not gate the private one. Needs triage.
+- **#57** — *rewritten 2026-08-23.* Its premise was false: this is a sanctioned LibreTexts
+  project and they hold the copyright, so the naming question is moot. What survives is
+  whether the repo and bundle identifier move to a LibreTexts org. Needs a human.
 - **#63 / #64 / #69** — dead settings rows, seven unused CSP hosts, content-fidelity gaps.
-  Cleanup. #69 needs triage.
+  #63 and #64 are closed; #69 is largely addressed (table markers, stated limitations,
+  ADR 0005) with in-book search deferred.
 
 **What #66 changed about the release.** `release.yml` runs the real gate before it builds
 anything publishable, and its timeout has headroom for a slow notarization. Both halves are now

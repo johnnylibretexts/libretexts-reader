@@ -61,6 +61,23 @@ pub trait SectionSource {
     }
 }
 
+/// Stands in for a table the paragraph-flow importer cannot represent.
+///
+/// Import is a reading flow, not a layout clone: `block_selector` matches
+/// headings, paragraphs, list items and images, so a table built from bare
+/// `<td>` cells was never selected and simply was not there. In an OpenStax or
+/// LibreTexts STEM chapter that can be a large fraction of the page, and the
+/// reader had no way to know. Silence reads as "the app is broken" rather than
+/// "this app does not do tables yet".
+///
+/// Plain prose rather than a `[[...]]` token, and deliberately so. The math
+/// tokens are base64 payloads that KaTeX typesets and the speech path degrades
+/// to "equation"; there is no payload here to render, only an absence to
+/// announce. Prose means it needs no decoder, cannot reach a reader or an
+/// engine undecoded, and is already a whole sentence -- so it speaks correctly
+/// and splits correctly with no special case anywhere downstream.
+pub const OMITTED_TABLE: &str = "A table is omitted here.";
+
 /// Walk a page in source order, returning its paragraphs and its figures.
 ///
 /// Each image is anchored to the paragraph it followed, which is what lets the
@@ -84,6 +101,19 @@ pub fn section_content_from_html(
                 image.anchor_paragraph_ordinal = anchor_paragraph_ordinal(paragraphs.len());
                 images.push(image);
             }
+        } else if element.value().name() == "table" {
+            // A nested table is part of the outer one the reader is already
+            // being told about; marking it again would announce the same
+            // absence twice.
+            if !has_table_ancestor(&element) {
+                paragraphs.push(OMITTED_TABLE.to_string());
+            }
+        } else if has_table_ancestor(&element) {
+            // Cell text, after the marker already stood in for the whole
+            // table. Emitting it too would read the row out as loose
+            // sentences stripped of the column headings that gave them
+            // meaning -- worse than the marker alone, and directly after it.
+            continue;
         } else if let Some(paragraph) = paragraph_from_element(&element, source) {
             paragraphs.push(paragraph);
         }
@@ -175,9 +205,16 @@ pub fn normalize_text(text: &str) -> String {
         .to_string()
 }
 
+fn has_table_ancestor(element: &ElementRef<'_>) -> bool {
+    element
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .any(|node| node.value().name() == "table")
+}
+
 fn block_selector() -> &'static Selector {
     BLOCK_SELECTOR.get_or_init(|| {
-        Selector::parse("h1, h2, h3, h4, h5, h6, p, li, img[src], img[data-src]")
+        Selector::parse("h1, h2, h3, h4, h5, h6, p, li, table, img[src], img[data-src]")
             .expect("valid block selector")
     })
 }
@@ -239,6 +276,77 @@ mod tests {
                 .filter(|alt| !alt.is_empty())
                 .map(str::to_string)
         }
+    }
+
+    #[test]
+    fn a_table_leaves_a_marker_instead_of_vanishing() {
+        // block_selector matches h1-h6, p, li and img -- a <table> is not in
+        // it, so a table built from bare <td> cells was never selected and
+        // simply was not there. In an OpenStax STEM chapter that can be a
+        // large fraction of the page, with nothing telling the reader.
+        let html = "<p>Before.</p>\
+                    <table><tr><td>Mass</td><td>9.1e-31 kg</td></tr></table>\
+                    <p>After.</p>";
+
+        let paragraphs = paragraphs_from_html(html, &KeepEverything);
+
+        assert_eq!(
+            paragraphs,
+            vec![
+                "Before.".to_string(),
+                OMITTED_TABLE.to_string(),
+                "After.".to_string()
+            ],
+            "the marker must sit where the table was, in reading order"
+        );
+    }
+
+    #[test]
+    fn a_tables_own_paragraphs_do_not_escape_past_the_marker() {
+        // A table whose cells hold <p> is the case that would otherwise emit a
+        // marker AND the cell text, so the reader hears the row twice: once as
+        // "a table is omitted here" and again as loose sentences with no
+        // column headings to make sense of them.
+        let html = "<p>Before.</p>\
+                    <table><tr><td><p>Cell one.</p></td><td><p>Cell two.</p></td></tr></table>\
+                    <p>After.</p>";
+
+        let paragraphs = paragraphs_from_html(html, &KeepEverything);
+
+        assert_eq!(
+            paragraphs,
+            vec![
+                "Before.".to_string(),
+                OMITTED_TABLE.to_string(),
+                "After.".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_nested_table_marks_once_not_twice() {
+        let html = "<table><tr><td><table><tr><td>Inner</td></tr></table></td></tr></table>";
+
+        let paragraphs = paragraphs_from_html(html, &KeepEverything);
+
+        assert_eq!(paragraphs, vec![OMITTED_TABLE.to_string()]);
+    }
+
+    #[test]
+    fn an_image_inside_a_table_is_still_collected() {
+        // The marker covers text the walker cannot represent. A figure is
+        // representable and is downloaded and anchored as usual -- dropping it
+        // would lose content the app can actually show.
+        let html = "<p>Before.</p><table><tr><td><img src=\"/plot.png\"></td></tr></table>";
+
+        let (paragraphs, images) =
+            section_content_from_html(html, "https://example.test", &KeepEverything);
+
+        assert_eq!(
+            paragraphs,
+            vec!["Before.".to_string(), OMITTED_TABLE.to_string()]
+        );
+        assert_eq!(images.len(), 1, "the plot inside the table is renderable");
     }
 
     fn decoded_latex_tokens(text: &str) -> Vec<String> {
