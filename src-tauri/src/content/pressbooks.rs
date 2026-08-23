@@ -66,8 +66,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// not one host's quirk. Reproduce with `curl -A` before changing this line.
 ///
 /// The `+` URL is the crawler convention for "who to contact about this
-/// traffic". It points at LibreTexts, who hold the copyright, rather than at
-/// the repository, which is private and would 404 for the operator reading it.
+/// traffic". It points at LibreTexts, who hold the copyright and are the party
+/// answerable for it, rather than at the repository. The repository was private
+/// when this was chosen and would have 404'd for the operator reading it; it is
+/// public now, but the copyright holder is still the better destination for a
+/// complaint about traffic than an issue tracker.
 const USER_AGENT: &str = concat!(
     "Mozilla/5.0 (compatible; LibreTexts Reader/",
     env!("CARGO_PKG_VERSION"),

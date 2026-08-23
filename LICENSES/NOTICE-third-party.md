@@ -15,8 +15,8 @@ The Supertonic voice model is **not** covered here: it is downloaded on the
 reader's own machine rather than distributed with the app, and its terms are
 recorded in `supertonic-model.md`.
 
-<!-- cargo-lock-sha256: a6cfad01e464d5d46840df64d19bdbe22728b73a94938251ee65ec5aa8c55f70 -->
-<!-- npm-lock-sha256: 18f994ba86e9b28ebb53ee6d3f452e034378b11ef65402219a79fb7143268c0c -->
+<!-- cargo-lock-sha256: 5bc0d5feb837ce7ab4be78f9b658b8eba17e1f6a279356afb81ca14df4ab4a27 -->
+<!-- npm-lock-sha256: 2b2d2cfb730c856d5c04f1fcf224a56fb16c635a1b4b988072195ca70207be1e -->
 
 ## Rust dependencies
 
@@ -239,7 +239,7 @@ ships.
 - ctor 0.8.0 — Apache-2.0 — https://github.com/mmastrac/rust-ctor
 - bytemuck 1.25.0 — Apache-2.0 — https://github.com/Lokathor/bytemuck
 - httpdate 1.0.3 — Apache-2.0 — https://github.com/pyfisch/httpdate
-- libretexts-reader 0.1.0-beta.1 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
+- libretexts-reader 0.1.0-beta.2 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
 - anyhow 1.0.102 — Apache-2.0 — https://github.com/dtolnay/anyhow
 - async-trait 0.1.92 — Apache-2.0 — https://github.com/dtolnay/async-trait
 - constant_time_eq 0.3.1 — Apache-2.0 — https://github.com/cesarb/constant_time_eq
