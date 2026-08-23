@@ -14,8 +14,11 @@ publisher's servers, and Supertonic needs a one-time model download first.
 **[PRIVACY.md](PRIVACY.md) lists every host the app can contact and why** — read
 that rather than trusting this paragraph.
 
-> **Not affiliated with LibreTexts.** LibreTexts Reader is an independent open-source
-> project. It is not affiliated with, endorsed by, or sponsored by LibreTexts or OpenStax.
+> **Developed in partnership with LibreTexts.** LibreTexts Reader is an open-source
+> project developed by johnnylibretexts in partnership with LibreTexts, who hold the
+> copyright. It is not affiliated with, endorsed by, or sponsored by OpenStax or
+> Pressbooks, which are separate organisations, nor by the individual Pressbooks
+> networks it imports from.
 
 ## Development
 

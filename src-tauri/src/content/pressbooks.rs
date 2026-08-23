@@ -45,10 +45,33 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// reaches the API. The `Mozilla/5.0 (compatible; …)` form is the convention
 /// the User-Agent header was designed for: it names this client honestly
 /// without impersonating a specific browser, and it is accepted.
+///
+/// **This is not browser-spoofing, and removing the prefix breaks imports.**
+/// It reads like a spoof and has been filed as one; probing the live Milne WAF
+/// (`milnepublishing.geneseo.edu/wp-json/pressbooks/v2/books`) on 2026-08-23
+/// settles it:
+///
+/// | User-Agent                                       | Status |
+/// |--------------------------------------------------|--------|
+/// | `Mozilla/5.0 (compatible; LibreTexts Reader/…)`   | 200    |
+/// | `Mozilla/4.0 (compatible; LibreTexts Reader/…)`   | 200    |
+/// | `Mozilla/5.0` (bare, no `(compatible; …)`)        | 403    |
+/// | `LibreTexts Reader/… (+https://…)`                | 403    |
+/// | `libretexts-reader-pressbooks-importer`           | 403    |
+///
+/// The WAF keys on the `Mozilla/N.0 (compatible; Name/version)` **bot**
+/// convention, not on looking like a browser — a bare `Mozilla/5.0`, which is
+/// what an actual spoof starts from, is refused. `open.library.okstate.edu`
+/// refuses the bare tool name too, so this is the networks' shared posture and
+/// not one host's quirk. Reproduce with `curl -A` before changing this line.
+///
+/// The `+` URL is the crawler convention for "who to contact about this
+/// traffic". It points at LibreTexts, who hold the copyright, rather than at
+/// the repository, which is private and would 404 for the operator reading it.
 const USER_AGENT: &str = concat!(
     "Mozilla/5.0 (compatible; LibreTexts Reader/",
     env!("CARGO_PKG_VERSION"),
-    ")"
+    "; +https://libretexts.org)"
 );
 
 /// The API's own ceiling, not a choice. Asking for more is a 400.
@@ -1121,6 +1144,24 @@ mod tests {
             USER_AGENT.contains(env!("CARGO_PKG_VERSION")),
             "User-Agent {USER_AGENT:?} does not name the crate version {:?}",
             env!("CARGO_PKG_VERSION"),
+        );
+    }
+
+    #[test]
+    fn user_agent_keeps_the_form_the_pressbooks_waf_accepts() {
+        // Every network probed refuses anything outside the
+        // `Mozilla/N.0 (compatible; Name/version)` bot convention -- a bare
+        // `Mozilla/5.0` included. The prefix reads like browser-spoofing and
+        // has been filed as such once already; dropping it 403s every
+        // Pressbooks import instead, with an HTML error page rather than a
+        // clear failure. See the USER_AGENT doc comment for the probe table.
+        assert!(
+            USER_AGENT.starts_with("Mozilla/5.0 (compatible; "),
+            "User-Agent {USER_AGENT:?} left the form the WAF accepts"
+        );
+        assert!(
+            USER_AGENT.contains("+https://"),
+            "User-Agent {USER_AGENT:?} names no contact for the operators it reaches"
         );
     }
 
