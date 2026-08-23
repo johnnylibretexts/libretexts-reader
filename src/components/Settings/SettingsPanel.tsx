@@ -774,9 +774,13 @@ export function SettingsPanel() {
         </p>
       ) : null}
 
-      <p className="text-xs text-neutral-500 dark:text-neutral-400">
-        LibreTexts Reader is an independent open-source project. It is not affiliated
-        with, endorsed by, or sponsored by LibreTexts or OpenStax.
+      <p
+        data-testid="attribution"
+        className="text-xs text-neutral-500 dark:text-neutral-400"
+      >
+        LibreTexts Reader is an open-source project developed by johnnylibretexts
+        in partnership with LibreTexts. It is not affiliated with, endorsed by, or
+        sponsored by OpenStax or Pressbooks.
       </p>
     </section>
   );

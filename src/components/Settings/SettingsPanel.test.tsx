@@ -272,6 +272,56 @@ describe("SettingsPanel voice test", () => {
   });
 });
 
+describe("attribution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getAllSettings.mockResolvedValue({});
+    getFishKeyStatus.mockResolvedValue({ present: false, valid: false });
+    useSettingsStore.setState({
+      hydrated: true,
+      hydrateFailed: false,
+      loading: false,
+      error: null,
+      ttsProvider: "supertonic",
+      supertonicVoiceStyle: "M1",
+      supertonicLanguage: "en",
+      fishVoiceId: null,
+    });
+  });
+
+  it("states the LibreTexts partnership rather than disclaiming it", async () => {
+    // This shipped as "not affiliated with, endorsed by, or sponsored by
+    // LibreTexts or OpenStax" while the work was commissioned by LibreTexts --
+    // a public disclaimer of a relationship they asked for. A reader takes
+    // this sentence at face value, so it gets a test rather than trusting
+    // nobody reintroduces the old wording.
+    render(<SettingsPanel />);
+
+    const attribution = await screen.findByTestId("attribution");
+
+    expect(attribution).toHaveTextContent(
+      /developed by johnnylibretexts in partnership with libretexts/i,
+    );
+    expect(attribution).not.toHaveTextContent(
+      /not affiliated with[^.]*libretexts/i,
+    );
+  });
+
+  it("disclaims every content source that is a separate organisation", async () => {
+    // LibreTexts sanctioning this project says nothing about OpenStax (Rice
+    // University) or Pressbooks, whose books this app also imports.
+    // Correcting the LibreTexts half must not drop the halves still true, and
+    // a Source added later needs to arrive here too.
+    render(<SettingsPanel />);
+
+    const attribution = await screen.findByTestId("attribution");
+
+    expect(attribution).toHaveTextContent(
+      /not affiliated with, endorsed by, or sponsored by openstax or pressbooks/i,
+    );
+  });
+});
+
 describe("choosing a provider that bills", () => {
   beforeEach(() => {
     vi.clearAllMocks();
