@@ -36,14 +36,38 @@ pub fn provider_display_name(provider: &str) -> &str {
     }
 }
 
+/// The container a provider's exported audio arrives in, without the dot.
+///
+/// A free function beside `provider_display_name` and for the same reason: the
+/// path helpers know a provider only by its id string, having never built the
+/// object. Falls back to MP3 for an unknown id, matching what every provider
+/// produced before AAC arrived -- a wrong extension misnames a file, while
+/// panicking here would fail an export outright.
+pub fn export_extension(provider: &str) -> &'static str {
+    match provider {
+        "supertonic" => "m4a",
+        "fish" => "mp3",
+        _ => "mp3",
+    }
+}
+
 #[async_trait::async_trait]
 pub trait TtsProvider: Send + Sync + std::fmt::Debug {
     fn id(&self) -> &'static str;
 
-    /// Encoded MP3 bytes. Both implementations return the same thing so the
-    /// export path never branches on which one produced the audio. `speed`
-    /// is honoured where the engine supports it: both do today, each via its
-    /// own native parameter (Supertonic's synthesis step count, Fish's
+    /// Encoded audio bytes, in the container `export_extension` names for
+    /// this provider's id.
+    ///
+    /// These used to be MP3 for both, so the export path never branched. They
+    /// no longer are: Supertonic encodes locally, and macOS offers no MP3
+    /// *encoder*, so dropping the LGPL LAME dependency meant moving Supertonic
+    /// to AAC/M4A (ADR-0004). Fish still returns MP3 because that is what its
+    /// API sends, and re-encoding lossy audio to change the extension would
+    /// cost quality for nothing. Anything that names or tags the output must
+    /// therefore ask `export_extension` rather than assume.
+    ///
+    /// `speed` is honoured where the engine supports it: both do today, each
+    /// via its own native parameter (Supertonic's synthesis step count, Fish's
     /// `prosody.speed`).
     async fn synthesize(
         &self,

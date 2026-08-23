@@ -16,9 +16,9 @@ use crate::tts::fish::client::FishClient;
 use crate::tts::fish::provider::FishProvider;
 use crate::tts::fish::FISH_MODEL;
 use crate::tts::provider::TtsProvider;
-use crate::tts::supertonic::audio::{encode_f32_to_mp3, encode_f32_to_wav, SUPERTONIC_SAMPLE_RATE};
+use crate::tts::supertonic::audio::{encode_f32_to_m4a, encode_f32_to_wav, SUPERTONIC_SAMPLE_RATE};
 use crate::tts::supertonic::cache::{
-    cache_path_for_chapter, copy_cached_mp3, estimate_for_text, output_path_for_chapter,
+    cache_path_for_chapter, copy_cached_export, estimate_for_text, output_path_for_chapter,
     path_to_string,
 };
 use crate::tts::supertonic::engine;
@@ -37,7 +37,7 @@ use crate::tts::supertonic::voice::{
 use crate::tts::supertonic::{
     ChapterEstimate, ChapterMaterial, ChapterRequest, SupertonicConfig, SUPERTONIC_DEFAULT_SPEED,
 };
-use crate::tts::tags::tag_chapter_mp3;
+use crate::tts::tags::tag_chapter_export;
 
 /// Everything a provider needs, read once by the caller.
 ///
@@ -374,7 +374,7 @@ fn resolve_chapter_job(
 /// The unique name is what stops two concurrent exports of the same chapter
 /// from writing to one in-progress file before the atomic rename.
 async fn write_atomic(bytes: &[u8], path: &std::path::Path) -> AppResult<()> {
-    let temp_path = path.with_extension(format!("{}.mp3.download", Uuid::new_v4()));
+    let temp_path = path.with_extension(format!("{}.download", Uuid::new_v4()));
     tokio::fs::write(&temp_path, bytes).await?;
     tokio::fs::rename(&temp_path, path).await?;
     Ok(())
@@ -389,21 +389,21 @@ async fn write_atomic(bytes: &[u8], path: &std::path::Path) -> AppResult<()> {
 /// billed audio and makes the retry bill again, indefinitely if the cache
 /// problem persists. A failure writing the reader's own file is still fatal:
 /// there is nothing left to deliver.
-async fn deliver_synthesized_mp3(
-    mp3: &[u8],
+async fn deliver_synthesized_export(
+    audio: &[u8],
     cache_path: &std::path::Path,
     output_path: &std::path::Path,
 ) -> AppResult<()> {
-    if let Err(error) = write_atomic(mp3, cache_path).await {
+    if let Err(error) = write_atomic(audio, cache_path).await {
         eprintln!("chapter export: caching failed, delivering uncached: {error}");
 
         if let Some(parent) = output_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        return write_atomic(mp3, output_path).await;
+        return write_atomic(audio, output_path).await;
     }
 
-    copy_cached_mp3(cache_path, output_path).await
+    copy_cached_export(cache_path, output_path).await
 }
 
 #[tauri::command]
@@ -423,11 +423,11 @@ pub async fn export_supertonic_chapter_mp3(
     let force = request.force.unwrap_or(false);
 
     if job.cache_path.exists() && !force {
-        copy_cached_mp3(&job.cache_path, &job.output_path).await?;
+        copy_cached_export(&job.cache_path, &job.output_path).await?;
         // Tagged on the way out rather than in the cache, so a chapter cached
         // before tagging existed still leaves with its credit attached, and
         // the byte length below is the file the reader actually gets.
-        tag_chapter_mp3(
+        tag_chapter_export(
             &job.output_path,
             &job.material.document,
             &job.material.section,
@@ -450,7 +450,7 @@ pub async fn export_supertonic_chapter_mp3(
     // Export always renders at one fixed speed -- chosen here, not buried in
     // the trait, since a per-request speed makes no sense for a file that is
     // written once and played back later at whatever speed the reader picks.
-    let mp3 = provider
+    let audio = provider
         .synthesize(
             &job.material.text,
             &job.voice_style,
@@ -458,15 +458,15 @@ pub async fn export_supertonic_chapter_mp3(
             SUPERTONIC_DEFAULT_SPEED,
         )
         .await?;
-    if mp3.is_empty() {
+    if audio.is_empty() {
         return Err(AppError::Tts(format!(
             "{} returned empty audio.",
             provider.id()
         )));
     }
 
-    deliver_synthesized_mp3(&mp3, &job.cache_path, &job.output_path).await?;
-    tag_chapter_mp3(
+    deliver_synthesized_export(&audio, &job.cache_path, &job.output_path).await?;
+    tag_chapter_export(
         &job.output_path,
         &job.material.document,
         &job.material.section,
@@ -625,14 +625,14 @@ async fn synthesize_supertonic_audio(
     })
 }
 
-pub(crate) async fn synthesize_supertonic_mp3(
+pub(crate) async fn synthesize_supertonic_export(
     text: String,
     voice_style: String,
     language: String,
     speed: f32,
 ) -> AppResult<Vec<u8>> {
     let samples = synthesize_supertonic_samples(text, voice_style, language, speed).await?;
-    encode_f32_to_mp3(&samples, SUPERTONIC_SAMPLE_RATE)
+    encode_f32_to_m4a(&samples, SUPERTONIC_SAMPLE_RATE)
 }
 
 async fn synthesize_supertonic_samples(
@@ -950,7 +950,7 @@ mod delivery_tests {
         let output_path = root.join("out/Chapter One.mp3");
         std::fs::create_dir_all(cache_path.parent().unwrap()).expect("cache dir");
 
-        deliver_synthesized_mp3(b"paid-audio", &cache_path, &output_path)
+        deliver_synthesized_export(b"paid-audio", &cache_path, &output_path)
             .await
             .expect("delivery must succeed");
 
@@ -974,7 +974,7 @@ mod delivery_tests {
         let cache_path = blocked.join("chapter.mp3");
         let output_path = root.join("out/Chapter One.mp3");
 
-        deliver_synthesized_mp3(b"paid-audio", &cache_path, &output_path)
+        deliver_synthesized_export(b"paid-audio", &cache_path, &output_path)
             .await
             .expect("a cache failure must not deny the reader audio they paid for");
 

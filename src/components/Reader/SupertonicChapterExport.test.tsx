@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupertonicChapterEstimate } from "../../lib/tauri";
 import type * as Domain from "../../types/domain";
+import { SPEECH_ENGINE_EXPORT_FORMAT } from "../../lib/speech";
 
 const estimateSupertonicChapter = vi.fn();
 const exportSupertonicChapterMp3 = vi.fn();
@@ -267,7 +268,7 @@ describe("SupertonicChapterExport", () => {
     render(<SupertonicChapterExport />);
 
     await user.selectOptions(await screen.findByLabelText("Voice"), "F3");
-    await user.click(screen.getByRole("button", { name: /MP3/ }));
+    await user.click(screen.getByRole("button", { name: /M4A/ }));
 
     await waitFor(() => expect(exportSupertonicChapterMp3).toHaveBeenCalled());
     expect(exportSupertonicChapterMp3.mock.calls[0][0]).toMatchObject({
@@ -315,7 +316,7 @@ describe("SupertonicChapterExport", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /Generate MP3/ }),
+        screen.getByRole("button", { name: /Generate M4A/ }),
       ).toBeEnabled(),
     );
     expect(screen.getByRole("button", { name: "Regenerate" })).toBeEnabled();
@@ -352,5 +353,20 @@ describe("SupertonicChapterExport", () => {
       await screen.findByText(/0 billable characters/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/4,321/)).not.toBeInTheDocument();
+  });
+});
+
+// The Supertonic side is covered by the tests above, which now look for
+// "Generate M4A" -- adding a second UI test for the same label would prove
+// nothing. What is left is the mapping itself, which the label, the exported
+// filename and the tagger all read.
+describe("the export format the reader is promised", () => {
+  it("keeps MP3 for Fish, which returns MP3 from its API", () => {
+    // Asserted on the mapping rather than through the UI: the Fish export
+    // panel gates on a price before it renders a Generate button, and this
+    // fact -- which container each engine produces -- is what the label,
+    // the filename and the tagger all read. It must not drift.
+    expect(SPEECH_ENGINE_EXPORT_FORMAT.fish).toBe("MP3");
+    expect(SPEECH_ENGINE_EXPORT_FORMAT.supertonic).toBe("M4A");
   });
 });

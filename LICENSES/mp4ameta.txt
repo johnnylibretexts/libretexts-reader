@@ -1,0 +1,7 @@
+mp4ameta
+
+MIT licensed. Used to write iTunes-style metadata atoms (album, title,
+copyright, artist/comment) into exported M4A chapters, so a chapter's licence
+and attribution travel with the file.
+
+Source: https://github.com/Saecki/rust-mp4ameta

@@ -79,6 +79,6 @@ If you enable Fish, be aware:
 The LibreTexts Reader source code is licensed under Apache-2.0 (see `LICENSE`).
 
 Distributed app bundles also include third-party components under their own
-licenses — for example the PDFium binaries, LAME (LGPL, via `mp3lame-encoder`), and the `id3` crate
+licenses — for example the PDFium binaries, and the `id3` and `mp4ameta` crates
 (MIT) that writes attribution into exported MP3s. Their notices are collected in
 the `LICENSES/` directory.

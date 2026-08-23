@@ -1,4 +1,4 @@
-use crate::commands::chapter_tts::synthesize_supertonic_mp3;
+use crate::commands::chapter_tts::synthesize_supertonic_export;
 use crate::error::AppResult;
 use crate::tts::provider::TtsProvider;
 
@@ -18,7 +18,7 @@ impl TtsProvider for SupertonicProvider {
         language: &str,
         speed: f32,
     ) -> AppResult<Vec<u8>> {
-        synthesize_supertonic_mp3(
+        synthesize_supertonic_export(
             text.to_string(),
             voice.to_string(),
             language.to_string(),

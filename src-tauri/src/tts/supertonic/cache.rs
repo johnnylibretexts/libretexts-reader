@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::AppResult;
 use crate::paths;
-use crate::tts::provider::provider_display_name;
+use crate::tts::provider::{export_extension, provider_display_name};
 use crate::tts::supertonic::chunk::{chunk_text_for_language, count_words};
 use crate::tts::supertonic::{
     ChapterEstimate, ChapterMaterial, ChapterRequest, SupertonicConfig, SUPERTONIC_TOTAL_STEPS,
@@ -24,7 +24,11 @@ pub(crate) const AUDIOBOOK_WORDS_PER_MINUTE: f64 = 165.0;
 /// unreachable and unreclaimable next to live audio. As a directory,
 /// `cleanup::reclaim_stale_tts_cache_in` can find and remove it, and the next
 /// bump cleans up after itself.
-pub(crate) const TTS_CACHE_VERSION: &str = "tts-cache-v2";
+// v3: Supertonic exports moved from MP3 to AAC/M4A (ADR-0004). The key does
+// not hash the container, so a v2 entry and its v3 replacement would differ
+// only by extension -- the old file would never be read again and never be
+// collected either. A version bump puts them in a directory cleanup can see.
+pub(crate) const TTS_CACHE_VERSION: &str = "tts-cache-v3";
 
 /// Holds every provider's rendered chapters, not just Supertonic's -- the
 /// cache key hashes the provider and model, so Fish and Supertonic audio for
@@ -84,14 +88,15 @@ pub(crate) fn output_path_for_chapter(
     let directory = PathBuf::from(&config.export_directory)
         .join(sanitize_file_component(&material.document.title, 80));
     let filename = format!(
-        "{:03} - {} - {} - {} - {}.mp3",
+        "{:03} - {} - {} - {} - {}.{}",
         material.section.ordinal + 1,
         sanitize_file_component(&material.section.title, 72),
         // Not the literal "Supertonic" it used to be: a Fish export wrote a
         // file whose name said Supertonic had produced it.
         sanitize_file_component(provider_display_name(&request.provider), 16),
         voice_file_component(voice_style),
-        sanitize_file_component(language, 8)
+        sanitize_file_component(language, 8),
+        export_extension(&request.provider)
     );
     directory.join(filename)
 }
@@ -150,7 +155,7 @@ pub(crate) fn cache_path_in(
     cache_root
         .join(TTS_CACHE_DIR)
         .join(TTS_CACHE_VERSION)
-        .join(format!("{hash}.mp3"))
+        .join(format!("{hash}.{}", export_extension(provider)))
 }
 
 /// The cache path under the real app-data cache directory.
@@ -174,7 +179,7 @@ pub(crate) fn cache_path_for_chapter(
     ))
 }
 
-pub(crate) async fn copy_cached_mp3(cache_path: &Path, output_path: &Path) -> AppResult<()> {
+pub(crate) async fn copy_cached_export(cache_path: &Path, output_path: &Path) -> AppResult<()> {
     if let Some(parent) = output_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
