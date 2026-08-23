@@ -37,8 +37,8 @@ xcrun notarytool store-credentials jr-notary \
 
 ### Important: sign the bundled native libraries first
 
-Tauri signs the main binary, but **not** `libpdfium.dylib` (it ships under
-`…/resources/pdfium/`). Notarization rejects ad-hoc-signed Mach-O files, so sign
+Tauri signs the main binary, but **not** `libpdfium.dylib`. Notarization rejects
+ad-hoc-signed Mach-O files, so sign
 the **source** library with Developer ID + hardened runtime + secure timestamp
 before building. Signing it *after* the build is not equivalent: the edit
 invalidates Tauri's signature over the enclosing `.app`.
@@ -55,6 +55,18 @@ codesign --force --options runtime --timestamp --sign "$ID" \
 ```
 
 (This dir is a gitignored local asset; re-sign after any PDFium bump.)
+
+**Where it lands in the bundle**, which is not where you would guess:
+
+```
+<App>/Contents/Resources/resources/pdfium/aarch64-apple-darwin/libpdfium.dylib
+```
+
+Note `resources/resources`. `tauri.conf.json` bundles `"resources/**/*"`, and that
+glob keeps its own `resources/` prefix inside `Contents/Resources/`. Anyone
+reaching for the obvious `Contents/Resources/pdfium/...` finds nothing there, and
+a verification command written against that path reports success by matching
+zero files -- which reads exactly like a pass.
 
 ### Build, notarize, staple, verify
 
@@ -124,7 +136,14 @@ xcrun notarytool submit "$NEWDMG" --keychain-profile jr-notary --wait
 xcrun stapler staple "$NEWDMG"
 mv -f "$NEWDMG" "$DMG"
 
-# --- Verify: all five must pass ----------------------------------------------
+# --- Verify: all six must pass -----------------------------------------------
+# Nothing ad-hoc survived into the bundle. This is the one that catches an
+# unsigned bundled native, and it scans every Mach-O rather than trusting a
+# hard-coded path -- so it keeps working if a future dependency ships another
+# dylib nobody remembered to sign. Expect no output.
+find "$APP" -type f -exec sh -c \
+  'file "$1" | grep -q Mach-O && codesign -dv "$1" 2>&1 | grep -q adhoc && echo "UNSIGNED: $1"' _ {} \;
+
 codesign -dvv "$DMG" 2>&1 | grep "Authority=Developer ID Application"
 xcrun stapler validate "$DMG"
 spctl -a -t open --context context:primary-signature -vvv "$DMG"  # accepted, Notarized Developer ID
@@ -136,6 +155,34 @@ xcrun stapler validate "$MNT/LibreTexts Reader.app"   # the point of pass 2 -- m
 spctl -a -t exec -vvv "$MNT/LibreTexts Reader.app"
 hdiutil detach "$MNT" >/dev/null
 ```
+
+### Verify a release that has already been published
+
+The checks above run against a local build. Once `release.yml` has published a
+tag, verify **the artifact a reader will actually download** -- that is the only
+thing that proves the automated path produced what the manual path would have.
+A green workflow does not prove a stapled ticket.
+
+```bash
+gh release download <TAG> --repo johnnylibretexts/libretexts-reader --pattern '*.dmg'
+DMG="$(ls LibreTexts.Reader_*_aarch64.dmg | head -1)"
+
+xcrun stapler validate "$DMG"                                    # The validate action worked!
+spctl -a -vvv -t open --context context:primary-signature "$DMG" # accepted
+                                                                 # source=Notarized Developer ID
+
+# The inner .app needs its own ticket, which is the entire point of pass 2.
+# Without it the DMG passes and the app still says "cannot be verified" the
+# first time someone opens it offline.
+MNT="$(mktemp -d)"
+hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null
+xcrun stapler validate "$MNT/LibreTexts Reader.app"
+find "$MNT/LibreTexts Reader.app" -type f -exec sh -c \
+  'file "$1" | grep -q Mach-O && codesign -dv "$1" 2>&1 | grep -q adhoc && echo "UNSIGNED: $1"' _ {} \;
+hdiutil detach "$MNT" >/dev/null
+```
+
+Done for v0.1.0-beta.2: all four clean.
 
 If notarization returns Invalid, read the log:
 `xcrun notarytool log <submission-id> --keychain-profile jr-notary`.
