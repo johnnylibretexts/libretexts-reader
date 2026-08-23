@@ -53,6 +53,7 @@ function importedDocument(overrides: Partial<Domain.Document> = {}): Domain.Docu
     wordCount: 0,
     importedAt: "2026-08-17T00:00:00Z",
     lastOpenedAt: null,
+    progress: 0,
     ...overrides,
   };
 }

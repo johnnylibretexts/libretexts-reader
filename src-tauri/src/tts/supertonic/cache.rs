@@ -254,6 +254,7 @@ mod tests {
                 word_count: 10,
                 imported_at: Utc::now(),
                 last_opened_at: None,
+                progress: 0.0,
             },
             section: Section {
                 id: "sec-1".into(),

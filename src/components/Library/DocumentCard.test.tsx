@@ -25,6 +25,7 @@ function libraryDocument(
     wordCount: 90000,
     importedAt: "2026-08-17T00:00:00Z",
     lastOpenedAt: null,
+    progress: 0,
     ...overrides,
   };
 }
@@ -79,5 +80,32 @@ describe("DocumentCard", () => {
 
     expect(container.querySelector("img")).toBeNull();
     expect(screen.getByText("Pressbooks")).toBeInTheDocument();
+  });
+
+  it("fills the progress bar to where the reader stopped", () => {
+    // The bar was `const progress = 0` -- hardcoded, because nothing read the
+    // cursor back. Every card in the Library advertised an unstarted book.
+    renderCard(libraryDocument({ progress: 0.42 }));
+
+    const bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-valuenow", "42");
+  });
+
+  it("leaves the bar empty for a book nobody has opened", () => {
+    renderCard(libraryDocument({ progress: 0 }));
+
+    expect(screen.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "0",
+    );
+  });
+
+  it("names the book the progress belongs to", () => {
+    // One bar per card, all of them identical to a screen reader without this.
+    renderCard(libraryDocument({ progress: 0.42 }));
+
+    expect(
+      screen.getByRole("progressbar", { name: /A Concise Introduction to Logic/ }),
+    ).toBeInTheDocument();
   });
 });

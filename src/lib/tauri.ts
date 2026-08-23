@@ -189,6 +189,18 @@ export const api = {
 
   savePlaybackState: (playback: Domain.PlaybackState) =>
     invokeDesktop<void>("save_playback_state", { playback }),
+  /**
+   * Where the reader stopped in this document, or null if they never started.
+   *
+   * Null outside Tauri as well: a browser preview has no database to resume
+   * from, and opening at the beginning is the honest answer there.
+   */
+  getPlaybackState: (documentId: string) =>
+    invokeWithBrowserFallback<Domain.PlaybackState | null>(
+      null,
+      "get_playback_state",
+      { documentId },
+    ),
 
   synthesizeSpeech: (request: SynthesizeSpeechRequest) =>
     invokeDesktop<SpeechAudio>("synthesize_speech", { request }),

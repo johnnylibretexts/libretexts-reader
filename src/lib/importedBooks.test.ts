@@ -18,6 +18,7 @@ function doc(
     wordCount: 1,
     importedAt: "2026-08-13T00:00:00Z",
     lastOpenedAt: null,
+    progress: 0,
   };
 }
 

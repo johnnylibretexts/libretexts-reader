@@ -45,6 +45,7 @@ const DOCUMENT: Domain.Document = {
   wordCount: 8,
   importedAt: "2026-01-01T00:00:00Z",
   lastOpenedAt: null,
+  progress: 0,
 };
 
 const SECTIONS: Domain.Section[] = [

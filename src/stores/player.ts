@@ -50,6 +50,16 @@ interface PlayerState {
    * preserve (see switchToSupertonic).
    */
   canSwitchToSupertonic: boolean;
+  /**
+   * Set when the reader's place could not be written, or could not be read
+   * back on open. Null the rest of the time.
+   *
+   * Deliberately not `error`: nothing about listening has failed, so the red
+   * banner that gates "Switch to Supertonic" would be both louder and less
+   * accurate than the truth, which is that the bookkeeping stopped. Losing an
+   * hour of listening in silence is the outcome this exists to prevent.
+   */
+  positionError: string | null;
   loadDocument: (documentId: string) => Promise<void>;
   play: () => Promise<void>;
   pause: () => void;
@@ -161,6 +171,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   loading: false,
   error: null,
   canSwitchToSupertonic: false,
+  positionError: null,
 
   loadDocument: async (documentId: string) => {
     const requestId = ++navToken;
@@ -177,7 +188,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     try {
       const document = await api.getDocument(documentId);
-      const sections = await api.listSections(documentId);
+      const [sections, restored] = await Promise.all([
+        api.listSections(documentId),
+        readPlaybackState(documentId),
+      ]);
+      const saved = restored.state;
       if (requestId !== navToken) {
         return;
       }
@@ -194,26 +209,45 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         return;
       }
 
+      // Which section to open is the resume cursor's first decision, and it
+      // has to be made before the paragraphs are fetched -- this used to load
+      // `sections[0]` unconditionally, so a cursor in chapter seven would have
+      // indexed chapter one's paragraphs.
+      const sectionIndex = Math.max(
+        0,
+        sections.findIndex((section) => section.id === saved?.sectionId),
+      );
       const [paragraphs, sectionImages] = await Promise.all([
-        api.listParagraphs(sections[0].id),
-        api.listSectionImages(sections[0].id),
+        api.listParagraphs(sections[sectionIndex].id),
+        api.listSectionImages(sections[sectionIndex].id),
       ]);
       if (requestId !== navToken) {
         return;
       }
+      const resumed = resumePosition(saved, sections[sectionIndex], paragraphs);
       set({
         document,
         sections,
         paragraphs,
         sectionImages,
-        currentSectionIndex: 0,
-        currentParagraphIndex: firstReadableParagraphIndex(paragraphs),
-        currentSentenceIndex: 0,
+        currentSectionIndex: sectionIndex,
+        currentParagraphIndex: resumed.paragraphIndex,
+        currentSentenceIndex: resumed.sentenceIndex,
+        // Speed is per document -- a dense textbook and a novel do not want
+        // the same one -- so the reader's global default is only the opening
+        // value for a book that has never been played.
+        speed: saved?.speed ?? useSettingsStore.getState().defaultSpeed,
         loading: false,
         error: null,
         canSwitchToSupertonic: false,
       });
-      await persistPlaybackState(get());
+      await persistPlaybackState(set, get());
+      // After the persist, not before: a successful write clears the notice,
+      // and a book that opened at page one because its cursor could not be
+      // read is still worth saying out loud.
+      if (restored.failure) {
+        set({ positionError: restored.failure });
+      }
     } catch (error) {
       if (requestId !== navToken) {
         return;
@@ -264,6 +298,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       loading: false,
       error: null,
       canSwitchToSupertonic: false,
+      positionError: null,
     });
   },
 
@@ -879,7 +914,7 @@ async function playGeneratedAudio(
 
   try {
     await activeAudio.play();
-    await persistPlaybackState(get());
+    await persistPlaybackState(set, get());
   } catch (error) {
     if (token !== utteranceToken) {
       return;
@@ -1018,7 +1053,7 @@ async function moveToPosition(
       bufferingMessage: "",
       modelDownload: null,
     });
-    await persistPlaybackState(get());
+    await persistPlaybackState(set, get());
   } catch (error) {
     // Ignore failures from a navigation that a newer one (or reset) superseded.
     if (requestId !== navToken) {
@@ -1268,6 +1303,41 @@ function sentenceCount(paragraph: Domain.Paragraph | undefined) {
   return Math.max(1, paragraph.sentenceOffsets.length);
 }
 
+/**
+ * Where in a section's paragraphs a saved cursor points.
+ *
+ * Identity, not ordinal: a re-import renumbers nothing but replaces every id,
+ * so a paragraph that is no longer there is a cursor that no longer means
+ * anything. That case opens the section at its first readable paragraph rather
+ * than at a position the reader never chose.
+ */
+function resumePosition(
+  saved: Domain.PlaybackState | null,
+  section: Domain.Section,
+  paragraphs: Domain.Paragraph[],
+) {
+  const paragraphIndex =
+    saved && saved.sectionId === section.id
+      ? paragraphs.findIndex((paragraph) => paragraph.id === saved.paragraphId)
+      : -1;
+
+  if (paragraphIndex < 0) {
+    return {
+      paragraphIndex: firstReadableParagraphIndex(paragraphs),
+      sentenceIndex: 0,
+    };
+  }
+
+  return {
+    paragraphIndex,
+    sentenceIndex: clamp(
+      saved?.sentenceIndex ?? 0,
+      0,
+      Math.max(0, sentenceCount(paragraphs[paragraphIndex]) - 1),
+    ),
+  };
+}
+
 function firstReadableParagraphIndex(paragraphs: Domain.Paragraph[]) {
   return Math.max(
     0,
@@ -1284,7 +1354,10 @@ function lastReadableParagraphIndex(paragraphs: Domain.Paragraph[]) {
   return Math.max(0, paragraphs.length - 1);
 }
 
-async function persistPlaybackState(state: PlayerState) {
+async function persistPlaybackState(
+  set: (partial: Partial<PlayerState>) => void,
+  state: PlayerState,
+) {
   const document = state.document;
   const section = state.sections[state.currentSectionIndex];
   const paragraph = state.paragraphs[state.currentParagraphIndex];
@@ -1312,8 +1385,29 @@ async function persistPlaybackState(state: PlayerState) {
       speed: state.speed,
       updatedAt: new Date().toISOString(),
     });
-  } catch {
-    // Playback persistence is completed in a later backend task; playback should still work.
+    set({ positionError: null });
+  } catch (error) {
+    set({
+      positionError: `Your place in this book is not being saved. (${displayError(error)})`,
+    });
+  }
+}
+
+/**
+ * The saved cursor, and whatever went wrong reading it.
+ *
+ * A failed read is not a failed open. Left to reach `loadDocument`'s catch it
+ * refused to open the document at all, which turns "we lost your place" into
+ * "you cannot read this book".
+ */
+async function readPlaybackState(documentId: string) {
+  try {
+    return { state: await api.getPlaybackState(documentId), failure: null };
+  } catch (error) {
+    return {
+      state: null,
+      failure: `Could not restore where you left off, so this book opened at the beginning. (${displayError(error)})`,
+    };
   }
 }
 
