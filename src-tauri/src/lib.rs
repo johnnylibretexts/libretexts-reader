@@ -14,7 +14,35 @@ use tauri::Manager;
 use tts::supertonic::model::SupertonicDownload;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Install the logger before anything can want it.
+///
+/// `tracing` and `tracing-subscriber` were dependencies for a long time with
+/// no subscriber and no call site anywhere -- so a `warn!` added in good faith
+/// emitted into nothing and looked handled, which is worse than the silence it
+/// replaced. Initialising is the cheaper half of that fix: the crates are
+/// already compiled in, and a bundled `.app` sends stderr to the unified log,
+/// so `log stream --predicate 'process == "libretexts-reader"'` (or Console)
+/// is a real diagnostic for a reader's bug report.
+///
+/// `warn` by default because this is a desktop app, not a service: anything
+/// louder is noise nobody reads. `RUST_LOG` overrides it for a session.
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("libretexts_reader_lib=warn"));
+
+    // `try_init` rather than `init`: a second call must not panic the app on
+    // startup over logging, and the test binary may already have one.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 pub fn run() {
+    init_tracing();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
