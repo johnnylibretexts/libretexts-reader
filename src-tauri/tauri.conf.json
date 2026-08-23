@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost https://openstax.org https://assets.openstax.org https://images.openstax.org https://*.cnx.org https://*.libretexts.org https://files.mtstatic.com https://*.pressbooks.pub https://milnepublishing.geneseo.edu https://open.library.okstate.edu https://open.maricopa.edu https://pressbooks.online.ucf.edu; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost https://openstax.org https://assets.openstax.org https://images.openstax.org https://*.cnx.org https://*.libretexts.org https://files.mtstatic.com https://*.pressbooks.pub https://milnepublishing.geneseo.edu https://open.library.okstate.edu https://open.maricopa.edu https://pressbooks.online.ucf.edu; connect-src 'self'; media-src 'self' blob:; worker-src 'none'",
       "assetProtocol": {
         "enable": true,
         "scope": [
