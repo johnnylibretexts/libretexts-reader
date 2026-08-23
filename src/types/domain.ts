@@ -12,7 +12,8 @@ export type TtsProvider = "supertonic" | "fish";
 
 export type SourceType = "openstax" | "libretexts" | "pressbooks" | "epub" | "pdf" | "pasted" | "url";
 
-export type Document = { id: string, title: string, sourceType: SourceType, sourceMetadata: JsonValue, coverImagePath: string | null, license: string | null, attribution: string | null, wordCount: number, importedAt: string, lastOpenedAt: string | null, };
+/** `progress` is how far the resume cursor sits into the book, 0 to 1. Derived on read from `playback_state`, never stored -- the cursor is the one thing that decides where playback resumes. Zero for a book never opened. */
+export type Document = { id: string, title: string, sourceType: SourceType, sourceMetadata: JsonValue, coverImagePath: string | null, license: string | null, attribution: string | null, wordCount: number, importedAt: string, lastOpenedAt: string | null, progress: number, };
 
 export type Section = { id: string, documentId: string, ordinal: number, title: string, wordCount: number, };
 

@@ -60,6 +60,7 @@ export function LibraryGrid({
   const loading = useLibraryStore((state) => state.loading);
   const error = useLibraryStore((state) => state.error);
   const remove = useLibraryStore((state) => state.remove);
+  const refresh = useLibraryStore((state) => state.refresh);
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   // The delete the reader has asked for but not yet agreed to. Holding the
@@ -68,6 +69,14 @@ export function LibraryGrid({
   const [pendingDelete, setPendingDelete] = useState<Domain.Document | null>(
     null,
   );
+
+  // Every card's progress is derived from its resume cursor at read time, so a
+  // list fetched before the reader listened is a list of stale bars. The grid
+  // unmounts while the Reader is open, which makes mounting the moment the
+  // reader came back to the shelf -- the one moment the numbers have moved.
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   useEffect(() => {
     function closeMenu() {

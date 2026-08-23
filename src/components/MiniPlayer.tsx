@@ -30,6 +30,7 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
   const isBuffering = usePlayerStore((state) => state.isBuffering);
   const modelDownload = usePlayerStore((state) => state.modelDownload);
   const error = usePlayerStore((state) => state.error);
+  const positionError = usePlayerStore((state) => state.positionError);
   const engineBills =
     SPEECH_ENGINE_BILLS[useSettingsStore((state) => state.ttsProvider)];
   /**
@@ -76,6 +77,17 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
             </button>
           ) : null}
         </div>
+      ) : null}
+
+      {positionError ? (
+        // Quiet on purpose, and `status` rather than `alert`: nothing about
+        // listening has stopped, so this is announced politely and read past.
+        <p
+          className="px-1 text-xs text-amber-700 dark:text-amber-500"
+          role="status"
+        >
+          {positionError}
+        </p>
       ) : null}
 
       {modelDownload ? (

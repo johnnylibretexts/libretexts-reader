@@ -40,6 +40,7 @@ pub fn run() {
             commands::content::list_pressbooks_books,
             commands::content::search_pressbooks_books,
             commands::playback::save_playback_state,
+            commands::playback::get_playback_state,
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_all_settings,

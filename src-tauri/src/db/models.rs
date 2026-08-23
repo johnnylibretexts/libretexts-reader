@@ -16,6 +16,13 @@ pub struct Document {
     pub word_count: u32,
     pub imported_at: DateTime<Utc>,
     pub last_opened_at: Option<DateTime<Utc>>,
+    /// How far into the book the resume cursor sits, from 0.0 to 1.0.
+    ///
+    /// Derived on read from `playback_state`, never stored: the cursor is the
+    /// one thing that decides where playback resumes, so a number kept beside
+    /// it could only ever be a second answer to the same question. Zero for a
+    /// book that has never been opened.
+    pub progress: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

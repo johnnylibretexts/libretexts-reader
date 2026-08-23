@@ -10,7 +10,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 const deleteDocument = vi.fn(async (_id: string) => undefined);
-const listDocuments = vi.fn(async () => []);
+const listDocuments = vi.fn(async (): Promise<Domain.Document[]> => []);
 const searchDocuments = vi.fn(async (_query: string) => []);
 
 vi.mock("../../lib/tauri", () => ({
@@ -49,6 +49,7 @@ function libraryDocument(
     wordCount: 90000,
     importedAt: "2026-08-17T00:00:00Z",
     lastOpenedAt: null,
+    progress: 0,
     ...overrides,
   };
 }
@@ -57,6 +58,9 @@ describe("LibraryGrid", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     deleteDocument.mockResolvedValue(undefined);
+    // Seeded on both sides: the grid re-reads the library when it mounts, so
+    // a store seeded alone is overwritten by whatever the backend answers.
+    listDocuments.mockResolvedValue([libraryDocument()]);
     useLibraryStore.setState({
       documents: [libraryDocument()],
       loading: false,
@@ -257,15 +261,18 @@ describe("LibraryGrid", () => {
   });
 
   describe("empty state", () => {
-    it("names every Source a reader can import from", () => {
+    it("names every Source a reader can import from", async () => {
       // The copy went stale once already: it listed OpenStax, LibreTexts,
       // EPUB, PDF and pasted text while Pressbooks and article URLs had
       // both shipped. A reader who reads this and concludes their Source
       // is unsupported does not go looking in the sidebar.
+      listDocuments.mockResolvedValue([]);
       useLibraryStore.setState({ documents: [], loading: false, error: null });
       render(<LibraryGrid onOpenDocument={vi.fn()} />);
 
-      const copy = screen.getByText(/get started/i).textContent ?? "";
+      // Awaited, not synchronous: the grid re-reads the library on mount, so
+      // the shelf is loading for a tick before it can be empty.
+      const copy = (await screen.findByText(/get started/i)).textContent ?? "";
       for (const source of [
         "OpenStax",
         "LibreTexts",
@@ -277,6 +284,18 @@ describe("LibraryGrid", () => {
       ]) {
         expect(copy).toContain(source);
       }
+    });
+  });
+
+  describe("keeping progress current", () => {
+    it("re-reads the library every time the shelf is shown", async () => {
+      // `progress` is derived from the resume cursor at read time, so a list
+      // fetched at launch shows where the reader was before they listened.
+      // The grid unmounts while the Reader is open, which makes mounting
+      // exactly "the reader came back to the shelf".
+      render(<LibraryGrid onOpenDocument={vi.fn()} />);
+
+      await waitFor(() => expect(listDocuments).toHaveBeenCalled());
     });
   });
 });

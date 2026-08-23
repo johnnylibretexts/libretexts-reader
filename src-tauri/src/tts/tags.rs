@@ -149,6 +149,7 @@ mod tests {
             word_count: 8,
             imported_at: Utc::now(),
             last_opened_at: None,
+            progress: 0.0,
         }
     }
 

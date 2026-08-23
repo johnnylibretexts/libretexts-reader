@@ -13,6 +13,7 @@ const DOCUMENT: Domain.Document = {
   wordCount: 8,
   importedAt: "2026-01-01T00:00:00Z",
   lastOpenedAt: null,
+  progress: 0,
 };
 
 const SECTIONS: Domain.Section[] = [
@@ -80,15 +81,38 @@ const LONG_PARAGRAPHS: Domain.Paragraph[] = [
  * utterance tokens and memoized engine in module scope, and they would
  * otherwise leak between cases.
  */
+interface PlayerOptions {
+  /** What `get_playback_state` returns. Null is a book never opened. */
+  playbackState?: Domain.PlaybackState | null;
+  sections?: Domain.Section[];
+  /** Paragraphs per section id, for the multi-section resume cases. */
+  paragraphsBySection?: Record<string, Domain.Paragraph[]>;
+  /** Makes every persist reject, the way a locked database does. */
+  persistFails?: boolean;
+  /** Makes the resume-cursor read reject. */
+  readFails?: boolean;
+}
+
 async function loadPlayer(
   engines: FakeEngine[],
   paragraphs: Domain.Paragraph[] = PARAGRAPHS,
+  options: PlayerOptions = {},
 ) {
   vi.resetModules();
 
-  const savePlaybackState = vi.fn(
-    async (_state: { voiceId: string }) => undefined,
-  );
+  const sections = options.sections ?? SECTIONS;
+  const savePlaybackState = vi.fn(async (_state: { voiceId: string }) => {
+    if (options.persistFails) {
+      throw new Error("database is locked");
+    }
+    return undefined;
+  });
+  const getPlaybackState = vi.fn(async (_documentId: string) => {
+    if (options.readFails) {
+      throw new Error("database is locked");
+    }
+    return options.playbackState ?? null;
+  });
   let created = 0;
   const createSpeechEngine = vi.fn(
     (_settings: SpeechEngineSettings) =>
@@ -103,10 +127,14 @@ async function loadPlayer(
   vi.doMock("../lib/tauri", () => ({
     api: {
       getDocument: vi.fn(async () => DOCUMENT),
-      listSections: vi.fn(async () => SECTIONS),
-      listParagraphs: vi.fn(async () => paragraphs),
+      listSections: vi.fn(async () => sections),
+      listParagraphs: vi.fn(
+        async (sectionId: string) =>
+          options.paragraphsBySection?.[sectionId] ?? paragraphs,
+      ),
       listSectionImages: vi.fn(async () => []),
       savePlaybackState,
+      getPlaybackState,
       // switchToSupertonic goes through useSettingsStore.setTtsProvider,
       // which calls this; without it the switch action rejects with
       // "api.setSetting is not a function" before it ever reaches the
@@ -117,7 +145,12 @@ async function loadPlayer(
   }));
 
   const { usePlayerStore } = await import("./player");
-  return { usePlayerStore, createSpeechEngine, savePlaybackState };
+  return {
+    usePlayerStore,
+    createSpeechEngine,
+    savePlaybackState,
+    getPlaybackState,
+  };
 }
 
 afterEach(() => {
@@ -1008,5 +1041,207 @@ describe("spending on an engine that bills", () => {
     await playing;
 
     expect(engine.calls).toHaveLength(atPause);
+  });
+});
+
+describe("resuming where the reader stopped", () => {
+  function cursor(
+    overrides: Partial<Domain.PlaybackState> = {},
+  ): Domain.PlaybackState {
+    return {
+      documentId: "doc-1",
+      sectionId: "sec-1",
+      paragraphId: "para-1",
+      sentenceIndex: 0,
+      sentenceOffsetMs: 0,
+      voiceId: "M1",
+      speed: 1,
+      updatedAt: "2026-08-23T12:00:00Z",
+      ...overrides,
+    };
+  }
+
+  it("opens a document at the saved paragraph and sentence", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      playbackState: cursor({ paragraphId: "para-2", sentenceIndex: 0 }),
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().currentParagraphIndex).toBe(1);
+    expect(usePlayerStore.getState().currentSentenceIndex).toBe(0);
+  });
+
+  it("opens a document at the saved sentence within a paragraph", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      playbackState: cursor({ paragraphId: "para-1", sentenceIndex: 1 }),
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().currentParagraphIndex).toBe(0);
+    expect(usePlayerStore.getState().currentSentenceIndex).toBe(1);
+  });
+
+  it("loads the saved section's paragraphs, not the first section's", async () => {
+    // The whole load path was hardcoded to `sections[0]`. A cursor in chapter
+    // seven that only moved the indices would have pointed them at chapter
+    // one's paragraphs -- wrong text, wrong length, and a seek straight past
+    // the end of the array.
+    const engine = await createFake();
+    const SECOND_SECTION: Domain.Section[] = [
+      SECTIONS[0],
+      { id: "sec-2", documentId: "doc-1", ordinal: 1, title: "Chapter Two", wordCount: 3 },
+    ];
+    const SECTION_TWO_PARAGRAPHS: Domain.Paragraph[] = [
+      {
+        id: "para-3",
+        sectionId: "sec-2",
+        ordinal: 0,
+        text: "Chapter two opens.",
+        sentenceOffsets: [[0, 18]],
+        sentenceSpeech: ["Chapter two opens."],
+      },
+    ];
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      sections: SECOND_SECTION,
+      paragraphsBySection: {
+        "sec-1": PARAGRAPHS,
+        "sec-2": SECTION_TWO_PARAGRAPHS,
+      },
+      playbackState: cursor({ sectionId: "sec-2", paragraphId: "para-3" }),
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().currentSectionIndex).toBe(1);
+    expect(usePlayerStore.getState().paragraphs).toEqual(
+      SECTION_TWO_PARAGRAPHS,
+    );
+    expect(usePlayerStore.getState().currentParagraphIndex).toBe(0);
+  });
+
+  it("opens at the beginning when the saved cursor names rows that are gone", async () => {
+    // A re-import replaces every section and paragraph id. The cursor's own
+    // row is cascaded away with them, but a stale one that survives -- or one
+    // read before the delete lands -- must not strand the reader on an index
+    // that does not exist.
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      playbackState: cursor({
+        sectionId: "sec-gone",
+        paragraphId: "para-gone",
+        sentenceIndex: 4,
+      }),
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().currentSectionIndex).toBe(0);
+    expect(usePlayerStore.getState().currentParagraphIndex).toBe(0);
+    expect(usePlayerStore.getState().currentSentenceIndex).toBe(0);
+    expect(usePlayerStore.getState().error).toBeNull();
+  });
+
+  it("restores the speed the book was last played at", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      playbackState: cursor({ speed: 1.4 }),
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().speed).toBe(1.4);
+  });
+
+  it("opens a book never played at the configured default speed", async () => {
+    // Speed is stored per document, so the fallback is the only thing a fresh
+    // book has to go on -- and it is the setting the reader chose, not the
+    // 1.0 the store is seeded with.
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      playbackState: null,
+    });
+    const { useSettingsStore } = await import("./settings");
+    useSettingsStore.setState({ defaultSpeed: 0.9 });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().speed).toBe(0.9);
+  });
+
+  it("opens a never-read book at its first readable paragraph", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      playbackState: null,
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().currentParagraphIndex).toBe(0);
+    expect(usePlayerStore.getState().currentSentenceIndex).toBe(0);
+  });
+});
+
+describe("when the reader's place cannot be saved", () => {
+  it("says so rather than swallowing the failure", async () => {
+    // The catch here was empty, with a comment calling the backend task
+    // unfinished. A reader whose database had gone read-only listened for an
+    // hour and lost the lot, with nothing on screen having suggested it.
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      persistFails: true,
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().positionError).toBeTruthy();
+  });
+
+  it("keeps the book playable, because only the bookkeeping failed", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      persistFails: true,
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().error).toBeNull();
+    expect(usePlayerStore.getState().document).not.toBeNull();
+  });
+
+  it("takes the notice back down once a save succeeds", async () => {
+    const engine = await createFake();
+    // Mutated below: the harness reads this object at call time, so the same
+    // player can be made to fail a save and then succeed at one.
+    const options = { persistFails: true };
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, options);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    expect(usePlayerStore.getState().positionError).toBeTruthy();
+
+    options.persistFails = false;
+    await usePlayerStore.getState().seekToSentence(0, 1);
+
+    expect(usePlayerStore.getState().positionError).toBeNull();
+  });
+
+  it("opens the book at the beginning when the saved place cannot be read", async () => {
+    // A failed read is not a failed open: the book still works, it just starts
+    // over. Letting this reach the outer catch would have refused to open the
+    // document at all.
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      readFails: true,
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    expect(usePlayerStore.getState().document).not.toBeNull();
+    expect(usePlayerStore.getState().currentParagraphIndex).toBe(0);
+    expect(usePlayerStore.getState().error).toBeNull();
+    expect(usePlayerStore.getState().positionError).toBeTruthy();
   });
 });

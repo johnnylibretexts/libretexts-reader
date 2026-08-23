@@ -27,7 +27,10 @@ export function DocumentCard({
   onOpen,
 }: DocumentCardProps) {
   const Icon = sourceIcon(document.sourceType);
-  const progress = 0;
+  // Whole percent, because that is the resolution a bar this wide can show and
+  // the number a screen reader has to read out. `progress` arrives clamped to
+  // 0..1 from the query that derives it -- see `Document.progress`.
+  const progress = Math.round(document.progress * 100);
   // A stored cover can stop rendering -- the file is gone, or is not the image
   // its name claims. Without this the card keeps a broken-image glyph; the
   // Source icon is the fallback that already exists for a Document with no
@@ -71,7 +74,14 @@ export function DocumentCard({
 
       <div className="mt-4 flex flex-col gap-3">
         <div>
-          <div className="h-2 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
+          <div
+            aria-label={`${progress}% through ${document.title}`}
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={progress}
+            className="h-2 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800"
+            role="progressbar"
+          >
             <div
               className="h-full bg-brand-700"
               style={{ width: `${progress}%` }}
