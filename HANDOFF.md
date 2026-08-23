@@ -109,6 +109,89 @@ Copying only the project folder will not copy the local library, downloaded book
 
 ## Recently Landed
 
+### Session of 2026-08-22 (later) — the last two non-human release blockers, and a real signed DMG
+
+Three PRs, three issues closed. `main` at `fa7829c`.
+
+**#54 → [PR #99](https://github.com/johnnylibretexts/libretexts-reader/pull/99)** — Fish playback
+billed the reader with no warning and no way to stop it. **Its premise was verified first, and
+one claim was wrong**: "Pausing does not stop the charge" is overbroad — `fillSpeechBuffer`'s
+workers re-check the utterance token between sentences, so Pause already abandoned the queued
+prefetch; only the ≤2 in flight still billed. Every line reference except `fishEngine.ts:16-36`
+had drifted.
+
+**Two money bugs the audit missed, both reproduced before fixing:**
+
+- `throwIfAborted` ran *after* `invoke` returned, so a request that completed and was charged
+  threw, and `cachedSpeechBlob`'s catch deleted the cache entry — resuming bought the same
+  sentence again. A request that reached a billing engine is paid for; keep it.
+- `cancelSpeech` set `speechAbort = null`, making `speechAbort?.signal` **undefined** for
+  anything issued afterwards. A request started after Pause ran with no signal at all.
+
+Shipped: a confirm gate on the provider picker, read-ahead capped at 3 for a billing engine
+(10 stays for free ones), Pause reachable while buffering, and a standing disclosure beside the
+API key field. `SPEECH_ENGINE_BILLS` is the one declaration of whether an engine costs money.
+**A Rust cancellation channel was deliberately not built** — Fish bills on generation, so
+dropping the connection mid-request leaves the reader charged *and* without the audio.
+
+**#50 → [PR #100](https://github.com/johnnylibretexts/libretexts-reader/pull/100) and
+[PR #101](https://github.com/johnnylibretexts/libretexts-reader/pull/101)** — licence
+compliance. **No LGPL component is bundled any more.**
+
+- **ffmpeg was bundled and never used, ever.** `git log --all -S"ffmpeg" -- src-tauri/src/`
+  returns nothing. It arrived with the initial import; CLAUDE.md's claim that it "handles
+  encoding" was never true. The repo had already written the fact down twice
+  (`verify.yml:152`, `check-ffmpeg-bundle.sh`) and each time responded by adding infrastructure
+  to verify the unused binary loaded. Removing it: 14 functions and ~390 lines from `build.rs`,
+  the `xz2` build-dep, two CI scripts. **DMG 40 MB → 15 MB, `.app` 88 MB → 35 MB.**
+- **`LICENSES/` never reached the bundle**, because `bundle.resources` resolves relative to
+  `src-tauri/`. `mirror_licenses_into_bundle` now copies on *every* build — the first fix put it
+  beside `extract_license_files`, which runs only on a PDFium cache **miss**, so it would never
+  have run on a machine that had built before. `scripts/ci/check-licenses-bundled.sh` reads the
+  built `.app`, because a test asserting on `build.rs` passed against every broken version.
+- **LAME replaced by macOS AudioToolbox (ADR-0004).** Static link + `lto` + `strip` made the
+  LGPL §6 relink right impossible to exercise without maintaining a parallel unstripped build
+  forever. macOS has **no MP3 encoder**, so the container had to change: Supertonic exports are
+  AAC/M4A; Fish keeps MP3 (its API returns it). Tagging dispatches on extension — ID3 onto an
+  M4A *corrupts* it rather than failing, so `tag_chapter_export` errors on an unknown container
+  rather than silently dropping the attribution #97 added. Cache moved to `tts-cache-v3`.
+
+**Three bugs in that work were invisible to review and caught only by rebuilding and looking
+inside the `.app`**: removing `externalBin` did not remove ffmpeg (the `binaries/**` resource
+glob was the real mechanism); the licence fix sat on a rarely-executed branch; and the new check
+itself hardcoded the wrong path (Tauri's `resources/**/*` glob preserves the leading segment, so
+notices land at `Contents/Resources/resources/LICENSES/`).
+
+### Release: signing works, and the manual pipeline has run end to end
+
+**#48's credential half is done.** Fully documented in the issue, but the parts worth not
+rediscovering:
+
+- The Developer ID private key was on **`16-MacBook-Pro`**, not this machine. Two certs exist in
+  the portal (Team `7XU3QW326W`, individual enrolment, legal name **Quang Phung**); the live one
+  expires **2031/06/02**, the other 2027/02/01 and is keyless everywhere — revoke it. A `.p12`
+  was exported and imported here; **keep a durable backup**, its absence caused an hour of
+  archaeology.
+- The certificate alone is not enough: the **`Developer ID Certification Authority G2`**
+  intermediate (`http://certs.apple.com/devidg2.der`) must be installed too. Without it
+  `codesign` fails with `errSecInternalComponent`, whose real message is the line above it —
+  `unable to build chain to self-signed root`.
+- `set-key-partition-list` was **not** needed in a logged-in GUI session; it will be on a
+  headless runner.
+- `APPLE_SIGNING_IDENTITY` is set as a repo variable; the `jr-notary` profile authenticates.
+- **A DMG was built, notarized (Accepted), stapled and passed `spctl`** — `source=Notarized
+  Developer ID`. `release.yml` itself has still never run.
+
+**Gatekeeper will show testers "Quang Phung"**, not LibreTexts — that is what individual
+enrolment puts in the certificate. Changing it needs an Organization enrolment and a D-U-N-S
+number.
+
+**Unverified:** an end-to-end chapter export through the running app. The encoder, tagger and
+paths are each covered, and `afinfo` confirms macOS decodes the output as real AAC
+(`estimated duration: 2.000000 sec` for two seconds of samples) — but the assembled path has
+never been exercised. Also note AudioToolbox is using its **default VBR quality**, not a chosen
+bitrate, against LAME's previous 128 kbps CBR; if exports sound thin, that is the knob.
+
 ### Session of 2026-08-22 — the first-run download, five silent failures, then the release path
 
 Ten PRs, eight issues closed, in three threads.
