@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify the webview's connect-src stays 'self' and nothing else.
+# Verify the webview's connect-src, script-src and worker-src stay tight.
 #
 # The webview makes no network requests at all -- no fetch, XHR or WebSocket
 # anywhere in src/. Every outbound request in this app is Rust's, through
@@ -13,6 +13,18 @@
 # way before #64.
 #
 # Adding a Source does NOT require widening this. That work happens in Rust.
+#
+# script-src and worker-src are here for the same reason and with the same
+# history. Both were widened for Kokoro, which ran ONNX inference in the webview
+# via onnxruntime-web (ADR-0001): 'wasm-unsafe-eval' so it could compile the
+# model, blob: so it could spawn its inference worker. ADR-0003 moved synthesis
+# to Rust and the grants stayed. Verified against the built bundle, not just the
+# sources: `dist/assets/*.js` contains no WebAssembly, Worker or .wasm
+# reference at all.
+#
+# blob: in *media-src* is a different thing and is load-bearing -- playback and
+# the chapter-export preview both play a Blob through URL.createObjectURL. Do
+# not read this check as a reason to touch it.
 #
 # Usage: check-csp.sh
 # Env:   ROOT  repo root (default: git rev-parse --show-toplevel)
@@ -32,8 +44,22 @@ if [ -z "$csp" ]; then
   exit 1
 fi
 
-connect="$(printf '%s' "$csp" | tr ';' '\n' \
-  | sed -n 's/^[[:space:]]*connect-src[[:space:]][[:space:]]*//p')"
+directive() { # $1 = name -> its value, or empty when absent
+  printf '%s' "$csp" | tr ';' '\n' \
+    | sed -n "s/^[[:space:]]*$1[[:space:]][[:space:]]*//p"
+}
+
+# Tokens in $1 that are not in the allowed list $2.
+beyond() {
+  local allowed=" $2 "
+  local extra=""
+  for token in $1; do
+    case "$allowed" in *" $token "*) ;; *) extra="$extra $token";; esac
+  done
+  printf '%s' "$extra"
+}
+
+connect="$(directive connect-src)"
 
 # Fail closed on absence too. Dropping the directive would leave connect-src
 # falling back to default-src, which is tight today -- and would silently
@@ -43,7 +69,7 @@ if [ -z "$connect" ]; then
   exit 1
 fi
 
-extra="$(printf '%s' "$connect" | tr ' ' '\n' | grep -v '^$' | grep -v "^'self'$" || true)"
+extra="$(beyond "$connect" "'self'")"
 
 if [ -n "$extra" ]; then
   echo "connect-src grants hosts the webview never contacts:" >&2
@@ -55,4 +81,47 @@ if [ -n "$extra" ]; then
   exit 1
 fi
 
-echo "csp OK: connect-src is 'self' and nothing else"
+script="$(directive script-src)"
+
+# Fail closed on absence for the same reason as connect-src: script-src would
+# fall back to default-src, tight today, silently widened later.
+if [ -z "$script" ]; then
+  echo "check-csp: no script-src directive in the CSP; it must stay explicit" >&2
+  exit 1
+fi
+
+extra="$(beyond "$script" "'self'")"
+
+if [ -n "$extra" ]; then
+  echo "script-src grants execution primitives the webview does not use:" >&2
+  printf '  %s\n' $extra >&2
+  echo >&2
+  echo "The built bundle contains no WebAssembly, Worker or .wasm reference." >&2
+  echo "Synthesis runs in Rust (ADR-0003); onnxruntime-web went with Kokoro." >&2
+  echo "Each of these re-enables a code-execution path an injection through" >&2
+  echo "dangerouslySetInnerHTML in MathText.tsx could otherwise not reach." >&2
+  exit 1
+fi
+
+worker="$(directive worker-src)"
+
+if [ -z "$worker" ]; then
+  echo "check-csp: no worker-src directive in the CSP; it must stay explicit" >&2
+  echo "Absent, it falls back through child-src to script-src -- which would" >&2
+  echo "permit a same-origin worker rather than denying workers outright." >&2
+  exit 1
+fi
+
+extra="$(beyond "$worker" "'none'")"
+
+if [ -n "$extra" ]; then
+  echo "worker-src grants more than the webview uses:" >&2
+  printf '  %s\n' $extra >&2
+  echo >&2
+  echo "Nothing constructs a Worker. blob: was Kokoro's inference worker." >&2
+  echo "blob: in media-src is unrelated and must stay -- playback and the" >&2
+  echo "export preview both play a Blob through URL.createObjectURL." >&2
+  exit 1
+fi
+
+echo "csp OK: connect-src 'self', script-src 'self', worker-src 'none'"

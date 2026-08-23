@@ -10,6 +10,31 @@ pass=0
 fail=0
 
 make_root() { # $1 = the whole csp string
+  # A tight script-src/worker-src is appended unless $1 names one, so a case
+  # written to exercise connect-src parsing stays about connect-src instead of
+  # failing on a directive it never meant to test.
+  local csp="$1"
+  case "$csp" in *script-src*) ;; *) csp="$csp; script-src 'self'";; esac
+  case "$csp" in *worker-src*) ;; *) csp="$csp; worker-src 'none'";; esac
+  set -- "$csp"
+  local root; root="$(mktemp -d)"
+  mkdir -p "$root/src-tauri"
+  cat > "$root/src-tauri/tauri.conf.json" <<JSON
+{
+  "app": {
+    "security": {
+      "csp": "$1",
+      "assetProtocol": { "enable": true, "scope": ["\$APPDATA/covers/**"] }
+    }
+  }
+}
+JSON
+  echo "$root"
+}
+
+# The CSP written verbatim, with nothing appended. The absence cases need it:
+# make_root would helpfully add back the very directive they remove.
+make_root_exact() { # $1 = the whole csp string
   local root; root="$(mktemp -d)"
   mkdir -p "$root/src-tauri"
   cat > "$root/src-tauri/tauri.conf.json" <<JSON
@@ -65,6 +90,35 @@ expect pass "hosts in img-src while connect-src stays tight" \
 # moment default-src is loosened for something unrelated.
 expect fail "connect-src dropped from the policy entirely" \
   "$(make_root "default-src 'self'; img-src 'self' data:")"
+
+# script-src. 'wasm-unsafe-eval' dates from Kokoro running ONNX in the webview;
+# the shipped bundle has contained no WebAssembly, Worker or .wasm reference
+# since Supertonic moved inference to Rust.
+expect fail "script-src still granting 'wasm-unsafe-eval'" \
+  "$(make_root "default-src 'self'; connect-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'none'")"
+
+expect fail "script-src granting 'unsafe-eval'" \
+  "$(make_root "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-eval'; worker-src 'none'")"
+
+expect fail "script-src granting 'unsafe-inline'" \
+  "$(make_root "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; worker-src 'none'")"
+
+expect fail "script-src dropped from the policy entirely" \
+  "$(make_root_exact "default-src 'self'; connect-src 'self'; worker-src 'none'")"
+
+# worker-src. Nothing constructs a Worker, so 'none' is what the webview uses;
+# blob: was the Kokoro inference worker's grant.
+expect fail "worker-src still granting blob:" \
+  "$(make_root "default-src 'self'; connect-src 'self'; script-src 'self'; worker-src 'self' blob:")"
+
+expect fail "worker-src dropped from the policy entirely" \
+  "$(make_root_exact "default-src 'self'; connect-src 'self'; script-src 'self'")"
+
+# blob: in media-src is load-bearing and must not be confused for the worker
+# grant: playback and the export preview both play a Blob through
+# URL.createObjectURL.
+expect pass "media-src keeps blob: while worker-src is 'none'" \
+  "$(make_root "default-src 'self'; connect-src 'self'; script-src 'self'; worker-src 'none'; media-src 'self' blob:")"
 
 # The other two ways the check can be looking at nothing at all.
 no_csp_root="$(mktemp -d)"; mkdir -p "$no_csp_root/src-tauri"
