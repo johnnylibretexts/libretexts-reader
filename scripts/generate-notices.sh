@@ -32,13 +32,20 @@ if [ ! -d "$ROOT/node_modules" ]; then
   exit 1
 fi
 
-# The fingerprint the freshness check compares against. Both lockfiles, because
-# either can change what ships.
-cargo_lock_hash="$(shasum -a 256 "$ROOT/Cargo.lock" | cut -d' ' -f1)"
-npm_lock_hash="$(shasum -a 256 "$ROOT/package-lock.json" | cut -d' ' -f1)"
-
 rust_notices="$(cd "$ROOT/src-tauri" && cargo about generate about.hbs)"
 npm_notices="$(cd "$ROOT" && node scripts/npm-notices.mjs)"
+
+# The fingerprint the freshness check compares against. Both lockfiles, because
+# either can change what ships.
+#
+# Hashed *after* the generators run, not before. `cargo about` shells out to
+# `cargo metadata`, which rewrites Cargo.lock when it is stale against
+# Cargo.toml -- exactly the state this script exists to be run in, since you
+# run it after bumping a dependency. Hashing first recorded the pre-update
+# Cargo.lock, so check-notices.sh then failed on the file this script had just
+# generated, with nothing to show for the difference.
+cargo_lock_hash="$(shasum -a 256 "$ROOT/Cargo.lock" | cut -d' ' -f1)"
+npm_lock_hash="$(shasum -a 256 "$ROOT/package-lock.json" | cut -d' ' -f1)"
 
 mkdir -p "$ROOT/LICENSES"
 cat > "$output" <<HEADER

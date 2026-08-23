@@ -16,7 +16,7 @@ reader's own machine rather than distributed with the app, and its terms are
 recorded in `supertonic-model.md`.
 
 <!-- cargo-lock-sha256: a6cfad01e464d5d46840df64d19bdbe22728b73a94938251ee65ec5aa8c55f70 -->
-<!-- npm-lock-sha256: dd3ccba0f563f5199d33b318fc4914d5392b864289f01475a0db72d99367460d -->
+<!-- npm-lock-sha256: 18f994ba86e9b28ebb53ee6d3f452e034378b11ef65402219a79fb7143268c0c -->
 
 ## Rust dependencies
 

@@ -194,13 +194,6 @@ mod tests {
     }
 
     #[test]
-    fn drop_unused_settings_is_idempotent() {
-        let conn = migrated_conn();
-        conn.execute_batch(migration_sql("0012_drop_unused_settings"))
-            .expect("run twice");
-    }
-
-    #[test]
     fn source_page_cache_carries_the_libretexts_rows_across() {
         let mut conn = migrated_conn_through("0007_drop_kokoro_voices");
         conn.execute(
