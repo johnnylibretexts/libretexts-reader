@@ -1,14 +1,19 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-22
+Last updated: 2026-08-23
 
-> **Current goal: a private beta.** Signed and notarized, fewer than ten named testers,
-> repo staying private. The gating work is the **`Private beta` milestone** on the tracker
-> — run `gh issue list --milestone "Private beta"` for the live list, and see "The plan: a
-> private beta" under Known Limitations for the shape of
-> it and what the decision retired. The app itself is in good health: 226 Rust and 240
-> frontend tests green, and `npm run tauri:build` produced a real DMG for the first time on
-> 2026-08-21. What is missing is release process, not code.
+> **The private beta is cut.** [**v0.1.0-beta.1**](https://github.com/johnnylibretexts/libretexts-reader/releases/tag/v0.1.0-beta.1)
+> is published as a GitHub pre-release — signed, notarized, stapled, and produced by
+> `release.yml` running unattended from a tag. The **`Private beta` milestone is 11/11
+> closed**. Hand the DMG to fewer than ten named testers; the repo stays private.
+>
+> **The release pipeline works — say so.** Every older passage claiming otherwise has been
+> corrected, but if you find one that was missed, it is stale, not news. See "Release: the
+> pipeline ran itself" below.
+>
+> Seven issues remain open and **none of them gate anything**: #59, #61, #65, #57, #63, #64,
+> #69. The most tester-visible is #59 — playback position is written but never read back, so
+> there is no resume and every progress bar sits at zero.
 
 This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
 
@@ -180,8 +185,9 @@ rediscovering:
   headless runner.
 - `APPLE_SIGNING_IDENTITY` is set as a repo variable; the `jr-notary` profile authenticates.
 - **A DMG was built, notarized (Accepted), stapled and passed `spctl`** — `source=Notarized
-  Developer ID`. `release.yml` itself has still never run. That DMG was **not** the whole
-  story: the `.app` *inside* it had no ticket. See the next section.
+  Developer ID`. Two caveats, both since resolved: `release.yml` had not run at that point
+  (it has now), and that DMG was **not** the whole story — the `.app` *inside* it had no
+  ticket. See the next two sections.
 
 **Gatekeeper will show testers "Quang Phung"**, not LibreTexts — that is what individual
 enrolment puts in the certificate. Changing it needs an Organization enrolment and a D-U-N-S
@@ -225,7 +231,8 @@ LibreTexts Reader.app does not have a ticket stapled to it.
 Consequence is narrow — a tester whose **first launch is offline** sees "cannot be verified";
 online machines are fine because Gatekeeper fetches the ticket. `RELEASE.md` §2 is fixed
 (two-pass: build → codesign → notarize → staple, twice, with the inner-app check in the verify
-block). **`release.yml` is not fixed — that is #102.**
+block). `release.yml` carried the same single-pass bug and was fixed in `899b1dd`; #102 is
+closed.
 
 **Three traps here, all of which cost time this session:**
 
@@ -253,6 +260,58 @@ dry run — automation, explicitly not a prerequisite for a hand-cut private bet
 issues (#59 no resume / progress bars stuck at zero, #61 imports cannot be cancelled, #65
 dependency attribution + Supertonic model licence, #57 the product name, #63/#64/#69 cleanup) are
 none of them milestone-gating.
+
+### Release: the pipeline ran itself, and v0.1.0-beta.1 is published (2026-08-23)
+
+**[v0.1.0-beta.1](https://github.com/johnnylibretexts/libretexts-reader/releases/tag/v0.1.0-beta.1)**
+— GitHub pre-release, `LibreTexts Reader_0.1.0-beta.1_aarch64.dmg`, 16,107,717 bytes,
+SHA-256 `50a4dcf9…531d`. Built and published by `release.yml` from tag `v0.1.0-beta.1` →
+`f1125eb`, unattended, all 14 steps green in 7m20s. Two notarization submissions
+(`234aee5f…`, `c3eea784…`), both Accepted.
+
+`release.yml` had **never executed** before this day. It has now run twice: a
+`workflow_dispatch` dry run (32623022810) and the tag run (32624211360). Both green.
+
+**The published asset was downloaded and verified independently**, not taken on the
+workflow's word: SHA-256 matches the release notes, the DMG is Developer-ID signed and
+stapled, `spctl` accepts it, the **`.app` inside it is stapled**, `LICENSES/` ships, and a
+copy pulled out and marked `com.apple.quarantine` still validates and is accepted. That
+checksum match is load-bearing evidence: the notes' hash is computed *after* pass 2 replaces
+the DMG, so a match proves the published file is the rebuilt, re-signed, re-notarized image
+rather than the one Tauri originally produced.
+
+**The runner.** `jr-release-mac`, runner v2.336.0 in `~/actions-runner`, labels
+`self-hosted, macOS, ARM64, release`.
+
+- **It is `--ephemeral`, which means single-use in a stronger sense than "exits after one
+  job": GitHub deletes the registration** (`√ Removed .credentials` / `√ Removed .runner`)
+  and the repo goes back to `total_count: 0`. Every release needs `config.sh` with a fresh
+  registration token **and then** `run.sh`. Observed twice. Sequence is in `docs/ci.md`,
+  "The runner is single-use".
+- **Labels are case-insensitive.** It registers with GitHub's automatic `macOS`;
+  `runs-on: [self-hosted, macos, release]` matches. Adding a lowercase `macos` is refused as
+  a duplicate read-only label. A mismatch here queues a job nothing picks up, with no failure
+  signal — the exact shape #48 was filed about.
+- **`set-key-partition-list` has never been run and was not needed.** Proven by both runs:
+  `codesign` signed the PDFium dylib with no prompt. That holds only because `run.sh` is
+  started from a logged-in GUI Terminal with the keychain unlocked. Headless or over SSH it
+  will be needed, and it wants the login password.
+
+**Do not trust the timings as costs.** The release job took 6m20s (dry) and 7m20s (tag)
+because `target/` and the cargo registry were warm from local builds the same session. A
+cold runner pays the full release compile plus `ort`'s ~73MB ONNX Runtime fetch;
+`timeout-minutes: 120` is still the right bound and neither run tested it.
+
+**`docs/ci.md` said the runner rules exist "because this repo is public".** It is private
+(#56), with no forks. Corrected in `f1125eb` — and deliberately *without* relaxing the rules:
+a self-hosted runner has no job-level isolation, visibility limits who can trigger a workflow
+rather than what it can do once it lands on a Mac holding a signing key, and the rules must
+already exist if the repo ever goes public. The rule that carries the weight is keeping the
+`release` label exclusive to `release.yml`.
+
+**To cut the next release:** re-register the runner, start it, bump the version in all five
+places (`check-version.sh` guards only three — the two lockfiles bite via `npm ci`), tag,
+push. See `docs/ci.md` "Cutting a release".
 
 ### Session of 2026-08-22 — the first-run download, five silent failures, then the release path
 
@@ -506,11 +565,12 @@ guards: the lockfiles matter because `release.yml` runs `npm ci`, which fails ou
 behind, never pushed) is deleted. Two User-Agents hardcoded the version and were lying to
 Pressbooks servers and huggingface.co; both now derive from `CARGO_PKG_VERSION` with a test each.
 
-**#48 → [PR #83](https://github.com/johnnylibretexts/libretexts-reader/pull/83)** — not closed,
-and cannot be by an agent. `scripts/release-setup.sh` walks the four human-only provisioning
-steps and ends by dispatching the dry run. Nothing is provisioned as of 2026-08-21:
-`security find-identity -v -p codesigning` reports **0 valid identities**, zero runners, zero
-repo variables, no `jr-notary` profile.
+**#48 → [PR #83](https://github.com/johnnylibretexts/libretexts-reader/pull/83)** —
+`scripts/release-setup.sh` walks the four human-only provisioning steps and ends by dispatching
+the dry run. **Everything it provisions is now in place and #48 is closed** (2026-08-23); the
+snapshot that used to sit here — 0 identities, zero runners, zero repo variables, no `jr-notary`
+profile — described 2026-08-21 and is no longer true. The wizard is still the right entry point
+on a *fresh* Mac.
 
 **#53 → [PR #84](https://github.com/johnnylibretexts/libretexts-reader/pull/84)** — Delete now
 confirms, naming the book, from both the trash button and the context menu. Built on the native
@@ -1094,20 +1154,25 @@ working list and is authoritative over this paragraph** — run
 `gh issue list --milestone "Private beta"` rather than trusting what follows, which is a
 snapshot and will drift.
 
-Open as of 2026-08-22 (end of session) — **ten on the tracker, three on this milestone**:
+Open as of 2026-08-23 — **seven on the tracker, zero on the milestone**. The `Private beta`
+milestone is 11/11 closed; #48, #50, #54 and #102 are all done. Nothing below blocks a beta:
 
-- **Release mechanics** — #48 (the pipeline has *never* run — **find the release Mac first**, everything else here assumes it). Re-verified at end of session: `security find-identity -v -p codesigning` reports **0 valid identities**, no Developer ID in the login keychain, no `jr-notary` notary profile, **0** self-hosted runners, and no repo variables or secrets. Nothing is provisioned. The owner has the certificate available in their Apple account and intends to bring it over.
-- **Legal** — #50 (LAME is statically linked under LGPL with no notice and, thanks to `lto` + `strip`, no way to exercise the relink right; `LICENSES/` is never bundled into the `.app` either). **#50 needs a decision before code**: preserving the LGPL relink right means picking one of dynamic linking, shipping object files, or a written offer. That is a licensing call, not an implementation one.
-- **Product** — #54 (Fish bills ~10 sentences per Play with no warning and no stop button). The only remaining blocker an agent can finish unaided; estimated ~4h.
+- **#59** — playback position is written but never read back. No resume, every progress bar
+  stuck at zero. The most visible of these to someone actually listening to a textbook.
+- **#61** — an import cannot be cancelled, and one running import disables Add across every
+  catalog.
+- **#65** — no third-party dependency attribution, and the Supertonic model's licence is
+  unrecorded. The sharper half is the model: testers keep exported audio generated from it.
+- **#57** — using "LibreTexts" as the product name while unaffiliated. Explicitly scoped to a
+  *public* beta, so it does not gate the private one. Needs triage.
+- **#63 / #64 / #69** — dead settings rows, seven unused CSP hosts, content-fidelity gaps.
+  Cleanup. #69 needs triage.
 
-Cleared off this milestone during the session: #49, #52, #53, and **#51**.
-
-**What #66 changed about the release, and why the first dry run is now worth running.**
-`release.yml` runs the real gate before it builds anything publishable, and its timeout has
-headroom for a slow notarization. Both halves are shipped but **unproven** — the `ci.yml` side is
-exercised on every PR, the `release.yml` side cannot be until the pipeline runs at all. Do not
-read #66 as "the release pipeline works"; read it as "the first dry run will now tell you
-something".
+**What #66 changed about the release.** `release.yml` runs the real gate before it builds
+anything publishable, and its timeout has headroom for a slow notarization. Both halves are now
+**proven**: the `ci.yml` side on every PR, and the `release.yml` side by the dry run and the
+v0.1.0-beta.1 tag run on 2026-08-23. The caution that used to sit here — "do not read #66 as
+'the release pipeline works'" — has been satisfied rather than removed.
 
 **Cleared 2026-08-22** — the whole first-run download chain, in one day. #52, made visible and
 cancellable ([PR #86](https://github.com/johnnylibretexts/libretexts-reader/pull/86), `ebea718`);
