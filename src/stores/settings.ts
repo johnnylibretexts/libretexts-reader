@@ -32,12 +32,9 @@ export interface TtsSettingsPatch {
 }
 
 export interface SettingsState {
-  defaultVoiceId: string;
   defaultSpeed: number;
   exportDirectory: string;
   theme: AppTheme;
-  telemetryOptIn: boolean;
-  autoCheckUpdates: boolean;
   ttsProvider: TtsProvider;
   supertonicVoiceStyle: SupertonicVoiceStyle;
   supertonicLanguage: SupertonicLanguage;
@@ -92,12 +89,9 @@ export interface SettingsStore extends SettingsState {
 }
 
 const DEFAULT_SETTINGS: SettingsState = {
-  defaultVoiceId: "M1",
   defaultSpeed: 1,
   exportDirectory: "",
   theme: "system",
-  telemetryOptIn: false,
-  autoCheckUpdates: true,
   ttsProvider: "supertonic",
   supertonicVoiceStyle: "M1",
   supertonicLanguage: "en",
@@ -543,12 +537,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 export async function loadSettings(): Promise<Partial<SettingsState>> {
   const settings = await api.getAllSettings();
   return definedSettings({
-    defaultVoiceId: asString(settings.default_voice_id),
     defaultSpeed: asNumber(settings.default_speed),
     exportDirectory: asString(settings.export_directory),
     theme: asTheme(settings.theme),
-    telemetryOptIn: asBoolean(settings.telemetry_opt_in),
-    autoCheckUpdates: asBoolean(settings.auto_check_updates),
     ttsProvider: asTtsProvider(settings.tts_provider),
     supertonicVoiceStyle: asSupertonicVoiceStyle(
       settings.supertonic_voice_style,
@@ -570,10 +561,6 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function asTheme(value: unknown): AppTheme | undefined {
