@@ -23,7 +23,7 @@ jobs:
   # only cfg(target_os) sites are macOS and Windows arms in paths.rs plus a
   # Windows arm in db/settings.rs, and Linux takes the XDG fallthrough that
   # check-app-data-isolation.sh already exports XDG_DATA_HOME for. build.rs
-  # carries x86_64-unknown-linux-gnu assets for both PDFium and ffmpeg.
+  # carries x86_64-unknown-linux-gnu assets for PDFium.
   #
   # release.yml must stay on macOS -- it codesigns the .app and the bundled
   # dylibs. Only this job moves.
@@ -97,9 +97,9 @@ jobs:
           workspaces: '. -> target'
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # PDFium and ffmpeg are fetched by src-tauri/build.rs into gitignored
-      # directories outside target/, so rust-cache does not cover them and they
-      # were re-downloaded on every run. build.rs pins the asset versions, so
+      # PDFium is fetched by src-tauri/build.rs into a gitignored
+      # directory outside target/, so rust-cache does not cover it and it was
+      # re-downloaded on every run. build.rs pins the asset version, so
       # hashing it is what expires this.
       #
       # Split restore/save rather than `actions/cache`, for the same reason the
@@ -107,8 +107,8 @@ jobs:
       # makes an edit to build.rs that does not touch an asset pin -- a comment,
       # a new target arm -- reuse the existing ~60MB rather than refetch it.
       #
-      # That fallback is only safe because the `.sha256` markers ensure_pdfium
-      # and ensure_ffmpeg gate on record *both* the pinned archive_sha256 and
+      # That fallback is only safe because the `.sha256` marker ensure_pdfium
+      # gates on records *both* the pinned archive_sha256 and
       # an extraction version. They used to record the archive alone, which
       # identifies the bytes downloaded and says nothing about what was
       # unpacked from them -- so a restored tree extracted by superseded logic
@@ -147,15 +147,6 @@ jobs:
         run: |
           scripts/ci/check-app-data-isolation.test.sh
           scripts/ci/check-app-data-isolation.sh
-
-      # After the Rust steps, because it inspects what build.rs extracted. This
-      # is the only place the bundled ffmpeg is ever executed: no Rust source
-      # references it, so no test runs it, and until CI moved to Linux the tar
-      # extraction path had never run at all.
-      - name: Bundled ffmpeg loads its libraries
-        run: |
-          scripts/ci/check-ffmpeg-bundle.test.sh
-          scripts/ci/check-ffmpeg-bundle.sh
 
       # Last, and only once the build that populated these has actually passed.
       # Steps skip by default when an earlier one fails, which is the same

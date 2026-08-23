@@ -2525,7 +2525,6 @@ dependencies = [
  "unicode-segmentation",
  "uuid",
  "wiremock",
- "xz2",
  "zip",
 ]
 

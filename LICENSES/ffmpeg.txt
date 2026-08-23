@@ -1,6 +1,0 @@
-FFmpeg is distributed under the GNU Lesser General Public License version 2.1 or later, depending on build configuration. LibreTexts Reader uses LGPL shared builds for the bundled sidecar.
-
-Sources:
-- https://github.com/BtbN/FFmpeg-Builds
-- https://github.com/ColorsWind/FFmpeg-macOS
-- https://ffmpeg.org/legal.html

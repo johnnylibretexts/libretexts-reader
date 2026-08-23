@@ -21,9 +21,9 @@ Two halves that talk over Tauri's `invoke` bridge:
 - `content/` — importers/normalizers: `openstax.rs`, `libretexts.rs`, `epub.rs`, `pdf.rs` (PDFium), `article.rs` (readability), `images.rs` (download + persist figures), `normalize.rs`, `tokenize.rs`, `document.rs`.
 - `db/` — `rusqlite` + `r2d2` pool (`connection.rs`), `migrations.rs` applies SQL files from `resources/migrations/`, `models.rs`, `library.rs`, `settings.rs`.
 - `secrets.rs` — `SecretStore` trait over the OS keychain (`keyring` crate), holding the one secret this app has: the Fish Audio API key.
-- `build.rs` — downloads/prepares bundled **PDFium** and **ffmpeg** assets on first build (needs network); `paths.rs` resolves the app-data dir.
+- `build.rs` — downloads/prepares the bundled **PDFium** assets on first build (needs network), and writes third-party licence notices to both `LICENSES/` and `src-tauri/resources/LICENSES/` (the second is the copy that ships); `paths.rs` resolves the app-data dir.
 
-**TTS runs in Rust, behind a `TtsProvider` trait** (`src-tauri/src/tts/provider.rs`), mirroring `SpeechEngine` in `src/lib/speech/types.ts` — same idea, two layers. Two implementations today: **Supertonic** (on-device, `Rust ONNX Runtime` / `ort`, on-demand model downloads) and **Fish Audio** (cloud, plain HTTP via `reqwest`, not the webview). `ffmpeg` (external sidecar bin) + `mp3lame` handle encoding for both. Kokoro was removed in favour of Supertonic (ADR-0003).
+**TTS runs in Rust, behind a `TtsProvider` trait** (`src-tauri/src/tts/provider.rs`), mirroring `SpeechEngine` in `src/lib/speech/types.ts` — same idea, two layers. Two implementations today: **Supertonic** (on-device, `Rust ONNX Runtime` / `ort`, on-demand model downloads) and **Fish Audio** (cloud, plain HTTP via `reqwest`, not the webview). `mp3lame` handles MP3 encoding for chapter export. Kokoro was removed in favour of Supertonic (ADR-0003).
 
 - **The webview is the single place an engine is chosen.** `createSpeechEngine` in `src/lib/speech/index.ts` picks the frontend `SpeechEngine`, and every Rust command that synthesizes speech (`synthesize_speech`, the chapter-export commands) takes the provider as a field on the request and dispatches on *that* — never by reading the `tts_provider` settings row itself. A command that fell back to a settings read would make the choice twice, from two sources with no ordering guarantee, which is the bug this rule replaced. Settings still supply the *parameters* a chosen provider needs (voice ids, Supertonic language) — just never which provider runs.
 - **The Fish Audio API key lives in the OS keychain, not the SQLite `settings` table**, via `SecretStore`/`KeyringSecretStore` in `secrets.rs`. There is deliberately no Tauri command that returns the key to the webview — only presence/validity (`get_fish_key_status`) and a live balance (`get_fish_credit`). A getter would put the secret into the webview and into any devtools session, which is the one thing the keychain choice exists to prevent.
@@ -77,8 +77,8 @@ Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p libret
   Actions runner sets `CI` itself, so `release.yml` is unaffected -- this only bites
   by hand, and it reads as "the build is broken" because Tauri swallows the script's
   stderr and reports only `error running bundle_dmg.sh`.
-- **Release signing is manual for bundled natives.** Tauri does not sign the bundled ffmpeg `.dylib`s or `libpdfium.dylib`; sign the source libs with Developer ID + hardened runtime **before** `tauri:build`, or notarization fails. Full runbook: `RELEASE.md`. The auto-updater is disabled in v0.1.0.
-- `build.rs` needs **network on first build** to fetch PDFium/ffmpeg. Bundled binaries/models live in gitignored paths (`src-tauri/binaries/`, `resources/pdfium/`).
+- **Release signing is manual for bundled natives.** Tauri does not sign `libpdfium.dylib`; sign the source lib with Developer ID + hardened runtime **before** `tauri:build`, or notarization fails. Full runbook: `RELEASE.md`. The auto-updater is disabled in v0.1.0.
+- `build.rs` needs **network on first build** to fetch PDFium. Bundled binaries/models live in gitignored paths (`src-tauri/binaries/`, `resources/pdfium/`).
 - The working tree is often intentionally dirty with uncommitted feature work — **do not `git reset --hard`/checkout to "clean up" unless asked.** See `HANDOFF.md` for current WIP and full context.
 
 ## Agent skills

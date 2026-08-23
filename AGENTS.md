@@ -7,7 +7,7 @@ LibreTexts Reader is a free, open-source **Tauri 2 desktop app** that reads Open
 Required tooling:
 - **Node 22.x** (last verified 22.20.0 / npm 10.9.3). Do **not** use Node 24 — Vite/Rollup native addon loading hangs. If your shell defaults to 24: `source "$HOME/.nvm/nvm.sh" && nvm use 22.20.0`.
 - **Rust stable** via rustup — `rust-toolchain.toml` pins it and adds `clippy` + `rustfmt` (workspace `rust-version = 1.88`).
-- macOS: Xcode Command Line Tools. First build needs **network** (Cargo crates + `src-tauri/build.rs` fetching bundled PDFium/ffmpeg).
+- macOS: Xcode Command Line Tools. First build needs **network** (Cargo crates + `src-tauri/build.rs` fetching bundled PDFium).
 
 ```bash
 npm install
@@ -63,8 +63,8 @@ git diff --check                            # whitespace/conflict-marker gate
 - **On-device / offline by design.** The library, downloaded books, TTS models, and images live in the OS app-data dir (`~/Library/Application Support/dev.johnnylibretexts.reader`), never in the repo. Nothing is uploaded.
 - Outbound network is **allowlisted via CSP** in `src-tauri/tauri.conf.json` (`connect-src`/`img-src`: OpenStax, LibreTexts, Hugging Face model hosts, jsDelivr, GitHub). Widen it deliberately when adding a source, and keep the `assetProtocol` scope tight (`$APPDATA/covers/**`, `images/**`).
 - Bundled native binaries/models are gitignored (`src-tauri/binaries/`, `resources/pdfium/`, `resources/voices/`) — never commit them.
-- **Release builds are signed + notarized** (macOS Developer ID). Bundled ffmpeg `.dylib`s and `libpdfium.dylib` must be signed manually with hardened runtime before `tauri:build`, and notarization secrets are stored in a `notarytool` keychain profile — never in the shell or the repo. Full checklist: `RELEASE.md`.
-- Distributed bundles include third-party components under their own licenses (FFmpeg/LGPL, PDFium) — notices are collected in `LICENSES/`.
+- **Release builds are signed + notarized** (macOS Developer ID). `libpdfium.dylib` must be signed manually with hardened runtime before `tauri:build`, and notarization secrets are stored in a `notarytool` keychain profile — never in the shell or the repo. Full checklist: `RELEASE.md`.
+- Distributed bundles include third-party components under their own licenses (PDFium, and LAME via `mp3lame-encoder`) — notices are collected in `LICENSES/`, and `build.rs` also writes them to `src-tauri/resources/LICENSES/` so they actually ship inside the `.app`.
 
 ## Agent skills
 
