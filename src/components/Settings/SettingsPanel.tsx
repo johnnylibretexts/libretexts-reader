@@ -774,6 +774,30 @@ export function SettingsPanel() {
         </p>
       ) : null}
 
+      <div
+        data-testid="known-limitations"
+        className="space-y-1 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400"
+      >
+        <p className="font-medium text-neutral-700 dark:text-neutral-300">
+          What this app does not do yet
+        </p>
+        <ul className="list-disc space-y-1 pl-4">
+          <li>
+            Books are imported as a reading flow, not a copy of the page layout.
+            A table is replaced by a note saying one was omitted, and sidebars
+            and exercises may not be carried across.
+          </li>
+          <li>
+            Equations are read approximately, and some are read only as
+            &ldquo;equation&rdquo;. They are typeset correctly on screen.
+          </li>
+          <li>
+            There is no search inside a book and no bookmarks. The Library
+            search matches book titles only.
+          </li>
+        </ul>
+      </div>
+
       <p
         data-testid="attribution"
         className="text-xs text-neutral-500 dark:text-neutral-400"
