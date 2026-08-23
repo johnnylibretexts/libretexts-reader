@@ -20,6 +20,19 @@ that rather than trusting this paragraph.
 > Pressbooks, which are separate organisations, nor by the individual Pressbooks
 > networks it imports from.
 
+## Download
+
+**[Latest release](https://github.com/johnnylibretexts/libretexts-reader/releases/latest)**
+— a signed and notarized `.dmg`.
+
+**Apple Silicon Macs only.** There is no Intel build and no Windows or Linux
+build. Open the DMG and drag the app to Applications; macOS will not warn you,
+because the build is notarized and stapled.
+
+Releases are pre-release builds during the beta. There are no in-app updates —
+see [Known limitations](#known-limitations) — so check that page for new
+versions.
+
 ## Known limitations
 
 Stated here rather than left to be discovered, because each one is invisible in
@@ -54,7 +67,9 @@ npm run build
 cargo check -p libretexts-reader
 ```
 
-## Distribution
+## Building a release yourself
+
+To download one instead, see [Download](#download) above.
 
 ```bash
 npm run tauri:build
@@ -65,8 +80,11 @@ On macOS, successful local builds produce:
 - `target/release/bundle/macos/LibreTexts Reader.app`
 - `target/release/bundle/dmg/LibreTexts Reader_<version>_aarch64.dmg`
 
-Supertonic playback and chapter MP3 export run through the Rust ONNX Runtime
-backend with on-demand model downloads.
+Supertonic playback and chapter export run through the Rust ONNX Runtime
+backend with on-demand model downloads. Supertonic exports **M4A** (AAC via
+macOS AudioToolbox); Fish Audio returns MP3 from its API. The two providers
+ship different containers on purpose — see
+[ADR 0004](docs/adr/0004-supertonic-exports-aac-not-mp3.md).
 
 ## Fish Audio (optional cloud voice)
 
