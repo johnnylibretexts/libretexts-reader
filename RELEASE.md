@@ -58,8 +58,15 @@ codesign --force --options runtime --timestamp --sign "$ID" \
 
 ### Build, notarize, staple, verify
 
+**The order is build → codesign → notarize → staple, and it runs twice.** Read
+"Why it runs twice" below before changing anything here — both the double pass and
+the `codesign` call are load-bearing, and skipping either produces a DMG that
+passes some checks and fails others.
+
 ```bash
 export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
+ID="$APPLE_SIGNING_IDENTITY"
+ROOT="$(pwd)"
 
 # CI=true is load-bearing for a LOCAL build and is not optional. Without it,
 # `tauri build` gets all the way through compiling and bundling the .app and
@@ -80,15 +87,102 @@ CI=true npm run tauri:build
 # Derived, not hard-coded -- this is the same expression release.yml uses, so
 # the runbook and the workflow cannot disagree about the filename.
 VERSION="$(node -e "process.stdout.write(String(require('./src-tauri/tauri.conf.json').version))")"
-DMG="target/release/bundle/dmg/LibreTexts Reader_${VERSION}_aarch64.dmg"
+DMG="$ROOT/target/release/bundle/dmg/LibreTexts Reader_${VERSION}_aarch64.dmg"
+APP="$ROOT/target/release/bundle/macos/LibreTexts Reader.app"
+
+# --- Pass 1: get the .app a ticket -------------------------------------------
+# Notarizing the DMG also notarizes the .app inside it, which is what makes a
+# ticket available to staple onto the .app on the next line. tauri:build has
+# already codesigned both the .app and this DMG, so there is nothing to sign here.
 xcrun notarytool submit "$DMG" --keychain-profile jr-notary --wait
-xcrun stapler staple "$DMG"
-xcrun stapler staple "target/release/bundle/macos/LibreTexts Reader.app"
-spctl -a -t open --context context:primary-signature -vvv "$DMG"   # expect: accepted, Notarized Developer ID
+xcrun stapler staple "$APP"
+
+# --- Pass 2: rebuild the DMG around the now-stapled .app ----------------------
+STAGE="$(mktemp -d)"
+ditto "$APP" "$STAGE/LibreTexts Reader.app"
+
+# Build to a temp dir under the CANONICAL filename: codesign derives the
+# signature Identifier from the file name, and it must match what pass 1 produced
+# (`LibreTexts Reader_<version>_aarch64`).
+BUILDDIR="$(mktemp -d)"
+NEWDMG="$BUILDDIR/LibreTexts Reader_${VERSION}_aarch64.dmg"
+cd "$ROOT/target/release/bundle/dmg"
+./bundle_dmg.sh --volname "LibreTexts Reader" --icon "LibreTexts Reader.app" 180 170 \
+  --app-drop-link 480 170 --window-size 660 400 \
+  --hide-extension "LibreTexts Reader.app" --volicon "icon.icns" --skip-jenkins \
+  "$NEWDMG" "$STAGE"
+cd "$ROOT"
+
+# codesign BEFORE notarizing. tauri:build signs the .dmg for you; a DMG built by
+# hand from bundle_dmg.sh is NOT signed, and an unsigned DMG notarizes and staples
+# perfectly happily while `spctl` still rejects it with "no usable signature".
+# Signing after stapling is not an option either -- it rewrites the file and
+# invalidates the ticket.
+codesign --force --sign "$ID" --timestamp "$NEWDMG"
+codesign --verify --strict "$NEWDMG"        # cheap + local; do this before the 5-40 min round trip
+xcrun notarytool submit "$NEWDMG" --keychain-profile jr-notary --wait
+xcrun stapler staple "$NEWDMG"
+mv -f "$NEWDMG" "$DMG"
+
+# --- Verify: all five must pass ----------------------------------------------
+codesign -dvv "$DMG" 2>&1 | grep "Authority=Developer ID Application"
+xcrun stapler validate "$DMG"
+spctl -a -t open --context context:primary-signature -vvv "$DMG"  # accepted, Notarized Developer ID
+
+MNT="$(mktemp -d)"
+hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null
+xcrun stapler validate "$MNT/LibreTexts Reader.app"   # the point of pass 2 -- must NOT say
+                                                     # "does not have a ticket stapled to it"
+spctl -a -t exec -vvv "$MNT/LibreTexts Reader.app"
+hdiutil detach "$MNT" >/dev/null
 ```
 
 If notarization returns Invalid, read the log:
 `xcrun notarytool log <submission-id> --keychain-profile jr-notary`.
+
+### Why it runs twice
+
+Tauri bundles the DMG from the `.app` *before* anything is stapled, so a
+single-pass run (notarize DMG → staple DMG → staple `.app`) staples the `.app`
+sitting in `target/release/bundle/macos/` — a copy no one ships. The copy inside
+the DMG, the one a tester drags to `/Applications`, still has no ticket:
+
+```
+$ xcrun stapler validate "/Volumes/LibreTexts Reader/LibreTexts Reader.app"
+LibreTexts Reader.app does not have a ticket stapled to it.
+```
+
+That build is not broken — Gatekeeper accepts it by fetching the ticket from
+Apple over the network — but a tester whose **first launch is offline** gets a
+"cannot be verified" dialog. Pass 2 exists to close that hole, and stapling the
+`.app` costs one extra notarization round trip.
+
+Two ways this hides from you, both worth knowing:
+
+- **`stapler validate` and `spctl` answer different questions.** Stapling asks
+  "is a valid ticket attached to this file?"; `spctl --context
+  context:primary-signature` asks "is this signed by a trusted Developer ID?".
+  An unsigned DMG passes the first and fails the second. Checking only the
+  stapler output ships a broken artifact.
+- **`spctl` uses the network.** On an online machine it reports `accepted /
+  Notarized Developer ID` for an *unstapled* app, because it fetches the ticket
+  from Apple. It cannot tell you whether stapling worked. Only `stapler
+  validate` can, which is why the verify block runs both.
+
+To confirm the end state the way a tester experiences it, copy the app out of the
+mounted DMG and mark it quarantined — that xattr is what triggers Gatekeeper's
+assessment in the first place:
+
+```bash
+ditto "$MNT/LibreTexts Reader.app" "/tmp/qtest/LibreTexts Reader.app"
+xattr -w com.apple.quarantine "0081;00000000;Safari;" "/tmp/qtest/LibreTexts Reader.app"
+xcrun stapler validate "/tmp/qtest/LibreTexts Reader.app"
+spctl -a -t exec -vvv "/tmp/qtest/LibreTexts Reader.app"
+```
+
+**`release.yml` does not do any of this yet** — `release.yml:131-133` is the
+single-pass sequence, so the automated path still produces a DMG whose inner
+`.app` is unstapled. See #102.
 
 ## 3. Pre-publish verification
 

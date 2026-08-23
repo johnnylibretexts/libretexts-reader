@@ -180,7 +180,8 @@ rediscovering:
   headless runner.
 - `APPLE_SIGNING_IDENTITY` is set as a repo variable; the `jr-notary` profile authenticates.
 - **A DMG was built, notarized (Accepted), stapled and passed `spctl`** — `source=Notarized
-  Developer ID`. `release.yml` itself has still never run.
+  Developer ID`. `release.yml` itself has still never run. That DMG was **not** the whole
+  story: the `.app` *inside* it had no ticket. See the next section.
 
 **Gatekeeper will show testers "Quang Phung"**, not LibreTexts — that is what individual
 enrolment puts in the certificate. Changing it needs an Organization enrolment and a D-U-N-S
@@ -191,6 +192,67 @@ paths are each covered, and `afinfo` confirms macOS decodes the output as real A
 (`estimated duration: 2.000000 sec` for two seconds of samples) — but the assembled path has
 never been exercised. Also note AudioToolbox is using its **default VBR quality**, not a chosen
 bitrate, against LAME's previous 128 kbps CBR; if exports sound thin, that is the knob.
+
+### Release: the shipped DMG now staples the `.app` inside it (2026-08-22, later)
+
+**The beta artifact is final and correct.** `LibreTexts Reader_0.1.0-beta.1_aarch64.dmg`,
+16,107,846 bytes, at `target/release/bundle/dmg/`. Signed `Developer ID Application: Quang
+Phung (7XU3QW326W)`, notarization submission `3a0a8f45-58a4-4dc0-8ba1-c4898d40acc5`
+**Accepted**, stapled, `spctl` `accepted / source=Notarized Developer ID` — and the `.app`
+inside the DMG is stapled too, which the previous one was not.
+
+Built from the tree at `fa7829c` (binary stamped `21:06:53`, between `fa7829c` and the
+docs-only `a5bd543`), so it carries the post-#50 licence work.
+
+**The size is a useful signal: 40 MB → 16.1 MB.** That is `c098a7d` (drop the unused ffmpeg
+bundle) and `fa7829c` (AudioToolbox instead of LGPL LAME) landing *in the shipped artifact*,
+not just in source. Two corroborating checks on the same bundle: exactly one bundled native
+remains (`Contents/Resources/resources/pdfium/aarch64-apple-darwin/libpdfium.dylib`, down from
+23 binaries needing pre-signing), and `LICENSES/` is present at
+`Contents/Resources/resources/LICENSES/`. If a future bundle jumps back toward 40 MB,
+something re-entered the bundle.
+
+**The defect that was found — #102.** `RELEASE.md` and `release.yml:131-133` both ran
+notarize DMG → staple DMG → staple `.app`. The third step staples
+`target/release/bundle/macos/LibreTexts Reader.app`, but Tauri built the DMG from that app
+two steps *earlier*, so the copy a tester installs never got a ticket:
+
+```
+$ xcrun stapler validate "/Volumes/LibreTexts Reader/LibreTexts Reader.app"
+LibreTexts Reader.app does not have a ticket stapled to it.
+```
+
+Consequence is narrow — a tester whose **first launch is offline** sees "cannot be verified";
+online machines are fine because Gatekeeper fetches the ticket. `RELEASE.md` §2 is fixed
+(two-pass: build → codesign → notarize → staple, twice, with the inner-app check in the verify
+block). **`release.yml` is not fixed — that is #102.**
+
+**Three traps here, all of which cost time this session:**
+
+- **`stapler validate` and `spctl` answer different questions.** Stapling asks "is a valid
+  ticket attached?"; `spctl --context context:primary-signature` asks "is this signed by a
+  trusted Developer ID?". They are independent.
+- **`spctl` uses the network**, so it reports `accepted / Notarized Developer ID` for an
+  *unstapled* app and cannot tell you whether stapling worked. Only `stapler validate` can.
+  `release.yml:134` runs `spctl` and not `stapler validate`, so the workflow cannot detect
+  this class of bug at all.
+- **`tauri:build` codesigns the `.dmg`; `bundle_dmg.sh` does not.** A hand-rebuilt DMG is
+  unsigned, notarizes and staples happily, and then `spctl` says `rejected / source=no usable
+  signature`. This burned one notarization round trip. `codesign` must come **before**
+  notarizing — signing afterwards rewrites the file and voids the ticket. Run the cheap local
+  `codesign --verify --strict` before the 5–40 minute remote one.
+
+**To confirm the tester's experience**, copy the app out of the mounted DMG and mark it
+quarantined — that xattr is what triggers Gatekeeper's assessment in the first place. Verified
+passing: `xattr -w com.apple.quarantine "0081;00000000;Safari;"`, then `stapler validate` and
+`spctl -a -t exec`.
+
+**Nothing was outstanding before this build.** The `Private beta` milestone is 10 of 11 closed;
+the one open item is #48, whose remaining half is the self-hosted runner and a `workflow_dispatch`
+dry run — automation, explicitly not a prerequisite for a hand-cut private beta. The other open
+issues (#59 no resume / progress bars stuck at zero, #61 imports cannot be cancelled, #65
+dependency attribution + Supertonic model licence, #57 the product name, #63/#64/#69 cleanup) are
+none of them milestone-gating.
 
 ### Session of 2026-08-22 — the first-run download, five silent failures, then the release path
 
