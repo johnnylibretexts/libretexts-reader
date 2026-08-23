@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type * as Domain from "../types/domain";
 import { displayError } from "../lib/errors";
-import { isTauriRuntime } from "../lib/tauri";
+import { api, isTauriRuntime } from "../lib/tauri";
 
 export interface ActiveImport {
   bookId: string;
@@ -27,9 +27,27 @@ interface ImportsState {
     run: () => Promise<string>;
   }) => Promise<void>;
   applyProgress: (payload: Domain.ImportProgress) => void;
+  /**
+   * Abandon the import in flight and let the reader start another.
+   *
+   * Releases the guard on the click rather than when the backend agrees.
+   * Cancellation in Rust is cooperative -- it takes effect at the next page
+   * boundary -- and an import that never settles at all used to lock Add
+   * across every catalog for the rest of the session with nothing to press.
+   */
+  cancel: () => Promise<void>;
   dismissCompleted: () => void;
   clearError: () => void;
 }
+
+/**
+ * Which import the store is still listening to.
+ *
+ * Bumped on every start and on every cancel, so a run whose result arrives
+ * after the reader gave up on it can be recognised and ignored -- the same
+ * device the player and library stores use for out-of-order responses.
+ */
+let activeRun = 0;
 
 export const useImportsStore = create<ImportsState>((set, get) => ({
   active: null,
@@ -50,11 +68,47 @@ export const useImportsStore = create<ImportsState>((set, get) => ({
       error: null,
     });
 
+    const runId = ++activeRun;
+
     try {
       const documentId = await run();
+      if (runId !== activeRun) {
+        // Cancelled, but the fetch was already past its last check point. The
+        // book the reader gave up on must not appear on the shelf, and the
+        // whole document lands in one transaction -- so removing it is the
+        // whole of the cleanup.
+        await api.deleteDocument(documentId).catch(() => undefined);
+        return;
+      }
       set({ active: null, completed: { documentId, title }, error: null });
     } catch (error) {
+      // A cancelled import fails, because the cancel is what failed it.
+      // Reporting that would dress the reader's own click up as a fault.
+      if (runId !== activeRun) {
+        return;
+      }
       set({ active: null, error: displayError(error), completed: null });
+    }
+  },
+
+  cancel: async () => {
+    if (!get().active) {
+      return;
+    }
+
+    // Orphan the run first: everything below can suspend, and the result must
+    // already be ignorable by the time it does.
+    activeRun += 1;
+    set({ active: null, completed: null, error: null });
+
+    try {
+      await api.cancelImport();
+    } catch (error) {
+      // The guard is released either way. But the fetch is still running, and
+      // a strip that just cleared would be claiming otherwise.
+      set({
+        error: `The import may still be running -- it could not be told to stop. (${displayError(error)})`,
+      });
     }
   },
 

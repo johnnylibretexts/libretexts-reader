@@ -2,6 +2,7 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Runtime, State, Window};
 
 use crate::content;
+use crate::content::cancel::ImportCancel;
 use crate::db::connection::DbPool;
 use crate::db::models::{
     LibreTextsBook, LibreTextsLibrary, OpenStaxBook, PressbooksBook, PressbooksCatalog,
@@ -14,9 +15,13 @@ use crate::paths;
 pub async fn import_openstax<R: Runtime>(
     state: State<'_, DbPool>,
     window: Window<R>,
+    cancel: State<'_, ImportCancel>,
     book_uuid: String,
 ) -> AppResult<String> {
     let pool = state.inner().clone();
+    // Cleared on the way in, never on the way out -- see `ImportCancel::clear`.
+    let cancel = ImportCancel::clone(&cancel);
+    cancel.clear();
     let progress_window = window.clone();
     let progress_book_uuid = book_uuid.clone();
     let document = content::openstax::import_book(pool, &book_uuid, move |current, total| {
@@ -30,6 +35,10 @@ pub async fn import_openstax<R: Runtime>(
                 "message": null
             }),
         );
+        // Reported progress and the chance to stop are the same moment: this
+        // runs after each page lands, so a cancel takes effect before the next
+        // request rather than interrupting the one in flight.
+        cancel.check()
     })
     .await?;
 
@@ -53,9 +62,12 @@ pub async fn import_openstax<R: Runtime>(
 pub async fn import_libretexts<R: Runtime>(
     state: State<'_, DbPool>,
     window: Window<R>,
+    cancel: State<'_, ImportCancel>,
     book_id: String,
 ) -> AppResult<String> {
     let pool = state.inner().clone();
+    let cancel = ImportCancel::clone(&cancel);
+    cancel.clear();
     let progress_window = window.clone();
     let progress_book_id = book_id.clone();
     let document = content::libretexts::import_book(pool, &book_id, move |current, total| {
@@ -69,6 +81,7 @@ pub async fn import_libretexts<R: Runtime>(
                 "message": null
             }),
         );
+        cancel.check()
     })
     .await?;
 
@@ -92,11 +105,14 @@ pub async fn import_libretexts<R: Runtime>(
 pub async fn import_pressbooks<R: Runtime>(
     state: State<'_, DbPool>,
     window: Window<R>,
+    cancel: State<'_, ImportCancel>,
     book_url: String,
 ) -> AppResult<String> {
     content::pressbooks::verify_offered_book_url(&book_url)?;
 
     let pool = state.inner().clone();
+    let cancel = ImportCancel::clone(&cancel);
+    cancel.clear();
     let progress_window = window.clone();
     let progress_book_url = book_url.clone();
     // The one place the real covers directory is named. `paths::covers_dir`
@@ -114,6 +130,7 @@ pub async fn import_pressbooks<R: Runtime>(
                     "message": null
                 }),
             );
+            cancel.check()
         })
         .await?;
 
@@ -253,4 +270,16 @@ pub async fn search_pressbooks_books(
     query: String,
 ) -> AppResult<Vec<PressbooksBook>> {
     content::pressbooks::search_books(state.inner().clone(), &host, &query)
+}
+
+/// Ask the import in flight to stop.
+///
+/// Resolves once the request is recorded, not once the import has ended: the
+/// fetch fails at its next page boundary, from inside whichever `import_*`
+/// command is still running. Safe to call when nothing is importing -- the
+/// flag is cleared by the next import that starts.
+#[tauri::command]
+pub async fn cancel_import(cancel: State<'_, ImportCancel>) -> AppResult<()> {
+    cancel.request();
+    Ok(())
 }

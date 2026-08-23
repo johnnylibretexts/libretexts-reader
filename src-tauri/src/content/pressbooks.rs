@@ -683,7 +683,7 @@ impl PressbooksClient {
             let fetched = remote::fetch_all(
                 &rest,
                 CONTENT_CONCURRENCY,
-                |_| {},
+                |_| Ok(()),
                 |page: u32| async move {
                     Ok(self
                         .fetch_collection_page(book_url, kind, page)
@@ -1016,7 +1016,7 @@ pub async fn import_book<F>(
     mut on_progress: F,
 ) -> AppResult<DocumentBuilder>
 where
-    F: FnMut(u32, u32) + Send,
+    F: FnMut(u32, u32) -> AppResult<()> + Send,
 {
     let client = PressbooksClient::new(db);
     let metadata = client.fetch_metadata(book_url).await?;
@@ -1029,12 +1029,12 @@ where
     }
 
     let total = entries.len() as u32;
-    on_progress(0, total);
+    on_progress(0, total)?;
     let pages = client.fetch_content(book_url, &entries).await?;
 
     let mut sections = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
-        on_progress(index as u32 + 1, total);
+        on_progress(index as u32 + 1, total)?;
 
         let Some(page) = pages.iter().find(|page| page.id == entry.id) else {
             // The table of contents said this entry has content. Skipping it
@@ -1289,7 +1289,7 @@ mod tests {
             pool,
             &format!("{}/book", server.uri()),
             covers.path(),
-            |_, _| {},
+            |_, _| Ok(()),
         )
         .await
         .expect("a readable book should import");
@@ -1321,7 +1321,7 @@ mod tests {
             pool,
             &format!("{}/book", server.uri()),
             covers.path(),
-            |_, _| {},
+            |_, _| Ok(()),
         )
         .await
         .expect("the book should import");
@@ -1351,7 +1351,7 @@ mod tests {
             pool,
             &format!("{}/book", server.uri()),
             covers.path(),
-            |_, _| {},
+            |_, _| Ok(()),
         )
         .await
         .expect("a book whose cover 404s should still import");
@@ -1380,7 +1380,7 @@ mod tests {
             pool,
             &format!("{}/book", server.uri()),
             covers.path(),
-            |_, _| {},
+            |_, _| Ok(()),
         )
         .await
         .expect("a book with no cover should still import");
@@ -1399,7 +1399,7 @@ mod tests {
         let server = server_with_book().await;
         let book_url = format!("{}/book", server.uri());
 
-        let document = super::import_book(pool, &book_url, covers.path(), |_, _| {})
+        let document = super::import_book(pool, &book_url, covers.path(), |_, _| Ok(()))
             .await
             .expect("a readable book should import");
 
@@ -1437,7 +1437,7 @@ mod tests {
             pool,
             &format!("{}/book", server.uri()),
             covers.path(),
-            |_, _| {},
+            |_, _| Ok(()),
         )
         .await
         else {
@@ -1927,7 +1927,7 @@ mod tests {
             pool,
             &format!("{}/book", server.uri()),
             covers.path(),
-            |_, _| {},
+            |_, _| Ok(()),
         )
         .await
         .expect("a book whose chapters span two pages should import");
@@ -2673,6 +2673,7 @@ mod tests {
         let document =
             super::import_book(pool.clone(), book_url, covers.path(), |current, total| {
                 eprintln!("Pressbooks smoke import progress: {current}/{total}");
+                Ok(())
             })
             .await
             .expect("a small public Pressbooks book should import");

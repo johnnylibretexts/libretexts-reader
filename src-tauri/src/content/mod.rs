@@ -1,4 +1,5 @@
 pub mod article;
+pub mod cancel;
 pub mod document;
 pub mod epub;
 pub mod html_section;

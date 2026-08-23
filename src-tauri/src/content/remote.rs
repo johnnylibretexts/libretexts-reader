@@ -348,7 +348,7 @@ where
     I: Clone,
     F: Fn(I) -> Fut,
     Fut: Future<Output = AppResult<T>>,
-    P: FnMut(usize),
+    P: FnMut(usize) -> AppResult<()>,
 {
     // No closure here takes a reference in argument position -- not
     // `on_start`, not `fetch_one`, and not the mapping below, which is why it
@@ -362,13 +362,25 @@ where
     //
     // `Iterator::map` is lazy, so `on_start` still fires as each item is
     // dispatched rather than all at once up front.
+    //
+    // `on_start` returns a `Result` so that a cancelled import stops here
+    // rather than being noticed and ignored: the map is lazy, so a failure
+    // means the items after it are never dispatched at all, and `try_collect`
+    // short-circuits on it. Without that, pressing Cancel on a textbook would
+    // observe the request and fetch the rest of the book anyway.
     let dispatched = (0..items.len()).map(|index| {
-        on_start(index);
-        items[index].clone()
+        on_start(index)?;
+        Ok(items[index].clone())
     });
 
+    let fetch_one = &fetch_one;
     futures::stream::iter(dispatched)
-        .map(fetch_one)
+        .map(move |item: AppResult<I>| async move {
+            match item {
+                Ok(value) => fetch_one(value).await,
+                Err(error) => Err(error),
+            }
+        })
         .buffered(concurrency.max(1))
         .try_collect()
         .await
@@ -460,6 +472,44 @@ mod tests {
         }
     }
 
+    /// `on_start` is where cancellation lives: it runs as each item is
+    /// dispatched, so a failure there has to stop the batch rather than be
+    /// discarded. Without propagation a reader's Cancel is observed and then
+    /// ignored, and the remaining pages of a textbook are fetched anyway.
+    #[tokio::test]
+    async fn a_failure_from_on_start_stops_the_batch() {
+        let items = vec![0_usize, 1, 2, 3];
+        let fetched = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&fetched);
+
+        let error = super::fetch_all(
+            &items,
+            1,
+            |index| {
+                if index == 2 {
+                    return Err(AppError::Cancelled("stop here".into()));
+                }
+                Ok(())
+            },
+            move |item: usize| {
+                let counter = Arc::clone(&counter);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Ok(item)
+                }
+            },
+        )
+        .await
+        .expect_err("a failing on_start should fail the batch");
+
+        assert_eq!(error.kind(), "cancelled");
+        assert_eq!(
+            fetched.load(Ordering::SeqCst),
+            2,
+            "the items after the failure must never be requested"
+        );
+    }
+
     #[tokio::test]
     async fn results_come_back_in_item_order_whatever_order_they_finish_in() {
         let items = vec![0_usize, 1, 2, 3];
@@ -469,7 +519,7 @@ mod tests {
         let results = super::fetch_all(
             &items,
             4,
-            |_| {},
+            |_| Ok(()),
             move |item: usize| {
                 let recorder = Arc::clone(&recorder);
                 async move {
@@ -511,7 +561,7 @@ mod tests {
                 super::fetch_all(
                     &items,
                     concurrency,
-                    |_| {},
+                    |_| Ok(()),
                     move |item: usize| {
                         let in_flight = Arc::clone(&in_flight);
                         let peak = Arc::clone(&peak);
@@ -559,7 +609,8 @@ mod tests {
                 dispatch_log
                     .lock()
                     .expect("log is not poisoned")
-                    .push(format!("start {index}"))
+                    .push(format!("start {index}"));
+                Ok(())
             },
             move |item: usize| {
                 let log = Arc::clone(&fetch_log);
@@ -594,7 +645,7 @@ mod tests {
         let error = super::fetch_all(
             &items,
             1,
-            |_| {},
+            |_| Ok(()),
             move |item: usize| {
                 let recorder = Arc::clone(&recorder);
                 async move {

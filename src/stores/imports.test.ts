@@ -8,8 +8,15 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => listen(...args),
 }));
 
+const cancelImport = vi.fn(async () => undefined);
+const deleteDocument = vi.fn(async (_id: string) => undefined);
+
 vi.mock("../lib/tauri", () => ({
   isTauriRuntime: () => isTauriRuntime(),
+  api: {
+    cancelImport: () => cancelImport(),
+    deleteDocument: (id: string) => deleteDocument(id),
+  },
 }));
 
 const { useImportsStore, attachImportListener } = await import("./imports");
@@ -257,5 +264,103 @@ describe("imports store", () => {
     });
 
     expect(useImportsStore.getState().completed?.documentId).toBe("doc-2");
+  });
+});
+
+describe("cancelling an import", () => {
+  /** An import in flight, with the handles to settle it late. */
+  function startImport() {
+    const run = deferred<string>();
+    const started = useImportsStore.getState().start({
+      bookId: "book-1",
+      title: "A Big Textbook",
+      run: () => run.promise,
+    });
+    return { run, started };
+  }
+
+  it("releases the guard without waiting for the backend", async () => {
+    // The whole complaint: an import that never settles locks Add across every
+    // catalog for the rest of the session, with nothing to press. The guard has
+    // to come back on the click, not on the backend agreeing.
+    const { run } = startImport();
+    expect(useImportsStore.getState().active).not.toBeNull();
+
+    await useImportsStore.getState().cancel();
+
+    expect(useImportsStore.getState().active).toBeNull();
+    // Deliberately still unsettled -- this is the hung-import case.
+    void run;
+  });
+
+  it("asks the backend to stop fetching", async () => {
+    startImport();
+
+    await useImportsStore.getState().cancel();
+
+    expect(cancelImport).toHaveBeenCalled();
+  });
+
+  it("lets the reader start a different book straight away", async () => {
+    startImport();
+    await useImportsStore.getState().cancel();
+
+    // Not awaited: `start` only resolves when the import does, and this one is
+    // deliberately left in flight. The guard is claimed synchronously.
+    const second = deferred<string>();
+    void useImportsStore.getState().start({
+      bookId: "book-2",
+      title: "Another Book",
+      run: () => second.promise,
+    });
+
+    expect(useImportsStore.getState().active?.bookId).toBe("book-2");
+    expect(useImportsStore.getState().error).toBeNull();
+  });
+
+  it("throws away a cancelled import that finished anyway", async () => {
+    // Cancellation is cooperative: the fetch can be past its last check point
+    // when the click lands, and persist happens in one transaction at the end.
+    // A book the reader cancelled must not appear on the shelf regardless.
+    const { run, started } = startImport();
+    await useImportsStore.getState().cancel();
+
+    run.resolve("doc-late");
+    await started;
+
+    expect(deleteDocument).toHaveBeenCalledWith("doc-late");
+    expect(useImportsStore.getState().completed).toBeNull();
+    expect(useImportsStore.getState().active).toBeNull();
+  });
+
+  it("shows no error when the cancelled import reports its own failure", async () => {
+    // The cancel is what failed it. Reporting that back to the reader would
+    // dress their own click up as something going wrong.
+    const { run, started } = startImport();
+    await useImportsStore.getState().cancel();
+
+    run.reject(new Error("import cancelled"));
+    await started;
+
+    expect(useImportsStore.getState().error).toBeNull();
+  });
+
+  it("says so when the request to stop could not be delivered", async () => {
+    // The guard is released either way -- but the fetch is still running, and
+    // a strip that simply cleared would be claiming otherwise.
+    cancelImport.mockRejectedValueOnce(new Error("the bridge is gone"));
+    startImport();
+
+    await useImportsStore.getState().cancel();
+
+    expect(useImportsStore.getState().active).toBeNull();
+    expect(useImportsStore.getState().error).toMatch(/still/i);
+  });
+
+  it("does nothing when no import is running", async () => {
+    await useImportsStore.getState().cancel();
+
+    expect(cancelImport).not.toHaveBeenCalled();
+    expect(useImportsStore.getState().error).toBeNull();
   });
 });
