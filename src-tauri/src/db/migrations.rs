@@ -47,6 +47,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0011_pressbooks_partial_crawl",
         include_str!("../../resources/migrations/0011_pressbooks_partial_crawl.sql"),
     ),
+    (
+        "0012_drop_unused_settings",
+        include_str!("../../resources/migrations/0012_drop_unused_settings.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
@@ -146,6 +150,54 @@ mod tests {
         super::apply_migration_list(&mut conn, &super::MIGRATIONS[..count])
             .expect("apply migrations");
         conn
+    }
+
+    #[test]
+    fn drop_unused_settings_removes_the_rows_nothing_reads() {
+        let mut conn = migrated_conn_through("0011_pressbooks_partial_crawl");
+        conn.execute_batch(
+            "INSERT INTO settings (key, value) VALUES ('default_voice_id', '\"F3\"');
+             INSERT INTO settings (key, value) VALUES ('telemetry_opt_in', 'false');
+             INSERT INTO settings (key, value) VALUES ('auto_check_updates', 'true');
+             INSERT INTO settings (key, value) VALUES ('theme', '\"dark\"');",
+        )
+        .expect("seed the rows an existing install carries");
+
+        super::apply_migration_list(&mut conn, super::MIGRATIONS)
+            .expect("apply the unused-settings migration");
+
+        let retired: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings
+                  WHERE key IN ('default_voice_id', 'telemetry_opt_in', 'auto_check_updates')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count the retired rows");
+        assert_eq!(
+            retired, 0,
+            "a reader who opens this database must not find a telemetry or auto-update row \
+             for capabilities the app does not have"
+        );
+
+        let theme: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'theme'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read theme");
+        assert_eq!(
+            theme, "\"dark\"",
+            "the migration must leave every row that is still read alone"
+        );
+    }
+
+    #[test]
+    fn drop_unused_settings_is_idempotent() {
+        let conn = migrated_conn();
+        conn.execute_batch(migration_sql("0012_drop_unused_settings"))
+            .expect("run twice");
     }
 
     #[test]

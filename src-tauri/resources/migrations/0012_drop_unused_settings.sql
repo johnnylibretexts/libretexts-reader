@@ -1,0 +1,22 @@
+-- Three settings rows that nothing has ever read, one of which advertised a
+-- capability the app does not have.
+--
+--   telemetry_opt_in    There is no telemetry, analytics, or crash reporting
+--                       anywhere in this codebase (see PRIVACY.md). A row
+--                       offering to opt in implies there is something to opt
+--                       into, and this database is the first place a curious
+--                       reader looks.
+--   auto_check_updates  Seeded true while the auto-updater is deliberately
+--                       absent -- there is no `updater` key in
+--                       tauri.conf.json at all (RELEASE.md).
+--   default_voice_id    The pre-Supertonic voice row, superseded by
+--                       supertonic_voice_style and fish_voice_id. No playback
+--                       path has read it since Kokoro was removed; 0007 only
+--                       kept rewriting it so a stale value could not linger.
+--
+-- Deleting is safe rather than destructive: the app reads none of these, so
+-- nothing observable changes for a reader. Removing them from
+-- `default_settings()` in db/settings.rs is what stops them coming back --
+-- seeding runs after migrations on every launch.
+DELETE FROM settings
+ WHERE key IN ('default_voice_id', 'telemetry_opt_in', 'auto_check_updates');

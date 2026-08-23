@@ -5,7 +5,6 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
 use crate::error::AppResult;
-use crate::tts::supertonic::voice::is_valid_supertonic_voice_style;
 
 pub fn seed_default_settings(conn: &Connection) -> AppResult<()> {
     for (key, value) in default_settings()? {
@@ -69,12 +68,9 @@ pub fn get_all_settings(conn: &Connection) -> AppResult<HashMap<String, Value>> 
 
 fn default_settings() -> AppResult<Vec<(&'static str, Value)>> {
     Ok(vec![
-        ("default_voice_id", json!("M1")),
         ("default_speed", json!(1.0)),
         ("export_directory", json!(default_export_directory())),
         ("theme", json!("system")),
-        ("telemetry_opt_in", json!(false)),
-        ("auto_check_updates", json!(true)),
         ("tts_provider", json!("supertonic")),
         ("supertonic_voice_style", json!("M1")),
         ("supertonic_language", json!("en")),
@@ -96,10 +92,20 @@ fn default_settings() -> AppResult<Vec<(&'static str, Value)>> {
 /// Nothing surfaced, and the choice reverted on the next launch. This list
 /// must name only providers `TtsProvider` can no longer construct — check
 /// `provider_for` before adding to it.
+///
+/// For the same reason there is no voice-style branch. `default_voice_id`
+/// used to have one, and migration 0012 deleted that row; the guard was not
+/// moved to `supertonic_voice_style`, which is the row playback actually
+/// reads. Nothing writes `default_voice_id`, so rewriting it on the way in
+/// was harmless — the reader writes `supertonic_voice_style` directly, and a
+/// branch here would silently store `M1` for any style this list did not
+/// recognise, exactly as the `fish` case above did. Playback already handles
+/// a stale value safely: `playback_voice_style` falls back rather than
+/// failing, and `resolve_voice_style` rejects loudly on a reader-initiated
+/// command.
 fn migrate_removed_setting(key: &str, value: &mut Value) -> bool {
     match key {
         "tts_provider" => migrate_removed_tts_provider(value),
-        "default_voice_id" => migrate_removed_voice_id(value),
         _ => false,
     }
 }
@@ -108,19 +114,6 @@ fn migrate_removed_tts_provider(value: &mut Value) -> bool {
     match value.as_str() {
         Some("gemini" | "kokoro") => {
             *value = json!("supertonic");
-            true
-        }
-        _ => false,
-    }
-}
-
-/// A voice id belonging to a removed engine is not merely stale: the Supertonic
-/// adapter falls back rather than failing, so it would be silently swapped for
-/// the default on every sentence, forever, with nothing surfaced to the reader.
-fn migrate_removed_voice_id(value: &mut Value) -> bool {
-    match value.as_str() {
-        Some(voice_style) if !is_valid_supertonic_voice_style(voice_style) => {
-            *value = json!("M1");
             true
         }
         _ => false,
@@ -155,7 +148,7 @@ fn documents_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_all_settings, get_setting, set_setting};
+    use super::{get_all_settings, get_setting, seed_default_settings, set_setting};
     use rusqlite::Connection;
     use serde_json::json;
 
@@ -229,33 +222,27 @@ mod tests {
     }
 
     #[test]
-    fn reading_a_stored_kokoro_voice_id_migrates_it() {
+    fn seeding_writes_no_row_the_app_cannot_honour() {
+        // Every seeded row must have a reader. `telemetry_opt_in` would imply
+        // telemetry that does not exist anywhere in this codebase, and
+        // `auto_check_updates` an updater `tauri.conf.json` does not configure
+        // -- both misleading to anyone who opens this database. `default_voice_id`
+        // was the pre-Supertonic voice row and is superseded by
+        // `supertonic_voice_style` / `fish_voice_id`.
         let conn = settings_conn();
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('default_voice_id', ?1)",
-            rusqlite::params!["\"af_heart\""],
-        )
-        .expect("seed a kokoro voice id");
+        seed_default_settings(&conn).expect("seed defaults");
 
         let all = get_all_settings(&conn).expect("read all");
 
-        assert_eq!(all.get("default_voice_id"), Some(&json!("M1")));
-        assert_eq!(raw_value(&conn, "default_voice_id"), "\"M1\"");
-    }
-
-    #[test]
-    fn a_chosen_supertonic_voice_id_is_left_alone() {
-        let conn = settings_conn();
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('default_voice_id', ?1)",
-            rusqlite::params!["\"F3\""],
-        )
-        .expect("seed a chosen voice");
-
-        let value = get_setting(&conn, "default_voice_id")
-            .expect("read")
-            .unwrap();
-
-        assert_eq!(value, json!("F3"));
+        for key in ["default_voice_id", "telemetry_opt_in", "auto_check_updates"] {
+            assert!(
+                !all.contains_key(key),
+                "{key} is seeded but read by nothing"
+            );
+        }
+        assert!(
+            all.contains_key("default_speed"),
+            "default_speed is the fallback speed for a book never played -- it must stay"
+        );
     }
 }

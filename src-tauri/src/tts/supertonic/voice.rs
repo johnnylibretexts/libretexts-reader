@@ -24,12 +24,6 @@ pub(crate) fn is_valid_supertonic_language(language: &str) -> bool {
     SUPERTONIC_LANGUAGES.contains(&language)
 }
 
-pub(crate) fn is_valid_supertonic_voice_style(voice_style: &str) -> bool {
-    SUPERTONIC_VOICE_STYLES
-        .iter()
-        .any(|style| style.eq_ignore_ascii_case(voice_style))
-}
-
 pub(crate) fn resolve_language(value: Option<&str>, fallback: &str) -> AppResult<String> {
     let candidate = value
         .map(str::trim)
