@@ -45,7 +45,7 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json", "gzip", "stream"
 pdfium-render = { version = "0.8", features = ["sync"] }
 readability = "0.3"
 scraper = "0.20"
-zip = "3.0"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 flate2 = "1.0"
 

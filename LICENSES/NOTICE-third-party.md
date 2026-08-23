@@ -15,7 +15,7 @@ The Supertonic voice model is **not** covered here: it is downloaded on the
 reader's own machine rather than distributed with the app, and its terms are
 recorded in `supertonic-model.md`.
 
-<!-- cargo-lock-sha256: 5bc0d5feb837ce7ab4be78f9b658b8eba17e1f6a279356afb81ca14df4ab4a27 -->
+<!-- cargo-lock-sha256: 9379c028ea2701421ce730d852c517668199ab22129a9da82d2e02c5d1df7d4c -->
 <!-- npm-lock-sha256: 2b2d2cfb730c856d5c04f1fcf224a56fb16c635a1b4b988072195ca70207be1e -->
 
 ## Rust dependencies
@@ -26,8 +26,8 @@ ships.
 
 ### Summary
 
-- **Apache-2.0** — 283 components
-- **MIT** — 96 components
+- **Apache-2.0** — 267 components
+- **MIT** — 92 components
 - **ISC** — 21 components
 - **Unicode-3.0** — 19 components
 - **BSD-3-Clause** — 7 components
@@ -48,11 +48,9 @@ ships.
 - tinyvec 1.11.0 — Apache-2.0 — https://github.com/Lokathor/tinyvec
 - utf8_iter 1.0.4 — Apache-2.0 — https://github.com/hsivonen/utf8_iter
 - zeroize 1.8.2 — Apache-2.0 — https://github.com/RustCrypto/utils
-- zeroize_derive 1.4.3 — Apache-2.0 — https://github.com/RustCrypto/utils/tree/master/zeroize/derive
 - rustix 1.1.4 — Apache-2.0 — https://github.com/bytecodealliance/rustix
 - ring 0.17.14 — Apache-2.0 — https://github.com/briansmith/ring
 - zopfli 0.8.3 — Apache-2.0 — https://github.com/zopfli-rs/zopfli
-- crc-catalog 2.5.0 — Apache-2.0 — https://github.com/akhilles/crc-catalog.git
 - tinyvec_macros 0.1.1 — Apache-2.0 — https://github.com/Soveu/tinyvec_macros
 - zerocopy 0.8.48 — Apache-2.0 — https://github.com/google/zerocopy
 - moxcms 0.8.1 — Apache-2.0 — https://github.com/awxkee/moxcms.git
@@ -80,7 +78,6 @@ ships.
 - toml_parser 1.1.2+spec-1.1.0 — Apache-2.0 — https://github.com/toml-rs/toml
 - toml_writer 1.1.1+spec-1.1.0 — Apache-2.0 — https://github.com/toml-rs/toml
 - jsonptr 0.6.3 — Apache-2.0 — https://github.com/chanced/jsonptr
-- crc 3.4.0 — Apache-2.0 — https://github.com/mrhooray/crc-rs.git
 - futures-channel 0.3.32 — Apache-2.0 — https://github.com/rust-lang/futures-rs
 - futures-core 0.3.32 — Apache-2.0 — https://github.com/rust-lang/futures-rs
 - futures-executor 0.3.32 — Apache-2.0 — https://github.com/rust-lang/futures-rs
@@ -112,8 +109,6 @@ ships.
 - bitflags 1.3.2 — Apache-2.0 — https://github.com/bitflags/bitflags
 - bitflags 2.11.1 — Apache-2.0 — https://github.com/bitflags/bitflags
 - bumpalo 3.20.2 — Apache-2.0 — https://github.com/fitzgen/bumpalo
-- bzip2-sys 0.1.13+1.0.8 — Apache-2.0 — https://github.com/alexcrichton/bzip2-rs
-- bzip2 0.5.2 — Apache-2.0 — https://github.com/trifectatechfoundation/bzip2-rs
 - camino 1.2.2 — Apache-2.0 — https://github.com/camino-rs/camino
 - cfg-if 1.0.4 — Apache-2.0 — https://github.com/rust-lang/cfg-if
 - compression-codecs 0.4.38 — Apache-2.0 — https://github.com/Nullus157/async-compression
@@ -152,7 +147,6 @@ ships.
 - lazy_static 1.5.0 — Apache-2.0 — https://github.com/rust-lang-nursery/lazy-static.rs
 - lock_api 0.4.14 — Apache-2.0 — https://github.com/Amanieu/parking_lot
 - log 0.4.29 — Apache-2.0 — https://github.com/rust-lang/log
-- lzma-sys 0.1.20 — Apache-2.0 — https://github.com/alexcrichton/xz2-rs
 - markup5ever 0.11.0 — Apache-2.0 — https://github.com/servo/html5ever
 - markup5ever 0.12.1 — Apache-2.0 — https://github.com/servo/html5ever
 - markup5ever 0.38.0 — Apache-2.0 — https://github.com/servo/html5ever
@@ -206,22 +200,15 @@ ships.
 - window-vibrancy 0.6.0 — Apache-2.0 — https://github.com/tauri-apps/tauri-plugin-vibrancy
 - wry 0.55.1 — Apache-2.0 — https://github.com/tauri-apps/wry
 - xml5ever 0.17.0 — Apache-2.0 — https://github.com/servo/html5ever
-- xz2 0.1.7 — Apache-2.0 — https://github.com/alexcrichton/xz2-rs
 - hashlink 0.9.1 — Apache-2.0 — https://github.com/kyren/hashlink
 - bit-set 0.8.0 — Apache-2.0 — https://github.com/contain-rs/bit-set
 - bit-vec 0.8.0 — Apache-2.0 — https://github.com/contain-rs/bit-vec
-- aes 0.8.4 — Apache-2.0 — https://github.com/RustCrypto/block-ciphers
 - block-buffer 0.10.4 — Apache-2.0 — https://github.com/RustCrypto/utils
 - chacha20 0.10.0 — Apache-2.0 — https://github.com/RustCrypto/stream-ciphers
-- cipher 0.4.4 — Apache-2.0 — https://github.com/RustCrypto/traits
 - cpufeatures 0.2.17 — Apache-2.0 — https://github.com/RustCrypto/utils
 - cpufeatures 0.3.0 — Apache-2.0 — https://github.com/RustCrypto/utils
 - crypto-common 0.1.7 — Apache-2.0 — https://github.com/RustCrypto/traits
 - digest 0.10.7 — Apache-2.0 — https://github.com/RustCrypto/traits
-- hmac 0.12.1 — Apache-2.0 — https://github.com/RustCrypto/MACs
-- inout 0.1.4 — Apache-2.0 — https://github.com/RustCrypto/utils
-- pbkdf2 0.12.2 — Apache-2.0 — https://github.com/RustCrypto/password-hashes/tree/master/pbkdf2
-- sha1 0.10.6 — Apache-2.0 — https://github.com/RustCrypto/hashes
 - sha2 0.10.9 — Apache-2.0 — https://github.com/RustCrypto/hashes
 - rand_core 0.10.1 — Apache-2.0 — https://github.com/rust-random/rand_core
 - rand_core 0.6.4 — Apache-2.0 — https://github.com/rust-random/rand
@@ -242,7 +229,6 @@ ships.
 - libretexts-reader 0.1.0-beta.2 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
 - anyhow 1.0.102 — Apache-2.0 — https://github.com/dtolnay/anyhow
 - async-trait 0.1.92 — Apache-2.0 — https://github.com/dtolnay/async-trait
-- constant_time_eq 0.3.1 — Apache-2.0 — https://github.com/cesarb/constant_time_eq
 - dirs-sys 0.5.0 — Apache-2.0 — https://github.com/dirs-dev/dirs-sys-rs
 - dirs 6.0.0 — Apache-2.0 — https://github.com/soc/dirs-rs
 - dispatch2 0.3.1 — Apache-2.0 — https://github.com/madsmtm/objc2
@@ -317,8 +303,6 @@ ships.
 - unic-ucd-version 0.9.0 — Apache-2.0 — https://github.com/open-i18n/rust-unic/
 - unicode-ident 1.0.24 — Apache-2.0 — https://github.com/dtolnay/unicode-ident
 - utf-8 0.7.6 — Apache-2.0 — https://github.com/SimonSapin/rust-utf8
-- zstd-safe 7.2.4 — Apache-2.0 — https://github.com/gyscos/zstd-rs
-- zstd-sys 2.0.16+zstd.1.5.7 — Apache-2.0 — https://github.com/gyscos/zstd-rs
 - chrono 0.4.44 — Apache-2.0 — https://github.com/chronotope/chrono
 - encoding_rs 0.8.35 — BSD-3-Clause — https://github.com/hsivonen/encoding_rs
 - alloc-no-stdlib 2.0.4 — BSD-3-Clause — https://github.com/dropbox/rust-alloc-no-stdlib
@@ -381,7 +365,6 @@ ships.
 - hyper-util 0.1.20 — MIT — https://github.com/hyperium/hyper-util
 - synstructure 0.13.2 — MIT — https://github.com/mystor/synstructure
 - http-range 0.1.5 — MIT — https://github.com/bancek/rust-http-range.git
-- lzma-rs 0.3.0 — MIT — https://github.com/gendx/lzma-rs
 - precomputed-hash 0.1.1 — MIT — https://github.com/emilio/precomputed-hash
 - readability 0.3.0 — MIT — https://github.com/kumabook/readability.git
 - cfb 0.7.3 — MIT — https://github.com/mdsteele/rust-cfb
@@ -411,10 +394,8 @@ ships.
 - cargo_metadata 0.19.2 — MIT — https://github.com/oli-obk/cargo_metadata
 - zmij 1.0.21 — MIT — https://github.com/dtolnay/zmij
 - winnow 1.0.2 — MIT — https://github.com/winnow-rs/winnow
-- deflate64 0.1.12 — MIT — https://github.com/anatawa12/deflate64-rs
 - tracing-core 0.1.36 — MIT — https://github.com/tokio-rs/tracing
 - zip 8.6.0 — MIT — https://github.com/zip-rs/zip2
-- zip 3.0.0 — MIT — https://github.com/zip-rs/zip2.git
 - vecmath 1.0.0 — MIT — https://github.com/pistondevelopers/vecmath.git
 - id3 1.17.1 — MIT — https://codeberg.org/polyfloyd/rust-id3
 - phf 0.11.3 — MIT — https://github.com/rust-phf/rust-phf
@@ -440,7 +421,6 @@ ships.
 - os_pipe 1.2.3 — MIT — https://github.com/oconnor663/os_pipe.rs
 - shared_child 1.1.1 — MIT — https://github.com/oconnor663/shared_child.rs
 - open 5.3.4 — MIT — https://github.com/Byron/open-rs
-- zstd 0.13.3 — MIT — https://github.com/gyscos/zstd-rs
 - nu-ansi-term 0.50.3 — MIT — https://github.com/nushell/nu-ansi-term
 - generic-array 0.14.7 — MIT — https://github.com/fizyk20/generic-array.git
 - quick-xml 0.38.4 — MIT — https://github.com/tafia/quick-xml
