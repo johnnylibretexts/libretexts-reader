@@ -8,18 +8,28 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { usePlayerStore } from "../../stores/player";
+import { useSettingsStore } from "../../stores/settings";
+import { SPEECH_ENGINE_BILLS } from "../../lib/speech";
 
 export function PlaybackControls() {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const isBuffering = usePlayerStore((state) => state.isBuffering);
   const modelDownload = usePlayerStore((state) => state.modelDownload);
+  const engineBills =
+    SPEECH_ENGINE_BILLS[useSettingsStore((state) => state.ttsProvider)];
   /**
    * Pause stays live through the one-time voice download, where it is the one
    * control that can do anything: it stops the download. Disabling it with
-   * everything else is what made a ~383MB fetch read as a frozen app. Skips
-   * stay disabled -- there is no audio yet to skip through.
+   * everything else is what made a ~383MB fetch read as a frozen app.
+   *
+   * It stays live for a billing engine too, and for the same reason turned
+   * around: buffering is precisely when a burst of charged requests is in
+   * flight, and Pause is what stops the queue. A disabled Pause makes "stop
+   * spending" unclickable at the only moment it matters.
+   *
+   * Skips stay disabled either way -- there is no audio yet to skip through.
    */
-  const playDisabled = isBuffering && !modelDownload;
+  const playDisabled = isBuffering && !modelDownload && !engineBills;
   const play = usePlayerStore((state) => state.play);
   const pause = usePlayerStore((state) => state.pause);
   const skipBack = usePlayerStore((state) => state.skipBack);

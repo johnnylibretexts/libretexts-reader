@@ -13,6 +13,7 @@ import {
 } from "../tauri";
 import {
   SpeechAbortedError,
+  SPEECH_ENGINE_BILLS,
   throwIfAborted,
   type EngineStatus,
   type SettingsSource,
@@ -125,6 +126,7 @@ export function createSupertonicEngine(options: {
 }): SpeechEngine {
   return {
     id: "supertonic",
+    bills: SPEECH_ENGINE_BILLS["supertonic"],
     defaultVoice: options.voiceStyle,
 
     async synthesize(request, signal) {
@@ -142,7 +144,9 @@ export function createSupertonicEngine(options: {
         voiceId: options.voiceStyle,
         language: options.language,
       });
-      throwIfAborted(signal);
+      // Deliberately no second `throwIfAborted` here. The request has already
+      // been sent and, for a billing engine, already charged -- rejecting now
+      // deleted the cache entry and bought the same sentence again on resume.
       return speechAudioToBlob(speech);
     },
 

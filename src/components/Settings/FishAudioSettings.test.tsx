@@ -220,3 +220,42 @@ describe("FishAudioSettings", () => {
     expect(screen.queryByText("Voice saved")).not.toBeInTheDocument();
   });
 });
+
+describe("what the key-entry screen discloses", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setSetting.mockResolvedValue(undefined);
+    listFishVoices.mockResolvedValue([]);
+  });
+
+  it("says what saving a key will cause, next to the input", async () => {
+    // Before this, the only honest account of transmission, retention and
+    // billing lived in README.md -- everywhere except where the reader hands
+    // over the key that pays for it.
+    getFishKeyStatus.mockResolvedValue({ present: false, valid: false });
+    render(<FishAudioSettings onKeyStatusChange={() => {}} />);
+
+    await screen.findByPlaceholderText("Paste your Fish Audio API key");
+
+    expect(
+      screen.getByText(/text being read is sent to Fish Audio/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/may retain/i)).toBeInTheDocument();
+    expect(screen.getByText(/bills the account/i)).toBeInTheDocument();
+  });
+
+  it("keeps the disclosure visible once a key is already saved", async () => {
+    // The facts do not stop applying once the key is in the keychain, and
+    // this screen is the only place a reader can go back and read them.
+    getFishKeyStatus.mockResolvedValue(SAVED_KEY);
+    render(<FishAudioSettings onKeyStatusChange={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/A\s*key is saved/i)).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.getByText(/text being read is sent to Fish Audio/i),
+    ).toBeInTheDocument();
+  });
+});

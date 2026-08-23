@@ -19,6 +19,7 @@ import {
 } from "../../lib/supertonic";
 import { useSettingsStore, type TtsProvider } from "../../stores/settings";
 import { FishAudioSettings } from "./FishAudioSettings";
+import { SPEECH_BILLED_LOOKAHEAD_SENTENCES } from "../../stores/player";
 
 const TTS_PROVIDERS: {
   id: TtsProvider;
@@ -127,6 +128,16 @@ export function SettingsPanel() {
   // #2 and #3 were still queued -- the picker inert with writes outstanding,
   // which is the state this was added to remove.
   const switchSeq = useRef(0);
+  /**
+   * A billing provider the reader has clicked but not yet paid for.
+   *
+   * The picker used to commit on click, so the first thing that told a reader
+   * Fish costs money was their Fish invoice. Consent belongs where the
+   * decision is made -- see the identical gate on the Test button below.
+   */
+  const [pendingProvider, setPendingProvider] = useState<TtsProvider | null>(
+    null,
+  );
   const [testing, setTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -380,6 +391,28 @@ export function SettingsPanel() {
       ? "Model not downloaded"
       : "Checking model";
 
+  /**
+   * Deliberately leaves `saveError` alone. These are separate actions with
+   * separate error lines, and clearing it here erased a "disk full" the reader
+   * may not have read yet -- about a voice and language that still are not
+   * saved.
+   */
+  function commitProvider(id: TtsProvider) {
+    setPendingProvider(null);
+    const seq = ++switchSeq.current;
+    setSwitchingTo(id);
+    // setTtsProvider rethrows on a failed persist; this button doesn't await
+    // it, so it must catch here or the rejection goes unhandled. The `error`
+    // block below already renders the store's shared error field on failure.
+    void setTtsProvider(id)
+      .catch(() => {})
+      .finally(() => {
+        if (switchSeq.current === seq) {
+          setSwitchingTo(null);
+        }
+      });
+  }
+
   return (
     <section className="flex flex-col gap-4">
       <div className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
@@ -408,23 +441,14 @@ export function SettingsPanel() {
               disabled={switchingTo === provider.id || hydrateFailed}
               key={provider.id}
               onClick={() => {
-                // Deliberately leaves `saveError` alone. These are separate
-                // actions with separate error lines, and clearing it here
-                // erased a "disk full" the reader may not have read yet --
-                // about a voice and language that still are not saved.
-                const seq = ++switchSeq.current;
-                setSwitchingTo(provider.id);
-                // setTtsProvider rethrows on a failed persist; this button
-                // doesn't await it, so it must catch here or the rejection
-                // goes unhandled. The `error` block below already renders
-                // the store's shared error field on failure.
-                void setTtsProvider(provider.id)
-                  .catch(() => {})
-                  .finally(() => {
-                    if (switchSeq.current === seq) {
-                      setSwitchingTo(null);
-                    }
-                  });
+                // A provider that bills stops here and waits for an explicit
+                // confirmation; a free one commits on the click, as before.
+                // Already-selected is not a new charge, so it never gates.
+                if (provider.bills && ttsProvider !== provider.id) {
+                  setPendingProvider(provider.id);
+                  return;
+                }
+                commitProvider(provider.id);
               }}
               type="button"
             >
@@ -443,6 +467,60 @@ export function SettingsPanel() {
             </button>
           ))}
         </div>
+
+        {pendingProvider ? (
+          // Named as a group so a screen reader announces it as one unit
+          // rather than loose paragraphs, and so a test can tell this warning
+          // apart from the standing disclosure in <FishAudioSettings>, which
+          // states the same facts a little further down the page.
+          <div
+            aria-label="Cost confirmation"
+            className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30"
+            role="group"
+          >
+            <p className="font-semibold text-amber-900 dark:text-amber-200">
+              {TTS_PROVIDERS.find((p) => p.id === pendingProvider)?.label} is a
+              paid service
+            </p>
+            <div className="mt-1 space-y-2 text-amber-800 dark:text-amber-300">
+              <p>
+                Listening with this voice sends the text being read to a
+                third-party server and{" "}
+                <strong>bills your Fish Audio account</strong>, using the API
+                key you provide. It is metered per character.
+              </p>
+              <p>
+                Playback is not billed sentence by sentence as you hear it. To
+                keep audio gapless the player reads ahead, so each press of
+                Play buys{" "}
+                <strong>up to {SPEECH_BILLED_LOOKAHEAD_SENTENCES} sentences</strong>{" "}
+                at once, and so does each seek past what is already buffered.
+                Sentences bought ahead of a passage you skip are still billed.
+              </p>
+              <p>
+                Pause stops further requests, but a request already sent cannot
+                be recalled and is still charged.
+              </p>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                className="inline-flex h-9 items-center gap-2 rounded-md bg-amber-700 px-4 text-sm font-medium text-white hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                onClick={() => commitProvider(pendingProvider)}
+                type="button"
+              >
+                Confirm and use{" "}
+                {TTS_PROVIDERS.find((p) => p.id === pendingProvider)?.label}
+              </button>
+              <button
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-amber-300 px-4 text-sm font-medium text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                onClick={() => setPendingProvider(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {ttsProvider === "fish" && fishKeyPresent === false ? (
           <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-300">

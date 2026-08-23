@@ -1,5 +1,5 @@
 import { api } from "../tauri";
-import { throwIfAborted, type SpeechEngine } from "./types";
+import { SPEECH_ENGINE_BILLS, throwIfAborted, type SpeechEngine } from "./types";
 import { speechAudioToBlob } from "./supertonicEngine";
 
 /**
@@ -9,6 +9,7 @@ import { speechAudioToBlob } from "./supertonicEngine";
 export function createFishEngine(options: { voiceId: string | null }): SpeechEngine {
   return {
     id: "fish",
+    bills: SPEECH_ENGINE_BILLS["fish"],
     // Fish has no built-in default voice; an unset one is an error the user
     // can act on, raised by Rust rather than guessed at here.
     defaultVoice: options.voiceId ?? "",
@@ -28,7 +29,9 @@ export function createFishEngine(options: { voiceId: string | null }): SpeechEng
         voiceId: options.voiceId ?? "",
         language: null,
       });
-      throwIfAborted(signal);
+      // Deliberately no second `throwIfAborted` here. The request has already
+      // been sent and, for a billing engine, already charged -- rejecting now
+      // deleted the cache entry and bought the same sentence again on resume.
       return speechAudioToBlob(speech);
     },
 

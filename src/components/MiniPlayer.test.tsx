@@ -5,6 +5,7 @@ import type * as Domain from "../types/domain";
 
 const { MiniPlayer } = await import("./MiniPlayer");
 const { usePlayerStore } = await import("../stores/player");
+const { useSettingsStore } = await import("../stores/settings");
 
 const DOCUMENT: Domain.Document = {
   id: "doc-1",
@@ -39,7 +40,25 @@ afterEach(() => {
     bufferingMessage: "",
     modelDownload: null,
   });
+  useSettingsStore.setState({ ttsProvider: "supertonic" });
   vi.restoreAllMocks();
+});
+
+describe("pausing an engine that bills", () => {
+  it("keeps Pause reachable while a billing engine buffers", async () => {
+    // Buffering is exactly when a Fish reader most needs Pause: the burst of
+    // billed requests is in flight, and Pause is what stops the queue. A
+    // disabled Pause makes "stop spending" literally unclickable.
+    useSettingsStore.setState({ ttsProvider: "fish" });
+    showMiniPlayer({
+      isPlaying: true,
+      isBuffering: true,
+      bufferingMessage: "Buffering Fish Audio audio",
+      modelDownload: null,
+    });
+
+    expect(screen.getByRole("button", { name: /^pause$/i })).toBeEnabled();
+  });
 });
 
 describe("the one-time voice download in the mini player", () => {

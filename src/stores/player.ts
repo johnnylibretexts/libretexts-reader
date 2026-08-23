@@ -90,6 +90,12 @@ let activeAudio: HTMLAudioElement | null = null;
 let activeAudioUrl: string | null = null;
 const SPEECH_INITIAL_BUFFER_SENTENCES = 3;
 const SPEECH_LOOKAHEAD_SENTENCES = 10;
+// A billing engine reads far less far ahead. Ten sentences per Play is free
+// for Supertonic and roughly ten charges for Fish -- paid up front, before the
+// reader has heard one of them, and thrown away by the first seek past the
+// buffer. Three still covers the gap between sentences without buying most of
+// a page the reader may never reach.
+export const SPEECH_BILLED_LOOKAHEAD_SENTENCES = 3;
 const SPEECH_PREFETCH_CONCURRENCY = 2;
 const SPEECH_CACHE_LIMIT = 32;
 // Sentinel paragraph/sentence index meaning "the last one in the section".
@@ -503,6 +509,19 @@ function activeEngine(): ActiveEngine {
   return cachedEngine.active;
 }
 
+/**
+ * How many sentences to buy ahead of the one being spoken.
+ *
+ * Asked of the engine rather than read from settings, so the answer always
+ * describes the engine actually speaking -- see the rule in CLAUDE.md that a
+ * provider decision is made once, in `createSpeechEngine`, and never re-derived.
+ */
+function lookaheadFor(engine: SpeechEngine) {
+  return engine.bills
+    ? SPEECH_BILLED_LOOKAHEAD_SENTENCES
+    : SPEECH_LOOKAHEAD_SENTENCES;
+}
+
 async function speakWithBufferedSpeech(
   engine: SpeechEngine,
   /** The snapshot `engine` was built from — never re-read the store here. */
@@ -517,7 +536,7 @@ async function speakWithBufferedSpeech(
   const label = SPEECH_ENGINE_LABELS[engine.id];
   const lookaheadPositions = speechPositionsFromCurrent(
     get(),
-    SPEECH_LOOKAHEAD_SENTENCES,
+    lookaheadFor(engine),
   );
   set({
     isPlaying: true,
@@ -601,7 +620,7 @@ async function speakWithBufferedSpeech(
     void fillSpeechBuffer(
       engine,
       settings,
-      speechPositionsFromCurrent(get(), SPEECH_LOOKAHEAD_SENTENCES),
+      speechPositionsFromCurrent(get(), lookaheadFor(engine)),
       token,
       get,
     );
@@ -1321,7 +1340,11 @@ function stopModelDownload() {
 function cancelSpeech() {
   utteranceToken += 1;
   speechAbort?.abort();
-  speechAbort = null;
+  // The aborted controller deliberately stays. Clearing it to null made
+  // `speechAbort?.signal` undefined for anything issued afterwards, so a
+  // request that started after Pause carried no signal at all and ran to
+  // completion -- billed in full, for audio nobody was waiting for. `play`
+  // installs a fresh controller when playback actually resumes.
   clearGeneratedAudio();
 }
 

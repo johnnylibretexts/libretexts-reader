@@ -24,6 +24,23 @@ export const SPEECH_ENGINE_LABELS: Record<SpeechEngineId, string> = {
   fish: "Fish Audio",
 };
 
+/**
+ * Whether an engine charges the reader for each sentence it speaks.
+ *
+ * Keyed by id rather than living only on the engine, because the screen that
+ * *chooses* a provider has to ask before any engine exists. `SpeechEngine.bills`
+ * reads from this same record, so a picker and a running engine can never
+ * disagree about whether money is involved.
+ *
+ * This changes behaviour, not just copy: a billing engine reads far less far
+ * ahead, because every prefetched sentence is spent whether or not the reader
+ * ever hears it.
+ */
+export const SPEECH_ENGINE_BILLS: Record<SpeechEngineId, boolean> = {
+  supertonic: false,
+  fish: true,
+};
+
 export interface SpeechVoice {
   id: string;
   name: string;
@@ -48,10 +65,15 @@ export interface SynthesisRequest {
  * Callers never name an engine. They hold a `SpeechEngine` and use it; which
  * concrete engine it is has already been decided, once, by `createSpeechEngine`.
  *
- * On cancellation: `signal` is honoured where it is cheap — work not yet
- * started is skipped, and a result that arrives after abort is discarded.
- * Synthesis already in flight cannot be aborted: the Rust command has no
- * cancellation channel, so the signal shortens nothing that has begun.
+ * On cancellation: `signal` prevents work from *starting*. Synthesis already
+ * in flight cannot be aborted — the Rust command has no cancellation channel,
+ * so the signal shortens nothing that has begun.
+ *
+ * A result that arrives after abort is therefore deliberately NOT discarded.
+ * For a billing engine the request has already been charged, and throwing the
+ * blob away only means buying the same sentence again on the next Play. The
+ * player decides what to *play* from the utterance token; keeping the audio
+ * costs a cache slot and saves real money.
  */
 /**
  * What an engine reports while making itself ready.
@@ -82,6 +104,8 @@ export interface EngineStatus {
 
 export interface SpeechEngine {
   readonly id: SpeechEngineId;
+  /** See `SPEECH_ENGINE_BILLS`. */
+  readonly bills: boolean;
   /**
    * The voice this engine actually speaks in, as configured.
    *

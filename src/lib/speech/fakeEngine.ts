@@ -1,4 +1,5 @@
 import {
+  SPEECH_ENGINE_BILLS,
   throwIfAborted,
   type EngineStatus,
   type SpeechEngine,
@@ -62,6 +63,7 @@ export function createFakeEngine(
 
   return {
     id,
+    bills: SPEECH_ENGINE_BILLS[id],
     defaultVoice: voiceIds[0],
     calls,
 
@@ -122,7 +124,8 @@ export function createFakeEngine(
         throw selectiveError;
       }
 
-      throwIfAborted(signal);
+      // No post-synthesis abort check, matching the real engines: a request
+      // that reached the engine has been paid for and is kept.
       // Content differs per request so tests can tell two results apart.
       return new Blob([`audio:${request.speed}:${request.text}`], {
         type: "audio/wav",
