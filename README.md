@@ -79,6 +79,12 @@ If you enable Fish, be aware:
 The LibreTexts Reader source code is licensed under Apache-2.0 (see `LICENSE`).
 
 Distributed app bundles also include third-party components under their own
-licenses — for example the PDFium binaries, and the `id3` and `mp4ameta` crates
-(MIT) that writes attribution into exported MP3s. Their notices are collected in
-the `LICENSES/` directory.
+licenses. `LICENSES/NOTICE-third-party.md` attributes every one of them —
+generated from the lockfiles by `scripts/generate-notices.sh`, and shipped
+inside the `.app`. The bundled native components (the PDFium binaries, and the
+`id3` and `mp4ameta` crates that write attribution into exported audio) carry
+their full notices as separate files in the same directory.
+
+The on-device voice model is downloaded to your machine rather than distributed
+with the app; its terms, and what they mean for audio you export, are in
+`LICENSES/supertonic-model.md`.
