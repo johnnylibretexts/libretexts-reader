@@ -59,6 +59,11 @@ jobs:
           scripts/ci/check-updater-key.test.sh
           scripts/ci/check-updater-key.sh
 
+      - name: Webview CSP check
+        run: |
+          scripts/ci/check-csp.test.sh
+          scripts/ci/check-csp.sh
+
       # The crate depends on tauri, which links webkit2gtk through pkg-config on
       # Linux -- there is no vendored fallback, so this must run before any Rust
       # step. This is Tauri's documented Ubuntu prerequisite list; several
