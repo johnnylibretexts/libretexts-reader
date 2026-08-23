@@ -66,9 +66,11 @@ If you enable it:
   material aloud, weigh that before enabling it. See Fish Audio's own privacy
   documentation for their current terms.
 - **It bills your account as you listen.** Not sentence-by-sentence: to keep audio
-  gapless the player synthesizes about ten sentences ahead, so each press of Play — and
-  each seek past what is already buffered — bills for roughly ten sentences at once,
-  including any you skip past or never hear.
+  gapless the player reads ahead, so each press of Play — and each seek past what is
+  already buffered — buys up to three sentences at once, including any you skip past or
+  never hear. Pause stops further requests; one already sent cannot be recalled and is
+  still charged. Choosing Fish Audio for playback requires confirming all of this first,
+  and the same facts sit beside the API key field in Settings.
 
 Your key is stored in the OS keychain, validated once against Fish's wallet endpoint when
 you save it, and never written to the app's database.

@@ -11,6 +11,7 @@ import { api, isTauriRuntime, type FishKeyStatus } from "../../lib/tauri";
 import { displayError } from "../../lib/errors";
 import type { SpeechVoice } from "../../lib/speech/types";
 import { useSettingsStore } from "../../stores/settings";
+import { SPEECH_BILLED_LOOKAHEAD_SENTENCES } from "../../stores/player";
 
 const FISH_API_KEYS_URL = "https://fish.audio/app/api-keys";
 
@@ -309,7 +310,36 @@ export function FishAudioSettings({
         </span>
       </div>
 
-      <div className="mt-5 rounded-md border border-neutral-200 bg-stone-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+      {/*
+        The three facts a reader is entitled to before handing over a key that
+        spends their money. Rendered unconditionally, not only while the input
+        is showing: they do not stop applying once the key is saved, and this
+        screen is the only place a reader can come back and re-read them. The
+        sentence figure is imported rather than written out, so it cannot drift
+        from the read-ahead the player actually performs.
+      */}
+      <div className="mt-3 rounded-md border border-neutral-200 bg-stone-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
+        <p>
+          Fish Audio is a cloud service. The{" "}
+          <strong>text being read is sent to Fish Audio&rsquo;s servers</strong>{" "}
+          over the network to be spoken.
+        </p>
+        <p className="mt-1.5">
+          Fish Audio <strong>may retain</strong> request data to improve their
+          models. That is their policy, not something this app controls &mdash;
+          consider it before reading licensed or sensitive material aloud.
+        </p>
+        <p className="mt-1.5">
+          Synthesis is metered and{" "}
+          <strong>bills the account behind this key</strong>. Each press of Play
+          buys up to {SPEECH_BILLED_LOOKAHEAD_SENTENCES} sentences at once, as
+          does each seek past what is already buffered; sentences bought ahead
+          of a passage you skip are still charged. Pause stops further requests,
+          but one already sent cannot be recalled.
+        </p>
+      </div>
+
+      <div className="mt-3 rounded-md border border-neutral-200 bg-stone-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
         {keyStatus === null ? (
           <p className="inline-flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />

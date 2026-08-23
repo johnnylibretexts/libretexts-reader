@@ -5,6 +5,7 @@ import type * as Domain from "../../types/domain";
 
 const { ReaderHeader } = await import("./ReaderHeader");
 const { usePlayerStore } = await import("../../stores/player");
+const { useSettingsStore } = await import("../../stores/settings");
 
 const DOCUMENT: Domain.Document = {
   id: "doc-1",
@@ -177,5 +178,23 @@ describe("the one-time voice download in the reader", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("Buffering Supertonic audio")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^(play|pause)$/i })).toBeDisabled();
+  });
+});
+
+describe("pausing an engine that bills", () => {
+  afterEach(() => {
+    useSettingsStore.setState({ ttsProvider: "supertonic" });
+  });
+
+  it("keeps Pause reachable while a billing engine buffers", async () => {
+    useSettingsStore.setState({ ttsProvider: "fish" });
+    showReader({
+      isPlaying: true,
+      isBuffering: true,
+      bufferingMessage: "Buffering Fish Audio audio",
+      modelDownload: null,
+    });
+
+    expect(screen.getByRole("button", { name: /^pause$/i })).toBeEnabled();
   });
 });

@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { ModelDownloadProgress } from "./ModelDownloadProgress";
 import { usePlayerStore } from "../stores/player";
+import { useSettingsStore } from "../stores/settings";
+import { SPEECH_ENGINE_BILLS } from "../lib/speech";
 
 interface MiniPlayerProps {
   onClose: () => void;
@@ -28,12 +30,13 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
   const isBuffering = usePlayerStore((state) => state.isBuffering);
   const modelDownload = usePlayerStore((state) => state.modelDownload);
   const error = usePlayerStore((state) => state.error);
+  const engineBills =
+    SPEECH_ENGINE_BILLS[useSettingsStore((state) => state.ttsProvider)];
   /**
-   * See `PlaybackControls`: Pause stays live through the one-time voice
-   * download, because stopping that download is the only thing any control
-   * can usefully do while it runs.
+   * See `PlaybackControls` for why Pause stays live through the one-time
+   * voice download and through a billing engine's buffering.
    */
-  const playDisabled = isBuffering && !modelDownload;
+  const playDisabled = isBuffering && !modelDownload && !engineBills;
   const canSwitchToSupertonic = usePlayerStore(
     (state) => state.canSwitchToSupertonic,
   );

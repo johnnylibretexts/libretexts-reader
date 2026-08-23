@@ -936,3 +936,77 @@ describe("the one-time model download", () => {
     expect(usePlayerStore.getState().modelDownload).toBeNull();
   });
 });
+
+describe("spending on an engine that bills", () => {
+  it("reads only three sentences ahead, not ten", async () => {
+    // Supertonic is free and local, so a deep read-ahead costs nothing but
+    // CPU. Fish bills every sentence, and the reader pays for the whole
+    // burst whether or not they listen to it -- so the same Play must buy
+    // far less. LONG_PARAGRAPHS holds six sentences, which is enough to tell
+    // a capped read-ahead from an uncapped one.
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine], LONG_PARAGRAPHS);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    await vi.waitFor(() => expect(engine.calls.length).toBeGreaterThan(0));
+
+    expect(engine.calls).toHaveLength(3);
+  });
+
+  it("still reads far ahead for an engine that costs nothing", async () => {
+    const engine = await createFake({ id: "supertonic" });
+    const { usePlayerStore } = await loadPlayer([engine], LONG_PARAGRAPHS);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    await vi.waitFor(() => expect(engine.calls).toHaveLength(6));
+
+    expect(engine.calls).toHaveLength(6);
+  });
+
+  it("never synthesizes the same sentence twice across a pause", async () => {
+    // A request that reached the engine has already been billed. Aborting it
+    // afterwards used to throw, which deleted the cache entry, so resuming
+    // bought the very same sentence a second time. The reader pays twice and
+    // hears it once.
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine], LONG_PARAGRAPHS);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    const release = engine.blockNextSynthesis();
+    const playing = usePlayerStore.getState().play();
+    await vi.waitFor(() => expect(engine.calls.length).toBeGreaterThanOrEqual(2));
+    usePlayerStore.getState().pause();
+    release();
+    await playing;
+
+    await usePlayerStore.getState().play();
+    await vi.waitFor(() => expect(engine.calls.length).toBeGreaterThanOrEqual(3));
+
+    const spoken = engine.calls.map((call) => call.text);
+    expect(new Set(spoken).size).toBe(spoken.length);
+  });
+
+  it("sends nothing more to the engine once the reader has paused", async () => {
+    // `cancelSpeech` used to drop the AbortController entirely, so a request
+    // issued afterwards read `speechAbort?.signal` as undefined and ran with
+    // no signal at all -- billed in full, for audio nobody asked for.
+    const engine = await createFake({ id: "fish" });
+    const { usePlayerStore } = await loadPlayer([engine], LONG_PARAGRAPHS);
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    const release = engine.blockNextSynthesis();
+    const playing = usePlayerStore.getState().play();
+    await vi.waitFor(() => expect(engine.calls.length).toBeGreaterThanOrEqual(2));
+    const atPause = engine.calls.length;
+
+    usePlayerStore.getState().pause();
+    release();
+    await playing;
+
+    expect(engine.calls).toHaveLength(atPause);
+  });
+});

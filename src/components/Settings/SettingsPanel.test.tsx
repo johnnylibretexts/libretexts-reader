@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SpeechEngine, SpeechEngineSettings } from "../../lib/speech";
@@ -32,6 +32,7 @@ vi.mock("../../lib/tauri", () => ({
 
 const engine: SpeechEngine = {
   id: "supertonic",
+  bills: false,
   defaultVoice: "M1",
   synthesize: vi.fn(async () => new Blob(["audio"], { type: "audio/wav" })),
   ensureReady: vi.fn(async () => undefined),
@@ -103,7 +104,14 @@ describe("SettingsPanel voice test", () => {
     await user.click(screen.getByRole("button", { name: /Save/ }));
     await screen.findByText(/draft write failed/);
 
-    await user.click(screen.getByRole("button", { name: /Fish Audio/ }));
+    // Fish bills, so the picker gates on an explicit confirmation before it
+    // writes anything -- see "choosing a provider that bills" below.
+    await user.click(
+      screen.getByRole("button", { name: /^Fish AudioCloud, voice cloning$/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /confirm and use fish audio/i }),
+    );
 
     await screen.findByText(/provider write failed/);
     expect(useSettingsStore.getState().ttsProvider).toBe("supertonic");
@@ -141,7 +149,14 @@ describe("SettingsPanel voice test", () => {
       expect(screen.getAllByText(/database is locked/)).toHaveLength(1),
     );
 
-    await user.click(screen.getByRole("button", { name: /Fish Audio/ }));
+    // Fish bills, so the picker gates on an explicit confirmation before it
+    // writes anything -- see "choosing a provider that bills" below.
+    await user.click(
+      screen.getByRole("button", { name: /^Fish AudioCloud, voice cloning$/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /confirm and use fish audio/i }),
+    );
 
     // The provider failure has no local line of its own, so it has to show up
     // in the shared banner -- alongside, not instead of, the voice error.
@@ -172,6 +187,9 @@ describe("SettingsPanel voice test", () => {
     const fish = screen.getByRole("button", { pressed: false });
     const supertonic = screen.getByRole("button", { pressed: true });
     await user.click(fish);
+    await user.click(
+      screen.getByRole("button", { name: /confirm and use fish audio/i }),
+    );
 
     expect(
       await screen.findByLabelText("Switching to Fish Audio"),
@@ -251,5 +269,79 @@ describe("SettingsPanel voice test", () => {
     // the assertion.
     await screen.findByText(/disk full/);
     expect(voiceStyle).toHaveValue("F3");
+  });
+});
+
+describe("choosing a provider that bills", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setSetting.mockResolvedValue(undefined);
+    getFishKeyStatus.mockResolvedValue({ present: false, valid: false });
+    getAllSettings.mockResolvedValue({});
+    useSettingsStore.setState({
+      hydrated: true,
+      hydrateFailed: false,
+      loading: false,
+      error: null,
+      ttsProvider: "supertonic",
+      supertonicVoiceStyle: "M1",
+      supertonicLanguage: "en",
+      fishVoiceId: null,
+    });
+  });
+
+  it("does not switch to a billing provider on the click alone", async () => {
+    // The picker used to commit on click, so the reader's first notice that
+    // Fish costs money was their Fish invoice. Consent is collected where the
+    // decision is made.
+    render(<SettingsPanel />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /^Fish AudioCloud, voice cloning$/i }),
+    );
+
+    expect(useSettingsStore.getState().ttsProvider).toBe("supertonic");
+  });
+
+  it("states the billing model, including what one press of Play costs", async () => {
+    render(<SettingsPanel />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /^Fish AudioCloud, voice cloning$/i }),
+    );
+
+    // Scoped to the gate: <FishAudioSettings> states the same facts further
+    // down the page, so an unscoped query matches both and proves neither.
+    const gate = within(screen.getByRole("group", { name: /cost confirmation/i }));
+    expect(gate.getByText(/bills your Fish Audio account/i)).toBeInTheDocument();
+    expect(gate.getByText(/up to 3 sentences/i)).toBeInTheDocument();
+  });
+
+  it("switches once the reader has confirmed", async () => {
+    render(<SettingsPanel />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /^Fish AudioCloud, voice cloning$/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /confirm and use fish audio/i }),
+    );
+
+    await waitFor(() =>
+      expect(useSettingsStore.getState().ttsProvider).toBe("fish"),
+    );
+  });
+
+  it("still switches to a provider that costs nothing on one click", async () => {
+    useSettingsStore.setState({ ttsProvider: "fish" });
+    render(<SettingsPanel />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /^SupertonicLocal, on-device$/i }),
+    );
+
+    await waitFor(() =>
+      expect(useSettingsStore.getState().ttsProvider).toBe("supertonic"),
+    );
   });
 });
