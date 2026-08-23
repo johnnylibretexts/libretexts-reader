@@ -6,9 +6,11 @@ script="$here/check-identifier.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/src-tauri/src"
+printf 'pub const KEYCHAIN_SERVICE: &str = "dev.example.reader";\n' > "$tmp/src-tauri/src/secrets.rs"
 
 write_conf() { printf '{ "identifier": "%s" }\n' "$1" > "$tmp/src-tauri/tauri.conf.json"; }
 write_paths() { printf 'const APP_DIR_NAME: &str = "%s";\n' "$1" > "$tmp/src-tauri/src/paths.rs"; }
+write_secrets() { printf 'pub const KEYCHAIN_SERVICE: &str = "%s";\n' "$1" > "$tmp/src-tauri/src/secrets.rs"; }
 
 # Writes a conf with a real assetProtocol.scope array so the scope check has
 # something to inspect. $2 is the raw (already-quoted) array contents, e.g.
@@ -176,5 +178,30 @@ if ROOT="$tmp" bash "$script" >/dev/null 2>&1; then
   echo "FAIL: later unrelated 'scope' stood in for the missing assetProtocol one" >&2; exit 1
 fi
 echo "PASS: later unrelated 'scope' does not stand in for a missing one"
+
+# Case 10: KEYCHAIN_SERVICE agrees with the identifier -> exit 0
+write_conf_with_scope dev.example.reader '"$APPDATA/covers/**", "$APPDATA/images/**"'
+write_paths dev.example.reader
+write_secrets dev.example.reader
+ROOT="$tmp" bash "$script" >/dev/null
+echo "PASS: matching KEYCHAIN_SERVICE accepted"
+
+# Case 11: KEYCHAIN_SERVICE left behind when the identifier moves -> non-zero.
+# This is the drift with no visible symptom: the app still builds, still runs,
+# and still renders every image -- it just looks for the reader's Fish Audio
+# key under a service name nothing writes any more, so the key silently
+# vanishes and they are asked to enter it again.
+write_secrets dev.old.reader
+if ROOT="$tmp" bash "$script" >/dev/null 2>&1; then
+  echo "FAIL: stale KEYCHAIN_SERVICE not detected" >&2; exit 1
+fi
+echo "PASS: stale KEYCHAIN_SERVICE rejected"
+
+# Case 12: KEYCHAIN_SERVICE missing from secrets.rs -> non-zero
+printf 'pub const SOMETHING_ELSE: &str = "x";\n' > "$tmp/src-tauri/src/secrets.rs"
+if ROOT="$tmp" bash "$script" >/dev/null 2>&1; then
+  echo "FAIL: missing KEYCHAIN_SERVICE not detected" >&2; exit 1
+fi
+echo "PASS: missing KEYCHAIN_SERVICE rejected"
 
 echo "ALL TESTS PASSED"

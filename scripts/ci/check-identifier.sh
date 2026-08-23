@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Verify the Tauri bundle identifier matches APP_DIR_NAME in paths.rs.
+# Verify the Tauri bundle identifier matches APP_DIR_NAME in paths.rs and
+# KEYCHAIN_SERVICE in secrets.rs.
 # Both independently name the same app-data directory, and Tauri resolves the
 # assetProtocol "$APPDATA" scope from the identifier -- so if they drift, the
 # build stays green and every cover and figure silently stops rendering.
@@ -13,6 +14,7 @@ ROOT="${ROOT:-$(git rev-parse --show-toplevel)}"
 # set up, alongside the other cheap pre-toolchain checks.
 identifier="$(sed -n '/"identifier"/{s/.*"identifier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/;p;q;}' "$ROOT/src-tauri/tauri.conf.json")"
 app_dir="$(sed -n 's/^const APP_DIR_NAME: &str = "\(.*\)";$/\1/p' "$ROOT/src-tauri/src/paths.rs")"
+keychain="$(sed -n 's/^pub const KEYCHAIN_SERVICE: &str = "\(.*\)";$/\1/p' "$ROOT/src-tauri/src/secrets.rs")"
 
 if [ -z "$identifier" ]; then
   echo "check-identifier: no 'identifier' in src-tauri/tauri.conf.json" >&2
@@ -29,7 +31,29 @@ if [ "$identifier" != "$app_dir" ]; then
   exit 1
 fi
 
-echo "identifier OK: tauri.conf.json and paths.rs both == $identifier"
+# The fourth declaration of this string, and the one with no visible symptom.
+# A drifted APP_DIR_NAME or assetProtocol scope stops every cover and figure
+# rendering, which someone notices immediately. A drifted KEYCHAIN_SERVICE
+# breaks nothing you can see: the app builds, runs and renders, and simply
+# looks for the reader's Fish Audio API key under a service name nothing
+# writes any more. The key is still in their keychain -- the app just cannot
+# find it, so it reports no key and asks them to paste it again, with no error
+# anywhere to explain why.
+if [ -z "$keychain" ]; then
+  echo "check-identifier: no KEYCHAIN_SERVICE in src-tauri/src/secrets.rs" >&2
+  exit 1
+fi
+
+if [ "$identifier" != "$keychain" ]; then
+  echo "identifier mismatch: tauri.conf.json has '$identifier', secrets.rs KEYCHAIN_SERVICE has '$keychain'" >&2
+  echo >&2
+  echo "This one is silent. Nothing breaks visibly -- the reader's stored Fish" >&2
+  echo "Audio key just stops being found, and they are asked to enter it again." >&2
+  echo "Move it with the identifier, or migrate the existing keychain entry." >&2
+  exit 1
+fi
+
+echo "identifier OK: tauri.conf.json, paths.rs and secrets.rs all == $identifier"
 
 # Every app.security.assetProtocol.scope entry must stay $APPDATA-relative.
 # Replacing one with a literal path (e.g. a hardcoded absolute path) keeps
