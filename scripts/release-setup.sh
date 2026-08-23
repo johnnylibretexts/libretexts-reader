@@ -406,9 +406,11 @@ else
 fi
 
 printf '\n'
-warn "The runner is --ephemeral: it takes ONE job and exits."
+warn "The runner is --ephemeral: it takes ONE job, then deletes its own registration."
 say "Open a second terminal now and leave this running:"
 note "  cd $RUNNER_DIR && ./run.sh"
+note "  (for the NEXT release, re-run config.sh first -- see docs/ci.md,"
+note "   \"The runner is single-use\")"
 printf '\n'
 pause "Press Enter once ./run.sh is listening…"
 
@@ -442,6 +444,9 @@ fi
 
 finish
 printf '  %sNext:%s once the dry run is green, cut the beta:\n' "$BOLD" "$RESET"
-note "  cd $RUNNER_DIR && ./run.sh     # ephemeral: start it again per release"
+note "  cd $RUNNER_DIR && ./config.sh --url https://github.com/$REPO \\"
+note "    --token \"\$(gh api -X POST repos/$REPO/actions/runners/registration-token --jq .token)\" \\"
+note "    --labels macos,release --name jr-release-mac --ephemeral --unattended"
+note "  ./run.sh                       # ephemeral: config.sh AND run.sh, per release"
 note "  git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1"
 printf '\n'

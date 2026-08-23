@@ -25,8 +25,10 @@ this repo is **public**, a self-hosted runner is only safe under these rules
   code from a fork PR.
 - Only `release.yml` uses the `release` runner label. Never add that label to any
   other (especially PR-triggered) workflow.
-- Run the runner **on-demand / ephemeral** — start it when cutting a release, stop
-  it afterward. Do not leave it idling 24/7.
+- Run the runner **on-demand / ephemeral** — register and start it when cutting a
+  release, and let it remove itself afterward. Do not leave it idling 24/7. Note
+  that with `--ephemeral` "start it again" means **re-register**, not just re-run
+  `./run.sh` — see "The runner is single-use" below.
 
 ## One-time setup
 
@@ -48,8 +50,10 @@ this repo is **public**, a self-hosted runner is only safe under these rules
    ./config.sh --url https://github.com/johnnylibretexts/libretexts-reader \
      --token <REG_TOKEN> --labels macos,release --name jr-release-mac --ephemeral
    ```
-   `--ephemeral` makes the runner take one job then exit (re-run `./run.sh` per
-   release), which is the recommended on-demand posture.
+   `--ephemeral` makes the runner take exactly one job and then **delete its own
+   registration**, which is the recommended on-demand posture. It also means this
+   `config.sh` command is not one-time: it is the per-release command. See "The
+   runner is single-use" below.
 
 2. **Set the signing-identity variable** (non-secret):
    ```bash
@@ -80,8 +84,13 @@ this repo is **public**, a self-hosted runner is only safe under these rules
 #    The lockfiles matter: release.yml runs `npm ci`, which fails outright when
 #    package-lock.json disagrees with package.json. Then commit.
 #    Verify with: scripts/ci/check-version.sh <version>
-# 2. Start the runner on the release Mac:
-./run.sh            # (in the runner install dir; exits after one job if --ephemeral)
+# 2. Register AND start the runner on the release Mac. Both, every release --
+#    the previous run deleted the registration on its way out.
+cd ~/actions-runner
+./config.sh --url https://github.com/johnnylibretexts/libretexts-reader \
+  --token "$(gh api -X POST repos/johnnylibretexts/libretexts-reader/actions/runners/registration-token --jq .token)" \
+  --labels macos,release --name jr-release-mac --ephemeral --unattended
+./run.sh            # takes one job, then exits and deregisters itself
 # 3. Push the tag:
 git tag v0.1.1
 git push origin v0.1.1
@@ -89,6 +98,38 @@ git push origin v0.1.1
 The workflow builds, signs, notarizes, and publishes automatically. A tag whose
 version contains a pre-release suffix (e.g. `v0.2.0-beta.1`) is published as a
 GitHub **pre-release**; a plain `vX.Y.Z` becomes a full release.
+
+## The runner is single-use
+
+`--ephemeral` does not merely make `./run.sh` exit after one job. GitHub **removes
+the runner from the repository** when that job finishes, so
+`gh api repos/.../actions/runners` goes back to `{"total_count":0}` and the
+install directory's `.runner` credentials are no longer valid for anything.
+
+Re-running `./run.sh` on its own therefore does not work for a second release. The
+per-release sequence is `config.sh` *then* `run.sh`, with a fresh registration
+token each time (they expire in about an hour):
+
+```bash
+cd ~/actions-runner
+./config.sh --url https://github.com/johnnylibretexts/libretexts-reader \
+  --token "$(gh api -X POST repos/johnnylibretexts/libretexts-reader/actions/runners/registration-token --jq .token)" \
+  --labels macos,release --name jr-release-mac --ephemeral --unattended
+./run.sh
+```
+
+This is a deliberate trade, not an annoyance to engineer away: a runner that cannot
+outlive one job cannot be reused by a later workflow, which is most of why a
+self-hosted runner on a Mac holding a Developer ID key is acceptable at all. If the
+re-registration ever becomes the reason releases get skipped, drop `--ephemeral`
+and start/stop the runner by hand instead — but that is a weaker posture and the
+security rules above still apply.
+
+**Labels are case-insensitive.** The runner registers with GitHub's automatic
+`macOS` label and `runs-on: [self-hosted, macos, release]` matches it. Trying to
+add a lowercase `macos` is rejected with *"Cannot add labels that duplicate
+existing read-only labels: macos"* — the auto-labels cannot be overridden, and do
+not need to be.
 
 ## Dry run / testing
 
