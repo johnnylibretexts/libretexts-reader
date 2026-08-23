@@ -1,0 +1,30 @@
+## Rust dependencies
+
+Every crate linked into the macOS binary, and the full text of each licence
+those crates are under. Build-time and test-only crates are excluded: neither
+ships.
+
+### Summary
+
+{{#each overview}}
+- **{{id}}** — {{count}} components
+{{/each}}
+
+### Components
+
+{{#each licenses}}
+{{#each used_by}}
+- {{crate.name}} {{crate.version}} — {{../id}}{{#if crate.repository}} — {{{crate.repository}}}{{/if}}
+{{/each}}
+{{/each}}
+
+### Licence texts
+
+{{#each overview}}
+#### {{{name}}} ({{id}})
+
+```text
+{{{text}}}
+```
+
+{{/each}}
