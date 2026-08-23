@@ -2,21 +2,37 @@
 
 Last updated: 2026-08-23
 
-> **The private beta is cut.** [**v0.1.0-beta.1**](https://github.com/johnnylibretexts/libretexts-reader/releases/tag/v0.1.0-beta.1)
-> is published as a GitHub pre-release — signed, notarized, stapled, and produced by
-> `release.yml` running unattended from a tag. The **`Private beta` milestone is 11/11
-> closed**. **The repo went public at v0.1.0-beta.2** -- every passage below
-> saying otherwise predates that and is stale.
+> **The public beta is cut, and the repo is public.**
+> [**v0.1.0-beta.2**](https://github.com/johnnylibretexts/libretexts-reader/releases/tag/v0.1.0-beta.2)
+> is published as a GitHub pre-release — signed, notarized, stapled on both the DMG *and*
+> the inner `.app`, produced by `release.yml` running unattended from a tag, and verified by
+> downloading the artifact rather than trusting the green check. Johnny then drove it by
+> hand — import, playback, resume — and confirmed it works.
 >
-> **The release pipeline works — say so.** Every older passage claiming otherwise has been
-> corrected, but if you find one that was missed, it is stale, not news. See "Release: the
-> pipeline ran itself" below.
+> **The tracker is EMPTY: zero open issues, zero open PRs.** `main` is at `2f679c2`.
+> Anything below listing open tickets is a snapshot of an earlier day; run `gh issue list`
+> rather than believing it.
 >
-> Seven issues remain open and **none of them gate anything**: #59, #61, #65, #57, #63, #64,
-> #69. The most tester-visible is #59 — playback position is written but never read back, so
-> there is no resume and every progress bar sits at zero.
+> **This is a sanctioned LibreTexts project and LibreTexts holds the copyright.** It is not
+> independent and never was — the app used to *disclaim* the relationship, which was the
+> bug. `LICENSE` says `Copyright 2026 LibreTexts`; `Cargo.toml`'s `authors` stays as Johnny
+> Phung because authorship is not ownership. The OpenStax and Pressbooks non-affiliation
+> disclaimers are still true and must stay. **#57 is decided and closed: nothing moves to a
+> LibreTexts org**, and the bundle identifier stays `dev.johnnylibretexts.reader`.
+>
+> **The repo is public**, so `HANDOFF.md` and `docs/superpowers/` are world-readable. The
+> history was scanned for credentials before the flip and is clean; `release.yml` is the
+> only self-hosted job and cannot be reached from a fork PR.
+>
+> **The release pipeline works — say so.** Two real releases have shipped through it. If you
+> find a passage claiming otherwise, it is stale, not news.
+>
+> **Two things are deliberately not built.** In-book search and bookmarks are deferred in
+> `docs/adr/0005-in-book-search-is-deferred.md`; omission markers cover tables but not
+> sidebars or exercises. Johnny held both off on 2026-08-23 as good enough to ship. These
+> are decisions, not gaps.
 
-This repo is an in-progress Tauri desktop app for reading and listening to OpenStax, LibreTexts, EPUB, PDF, pasted text, and article imports with local TTS.
+This repo is a Tauri desktop app for reading and listening to OpenStax, LibreTexts, Pressbooks, EPUB, PDF, pasted text, and article imports with local TTS. It is in public beta as of 2026-08-23.
 
 **Pressbooks is a third content Source, shipped 2026-08-18.** [PR #35](https://github.com/johnnylibretexts/libretexts-reader/pull/35) merged 15 commits as `aaf0e7d`, closing the epic #19 and all eight of its children. A reader can browse Pressbooks Catalogs with a picker, search a crawled cache as they type, add a book in one click, see its cover in the Library, and hear its equations — Pressbooks renders those to images and keeps the LaTeX in the `alt`, which import recovers as a `[[latex:<base64>]]` token that KaTeX typesets and the speech path says aloud.
 
@@ -1132,6 +1148,52 @@ Also on 2026-08-17, **PR #13 moved the actions off deprecated Node 20**:
 `Swatinem/rust-cache@v2` was never in the annotation and is unchanged. The same
 `checkout` bump was applied to `release.yml`, but **that half is unverified** —
 `release.yml` only runs on a tag, so the next release is where it gets tested.
+
+## Session of 2026-08-23 (late) — public beta cut, tracker emptied
+
+Thirteen PRs merged. The tracker went from four open issues to zero, and v0.1.0-beta.2
+shipped public. Ordered by how much a future session needs them:
+
+- **#112** dead settings rows removed (`default_voice_id`, `telemetry_opt_in`,
+  `auto_check_updates`) with migration `0012`. `default_speed` **stayed** — it became
+  load-bearing in #59 and the ticket would have deleted it. Seeding runs *after* migrations,
+  so removing the row in SQL alone would have had them reappear on the same launch.
+- **#113** attribution corrected (see the header), and **Pressbooks added to the
+  disclaimer**, where it had never appeared.
+- **#114** `package.json` gained a `license` field in #112 without regenerating
+  `package-lock.json`; `check-notices.sh` fingerprints that lock, so the next contributor to
+  run `npm install` would have failed CI. Also fixed `generate-notices.sh` hashing the
+  lockfiles *before* `cargo about` rewrites `Cargo.lock` — which then paid off immediately
+  on the beta.2 version bump.
+- **#115** CSP: `wasm-unsafe-eval` and worker `blob:` dropped, `check-csp.sh` now holds
+  three directives fail-closed. Verified against the **built bundle** (zero `WebAssembly`,
+  `Worker`, `.wasm` references), not the sources. `media-src 'self' blob:` is load-bearing
+  for audio and must stay.
+- **#118** tables leave `OMITTED_TABLE` instead of vanishing; Settings and README state the
+  limitations; ADR 0005 defers in-book search.
+- **#119** EPUB: unreadable chapters counted and warned, all-fail reports that instead of
+  "did not contain readable text", orphaned covers fixed. **`tracing` was a dependency with
+  no subscriber and no call site** — now initialised, so `log stream --predicate 'process ==
+  "libretexts-reader"'` is a real diagnostic for a bug report.
+- **#121** one `zip` instead of two, minus bzip2/zstd/lzma/deflate64 — EPUB permits only
+  Stored and Deflate, so restricting features beat widening `about.toml`'s licence
+  accept-list.
+- **#122** `check-identifier.sh` now gates **four** declarations, not three.
+  `KEYCHAIN_SERVICE` was ungated and is the one whose drift has **no symptom**: the app
+  builds, runs and renders, and just cannot find the reader's stored Fish key.
+- **#117 / #123 / #124** version bump and the claims going public falsified; README gained a
+  Download section (it previously had no link to any release) and stopped promising MP3
+  (Supertonic exports M4A since ADR-0004); `RELEASE.md` gained the real `libpdfium` path and
+  a published-release verification section.
+
+**Two tests passed against the bugs they were written to catch**, both caught only by
+reverting the fix and watching them still pass — a migration idempotency test on an
+already-migrated connection, and an orphaned-cover test whose fixture had no cover. Revert
+and watch it fail, every time.
+
+**Six ticket premises were wrong** — `defaultSpeed`, "unaffiliated", the User-Agent "spoof",
+HANDOFF's own staleness, and two more. A seventh was mine: I called `RELEASE.md`'s
+verification command stale when it was correct and I had guessed a path.
 
 ## Known Limitations And Next Steps
 
