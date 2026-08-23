@@ -8,6 +8,7 @@ mod paths;
 pub mod secrets;
 pub mod tts;
 
+use content::cancel::ImportCancel;
 use db::connection::init_pool;
 use tauri::Manager;
 use tts::supertonic::model::SupertonicDownload;
@@ -26,6 +27,7 @@ pub fn run() {
             commands::library::list_section_images,
             commands::library::delete_document,
             commands::library::search_documents,
+            commands::content::cancel_import,
             commands::content::import_openstax,
             commands::content::import_libretexts,
             commands::content::import_pressbooks,
@@ -72,6 +74,9 @@ pub fn run() {
             // is only ever one download: the player and Settings can both ask
             // for the model, and the second joins the first. See
             // `SupertonicDownload`.
+            // One import runs at a time -- the webview's guard sees to that -- so
+            // one flag is all a Cancel needs to reach it.
+            app.manage(ImportCancel::default());
             app.manage(SupertonicDownload::default());
             Ok(())
         })

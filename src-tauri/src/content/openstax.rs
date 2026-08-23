@@ -178,7 +178,7 @@ impl OpenStaxClient {
         on_progress: F,
     ) -> AppResult<Vec<PageContent>>
     where
-        F: Fn(u32, u32) + Send,
+        F: Fn(u32, u32) -> AppResult<()> + Send,
     {
         let toc = self.fetch_toc(book_uuid).await?;
         let total = toc.pages.len() as u32;
@@ -186,7 +186,7 @@ impl OpenStaxClient {
 
         for (index, entry) in toc.pages.iter().enumerate() {
             pages.push(self.fetch_page(book_uuid, &entry.page_uuid).await?);
-            on_progress(index as u32 + 1, total);
+            on_progress(index as u32 + 1, total)?;
         }
 
         Ok(pages)
@@ -319,7 +319,7 @@ pub async fn import_book<F>(
     on_progress: F,
 ) -> AppResult<DocumentBuilder>
 where
-    F: Fn(u32, u32) + Send,
+    F: Fn(u32, u32) -> AppResult<()> + Send,
 {
     let client = OpenStaxClient::new(db);
     let catalog_book = catalog()?

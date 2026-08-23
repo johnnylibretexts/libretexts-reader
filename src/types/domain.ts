@@ -51,6 +51,6 @@ export type ImportStage = "fetching" | "parsing" | "tokenizing" | "storing" | "c
 export type ImportProgress = { documentId: string, stage: ImportStage, current: number, total: number, message: string | null, };
 
 /** Mirrors `AppError::kind` in `src-tauri/src/error.rs`. Kept in sync by `scripts/ci/check-error-kinds.sh`. */
-export type AppErrorKind = "database" | "pool" | "io" | "serde" | "http" | "readability" | "epub" | "pdf" | "openstax" | "libretexts" | "pressbooks" | "model" | "voice" | "auth" | "tts" | "drm_protected" | "tauri" | "invalid_input" | "migration" | "payment_required" | "rate_limited";
+export type AppErrorKind = "database" | "pool" | "io" | "serde" | "http" | "readability" | "epub" | "pdf" | "openstax" | "libretexts" | "pressbooks" | "model" | "voice" | "auth" | "tts" | "drm_protected" | "tauri" | "invalid_input" | "cancelled" | "migration" | "payment_required" | "rate_limited";
 
 export type AppError = { kind: AppErrorKind, message: string, retryable: boolean, };

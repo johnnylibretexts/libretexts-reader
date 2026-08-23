@@ -21,6 +21,7 @@ export function ImportStatus({ onOpen }: ImportStatusProps) {
   const error = useImportsStore((state) => state.error);
   const dismissCompleted = useImportsStore((state) => state.dismissCompleted);
   const clearError = useImportsStore((state) => state.clearError);
+  const cancel = useImportsStore((state) => state.cancel);
 
   if (!active && !completed && !error) {
     return null;
@@ -60,6 +61,15 @@ export function ImportStatus({ onOpen }: ImportStatusProps) {
               style={{ width: percent === null ? "25%" : `${percent}%` }}
             />
           </div>
+          <button
+            aria-label={`Cancel importing ${active.title}`}
+            className="grid size-8 shrink-0 place-items-center rounded-md text-neutral-500 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:hover:bg-neutral-800"
+            onClick={() => void cancel()}
+            title="Cancel import"
+            type="button"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
         </div>
       ) : null}
 

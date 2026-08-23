@@ -278,7 +278,7 @@ impl LibreTextsClient {
         on_progress: &mut F,
     ) -> AppResult<LibreTextsToc>
     where
-        F: FnMut(u32, u32) + Send,
+        F: FnMut(u32, u32) -> AppResult<()> + Send,
     {
         let (library, cover_page_id) = parse_book_id(&book.book_id)?;
         let url = format!(
@@ -336,7 +336,7 @@ impl LibreTextsClient {
         on_progress: &mut F,
     ) -> AppResult<LibreTextsToc>
     where
-        F: FnMut(u32, u32) + Send,
+        F: FnMut(u32, u32) -> AppResult<()> + Send,
     {
         let root_url = book
             .online_url
@@ -370,7 +370,7 @@ impl LibreTextsClient {
 
             if seed.chapter_number > 0 && seed.chapter_number != reported_chapter {
                 reported_chapter = seed.chapter_number;
-                on_progress(reported_chapter, chapter_count);
+                on_progress(reported_chapter, chapter_count)?;
             }
 
             let html = self.fetch_html(&seed.url).await?;
@@ -392,7 +392,7 @@ impl LibreTextsClient {
             if should_store_page {
                 if chapter_number != reported_chapter {
                     reported_chapter = chapter_number;
-                    on_progress(reported_chapter, chapter_count);
+                    on_progress(reported_chapter, chapter_count)?;
                 }
 
                 let page_content = LibreTextsPageContent {
@@ -508,7 +508,7 @@ impl LibreTextsClient {
         mut on_progress: F,
     ) -> AppResult<Vec<LibreTextsPageContent>>
     where
-        F: FnMut(u32, u32) + Send,
+        F: FnMut(u32, u32) -> AppResult<()> + Send,
     {
         let total = toc.chapter_count.max(1);
         let mut current_chapter = 0;
@@ -523,8 +523,9 @@ impl LibreTextsClient {
                 let chapter_number = toc.pages[index].chapter_number;
                 if chapter_number != current_chapter {
                     current_chapter = chapter_number;
-                    on_progress(current_chapter, total);
+                    on_progress(current_chapter, total)?;
                 }
+                Ok(())
             },
             |entry: LibreTextsTocEntry| async move {
                 self.fetch_page(&toc.book_id, &toc.library, &entry).await
@@ -601,7 +602,7 @@ pub async fn import_book<F>(
     mut on_progress: F,
 ) -> AppResult<DocumentBuilder>
 where
-    F: FnMut(u32, u32) + Send,
+    F: FnMut(u32, u32) -> AppResult<()> + Send,
 {
     let client = LibreTextsClient::new(db);
     let book = client.fetch_book_detail(book_id).await?;
@@ -1328,6 +1329,7 @@ mod tests {
 
         let document = super::import_book(pool.clone(), "human-15711", |current, total| {
             eprintln!("LibreTexts smoke import progress: {current}/{total}");
+            Ok(())
         })
         .await
         .expect("small public LibreTexts book should import");

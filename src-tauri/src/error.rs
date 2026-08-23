@@ -58,6 +58,12 @@ pub enum AppError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    /// Work the reader asked to stop. Not a fault: the caller that requested
+    /// the cancel is the one that caused it, and a surface reporting this as a
+    /// failure would be blaming the reader for their own click.
+    #[error("cancelled: {0}")]
+    Cancelled(String),
+
     #[error("migration error: {0}")]
     Migration(String),
 
@@ -93,6 +99,7 @@ impl AppError {
             Self::DrmProtected => "drm_protected",
             Self::Tauri(_) => "tauri",
             Self::InvalidInput(_) => "invalid_input",
+            Self::Cancelled(_) => "cancelled",
             Self::Migration(_) => "migration",
             Self::PaymentRequired(_) => "payment_required",
             Self::RateLimited(_) => "rate_limited",
@@ -121,6 +128,7 @@ impl AppError {
             | Self::Auth(message)
             | Self::Tts(message)
             | Self::InvalidInput(message)
+            | Self::Cancelled(message)
             | Self::Migration(message)
             | Self::PaymentRequired(message)
             | Self::RateLimited(message) => message.clone(),
@@ -152,6 +160,7 @@ impl AppError {
             | Self::DrmProtected
             | Self::Tauri(_)
             | Self::InvalidInput(_)
+            | Self::Cancelled(_)
             | Self::Migration(_)
             | Self::PaymentRequired(_) => false,
         }

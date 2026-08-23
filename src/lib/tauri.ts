@@ -187,6 +187,13 @@ export const api = {
       { host, query },
     ),
 
+  /**
+   * Ask the import in flight to stop. Resolves once the request is delivered,
+   * not once the import has ended -- the fetch fails at its next page
+   * boundary, from inside whichever `import_*` command is still running.
+   */
+  cancelImport: () => invokeDesktop<void>("cancel_import"),
+
   savePlaybackState: (playback: Domain.PlaybackState) =>
     invokeDesktop<void>("save_playback_state", { playback }),
   /**
