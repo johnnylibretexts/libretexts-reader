@@ -23,11 +23,23 @@ const MODULES = path.join(ROOT, "node_modules");
 
 /** Every production dependency in the tree, deduplicated by name@version. */
 function productionDependencies() {
-  const raw = execFileSync(
-    "npm",
-    ["ls", "--omit=dev", "--all", "--json"],
-    { cwd: ROOT, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
-  );
+  // `npm ls` exits 1 for an extraneous, invalid or missing entry while still
+  // printing the complete tree as JSON on stdout. This repo aliases
+  // `"rollup": "npm:@rollup/wasm-node"` and drops the native optional entries
+  // on purpose (see CLAUDE.md), which is exactly the shape npm flags -- so
+  // treating a non-zero exit as fatal would kill notice generation with an
+  // opaque "Command failed" over a tree it had just described correctly.
+  let raw;
+  try {
+    raw = execFileSync(
+      "npm",
+      ["ls", "--omit=dev", "--all", "--json"],
+      { cwd: ROOT, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+    );
+  } catch (error) {
+    raw = error.stdout;
+    if (!raw) throw error;
+  }
   const seen = new Map();
 
   const walk = (node) => {
