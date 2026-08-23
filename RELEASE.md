@@ -5,7 +5,7 @@ Checklist for producing a signed, notarized macOS build.
 ## Automated release (preferred)
 
 Push a `vX.Y.Z` tag with the self-hosted runner up and CI does everything below
-automatically — build, Developer-ID signing of the bundled ffmpeg/pdfium libs,
+automatically — build, Developer-ID signing of the bundled PDFium lib,
 `tauri build`, notarization via the `jr-notary` profile, stapling, and publishing
 the GitHub Release with the DMG + SHA-256. See `docs/ci.md` for runner setup and
 the exact steps. The manual checklist below is the fallback and documents what the
@@ -37,22 +37,24 @@ xcrun notarytool store-credentials jr-notary \
 
 ### Important: sign the bundled native libraries first
 
-Tauri signs the main binary and the `ffmpeg` sidecar, but **not** the bundled
-ffmpeg shared libraries or `libpdfium.dylib` (they ship under
-`Contents/Resources/binaries/` and `…/resources/pdfium/`). Notarization rejects
-ad-hoc-signed Mach-O files, so sign the **source** libraries with Developer ID +
-hardened runtime + secure timestamp before building:
+Tauri signs the main binary, but **not** `libpdfium.dylib` (it ships under
+`…/resources/pdfium/`). Notarization rejects ad-hoc-signed Mach-O files, so sign
+the **source** library with Developer ID + hardened runtime + secure timestamp
+before building. Signing it *after* the build is not equivalent: the edit
+invalidates Tauri's signature over the enclosing `.app`.
 
 ```bash
 ID="Developer ID Application: <Name> (<TEAMID>)"
-find src-tauri/binaries/ffmpeg-*-libs -type f -name '*.dylib' \
-  -exec codesign --force --options runtime --timestamp --sign "$ID" {} \;
-codesign --force --options runtime --timestamp --sign "$ID" src-tauri/binaries/ffmpeg-*
 codesign --force --options runtime --timestamp --sign "$ID" \
   src-tauri/resources/pdfium/*/libpdfium.dylib
+
+# Verify nothing ad-hoc survived into the bundle after building:
+#   find "target/release/bundle/macos/LibreTexts Reader.app" -type f \
+#     -exec sh -c 'file "$1" | grep -q Mach-O && codesign -dv "$1" 2>&1 | grep -q adhoc && echo "$1"' _ {} \;
+# Expect no output. Any line printed here is a notarization rejection.
 ```
 
-(These dirs are gitignored local assets; re-sign after any ffmpeg/pdfium bump.)
+(This dir is a gitignored local asset; re-sign after any PDFium bump.)
 
 ### Build, notarize, staple, verify
 
@@ -128,11 +130,11 @@ The `bundle.windows.wix` block and `icons/icon.ico` are deliberately kept — th
 configuration for *if* Windows is built, not a claim that it is. Adding Windows means a
 second `release.yml` job plus an Authenticode signing story, and Linux means adding
 `deb`/`appimage`/`rpm` to the targets list (absent today, so a Linux build emits
-"No bundles were built"). `build.rs` already carries PDFium and ffmpeg assets for
+"No bundles were built"). `build.rs` already carries PDFium assets for
 `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, and `aarch64-unknown-linux-gnu`,
 so the groundwork survives either way. See #67.
 
 The default build targets the host (Apple Silicon `aarch64`). For Intel/universal
-builds, install the `x86_64-apple-darwin` target and provide x86_64 ffmpeg/pdfium
+builds, install the `x86_64-apple-darwin` target and provide x86_64 PDFium
 libraries signed the same way. Intel macOS is unbuilt and untested — a release is
 Apple-Silicon only unless someone does that work.

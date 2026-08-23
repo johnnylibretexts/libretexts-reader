@@ -1,13 +1,10 @@
 use std::env;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
-use xz2::read::XzDecoder;
-use zip::ZipArchive;
 
 const PDFIUM_RELEASE: &str = "chromium/7789";
 const PDFIUM_RELEASE_URL_COMPONENT: &str = "chromium%2F7789";
@@ -23,22 +20,11 @@ const PDFIUM_RELEASE_URL_COMPONENT: &str = "chromium%2F7789";
 //
 // Kept per asset so bumping one does not force the other to re-download.
 const PDFIUM_EXTRACT_VERSION: u32 = 1;
-const FFMPEG_EXTRACT_VERSION: u32 = 2;
 
 /// Marker contents: which archive, and which extraction produced this tree.
 fn marker_value(archive_sha256: &str, extract_version: u32) -> String {
     format!("{archive_sha256} extract{extract_version}")
 }
-
-// A dated BtbN release, never the rolling `latest`. BtbN rebuilds `latest`
-// daily under unchanged `ffmpeg-master-latest-*` filenames, so a pinned SHA
-// against it goes stale within a day and fails every build until someone
-// regenerates it -- which is exactly what happened on 2026-08-17, the first
-// time CI built a BtbN target. Dated releases embed the build id in the asset
-// name, so tag, filename and SHA all move together and the download is
-// reproducible. Bumping this means changing the tag, all three asset names and
-// all three SHAs as one edit.
-const FFMPEG_BTBN_RELEASE: &str = "autobuild-2026-08-16-13-00";
 
 struct PdfiumAsset {
     target: &'static str,
@@ -48,43 +34,19 @@ struct PdfiumAsset {
     library_file_name: &'static str,
 }
 
-#[derive(Clone, Copy)]
-enum ArchiveKind {
-    TarXz,
-    Zip,
-}
-
-#[derive(Clone, Copy)]
-enum FfmpegSource {
-    BtbN,
-    ColorsWindMac,
-}
-
-struct FfmpegAsset {
-    target: &'static str,
-    asset_name: &'static str,
-    archive_sha256: &'static str,
-    source: FfmpegSource,
-    archive_kind: ArchiveKind,
-    executable_name: &'static str,
-    sidecar_file_name: &'static str,
-}
-
 const UPDATER_PUBKEY_PLACEHOLDER: &str = "TAURI_UPDATER_PUBKEY_PLACEHOLDER";
 
 fn main() {
     check_updater_pubkey();
 
+    mirror_licenses_into_bundle(&PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR").expect("manifest dir"),
+    ));
+
     let pdfium_library = ensure_pdfium();
     println!(
         "cargo:rustc-env=PDFIUM_LIBRARY_PATH={}",
         pdfium_library.display()
-    );
-
-    let ffmpeg_sidecar = ensure_ffmpeg();
-    println!(
-        "cargo:rustc-env=FFMPEG_SIDECAR_PATH={}",
-        ffmpeg_sidecar.display()
     );
 
     tauri_build::build()
@@ -250,9 +212,9 @@ fn download_pdfium(asset: &PdfiumAsset) -> Vec<u8> {
 
 fn verify_sha256(bytes: &[u8], expected: &str, asset_name: &str) {
     let actual = hex::encode(Sha256::digest(bytes));
-    // Shared by the PDFium and ffmpeg downloads, so the message names neither:
-    // it said "PDFium archive" for an ffmpeg asset on 2026-08-17 and sent the
-    // diagnosis to the wrong dependency.
+    // Names the asset, not the dependency: this message once said "PDFium
+    // archive" for an unrelated asset and sent the diagnosis to the wrong
+    // place.
     assert_eq!(
         actual, expected,
         "SHA-256 mismatch for downloaded archive {asset_name}"
@@ -280,6 +242,43 @@ fn extract_library(archive: &[u8], asset: &PdfiumAsset, destination: &Path) {
     );
 }
 
+/// Copy the tracked third-party notices to where the bundler can see them.
+///
+/// `<repo>/LICENSES` is the tracked copy README.md points a human at.
+/// `src-tauri/resources/LICENSES` is the one that actually *ships*: the
+/// `resources/**/*` glob in tauri.conf.json resolves relative to `src-tauri/`,
+/// so while the repo copy was the only copy, every bundle went out carrying
+/// third-party binaries with no licence text in it at all.
+///
+/// Runs on **every** build, deliberately. The obvious place for this is
+/// alongside `extract_license_files` -- but that only runs on a cache miss, so
+/// on any machine that already had PDFium unpacked (which is every machine
+/// after the first build, and every CI run that restores the asset cache) the
+/// notices would silently not ship. That is exactly how this shipped broken:
+/// correct-looking code on a path that usually does not execute.
+fn mirror_licenses_into_bundle(manifest_dir: &Path) {
+    let source = manifest_dir.join("..").join("LICENSES");
+    let destination = manifest_dir.join("resources").join("LICENSES");
+    fs::create_dir_all(&destination).expect("create bundled LICENSES directory");
+
+    let entries = fs::read_dir(&source).expect("read LICENSES directory");
+    let mut copied = 0;
+    for entry in entries {
+        let entry = entry.expect("read LICENSES entry");
+        if entry.file_type().expect("LICENSES entry type").is_file() {
+            fs::copy(entry.path(), destination.join(entry.file_name()))
+                .expect("copy licence notice into the bundle");
+            copied += 1;
+        }
+    }
+    assert!(
+        copied > 0,
+        "no licence notices found in {} -- the bundle would ship without them",
+        source.display()
+    );
+    println!("cargo:rerun-if-changed={}", source.display());
+}
+
 fn extract_license_files(archive: &[u8], manifest_dir: &Path) {
     let licenses_dir = manifest_dir.join("..").join("LICENSES");
     fs::create_dir_all(&licenses_dir).expect("create LICENSES directory");
@@ -301,404 +300,4 @@ fn extract_license_files(archive: &[u8], manifest_dir: &Path) {
                 .expect("unpack PDFium license file");
         }
     }
-}
-
-fn ensure_ffmpeg() -> PathBuf {
-    let target = env::var("TARGET").expect("TARGET must be set by Cargo");
-    let asset = ffmpeg_asset_for_target(&target);
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let binaries_dir = manifest_dir.join("binaries");
-    let sidecar_path = binaries_dir.join(asset.sidecar_file_name);
-    let marker_path = binaries_dir.join(format!(".{}.sha256", asset.sidecar_file_name));
-
-    println!("cargo:rerun-if-changed={}", marker_path.display());
-
-    let expected_marker = marker_value(asset.archive_sha256, FFMPEG_EXTRACT_VERSION);
-    if sidecar_path.exists()
-        && fs::read_to_string(&marker_path).is_ok_and(|value| value.trim() == expected_marker)
-    {
-        return sidecar_path;
-    }
-
-    fs::create_dir_all(&binaries_dir).expect("create ffmpeg binaries directory");
-
-    let archive = download_ffmpeg(&asset);
-    verify_sha256(&archive, asset.archive_sha256, asset.asset_name);
-    extract_ffmpeg(&archive, &asset, &binaries_dir, &sidecar_path);
-    write_ffmpeg_license(&manifest_dir);
-    fs::write(marker_path, format!("{expected_marker}\n")).expect("write ffmpeg marker");
-
-    sidecar_path
-}
-
-fn ffmpeg_asset_for_target(target: &str) -> FfmpegAsset {
-    match target {
-        "aarch64-apple-darwin" => FfmpegAsset {
-            target: "aarch64-apple-darwin",
-            asset_name: "FFmpeg-shared-n5.0.1-OSX-arm64.zip",
-            archive_sha256: "0555a3218069e6c9d6ebb40e0124bd4516f004208c825d29c67a146b776b64bc",
-            source: FfmpegSource::ColorsWindMac,
-            archive_kind: ArchiveKind::Zip,
-            executable_name: "ffmpeg",
-            sidecar_file_name: "ffmpeg-aarch64-apple-darwin",
-        },
-        "x86_64-apple-darwin" => FfmpegAsset {
-            target: "x86_64-apple-darwin",
-            asset_name: "FFmpeg_shared-n5.0.1-OSX-x86_64.zip",
-            archive_sha256: "3ac3fb7c79227f9cfcf2db947a5a0e6081c939d56f13e65eb6b5dcf59742e836",
-            source: FfmpegSource::ColorsWindMac,
-            archive_kind: ArchiveKind::Zip,
-            executable_name: "ffmpeg",
-            sidecar_file_name: "ffmpeg-x86_64-apple-darwin",
-        },
-        "x86_64-pc-windows-msvc" => FfmpegAsset {
-            target: "x86_64-pc-windows-msvc",
-            asset_name: "ffmpeg-N-126175-g0056dd32fd-win64-lgpl-shared.zip",
-            archive_sha256: "2ad56ddf12ef5cc30343233482537e89184a27e928213264dd54338e5c635edd",
-            source: FfmpegSource::BtbN,
-            archive_kind: ArchiveKind::Zip,
-            executable_name: "ffmpeg.exe",
-            sidecar_file_name: "ffmpeg-x86_64-pc-windows-msvc.exe",
-        },
-        "x86_64-unknown-linux-gnu" => FfmpegAsset {
-            target: "x86_64-unknown-linux-gnu",
-            asset_name: "ffmpeg-N-126175-g0056dd32fd-linux64-lgpl-shared.tar.xz",
-            archive_sha256: "917119a5488e4e2468578db1b5046872b6f4a67ced1312a818e38ea424c5f7c4",
-            source: FfmpegSource::BtbN,
-            archive_kind: ArchiveKind::TarXz,
-            executable_name: "ffmpeg",
-            sidecar_file_name: "ffmpeg-x86_64-unknown-linux-gnu",
-        },
-        "aarch64-unknown-linux-gnu" => FfmpegAsset {
-            target: "aarch64-unknown-linux-gnu",
-            asset_name: "ffmpeg-N-126175-g0056dd32fd-linuxarm64-lgpl-shared.tar.xz",
-            archive_sha256: "d6d20d395e999a090a4db259734772f618592b29a0c7d23cd72a9320fc952d8c",
-            source: FfmpegSource::BtbN,
-            archive_kind: ArchiveKind::TarXz,
-            executable_name: "ffmpeg",
-            sidecar_file_name: "ffmpeg-aarch64-unknown-linux-gnu",
-        },
-        _ => panic!("unsupported ffmpeg target: {target}"),
-    }
-}
-
-fn download_ffmpeg(asset: &FfmpegAsset) -> Vec<u8> {
-    let url = match asset.source {
-        // Pinned to a dated release, not the rolling `latest` -- see
-        // FFMPEG_BTBN_RELEASE for why.
-        FfmpegSource::BtbN => format!(
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/{FFMPEG_BTBN_RELEASE}/{}",
-            asset.asset_name
-        ),
-        FfmpegSource::ColorsWindMac => format!(
-            "https://github.com/ColorsWind/FFmpeg-macOS/releases/download/n5.0.1-patch3/{}",
-            asset.asset_name
-        ),
-    };
-
-    println!("Downloading ffmpeg ({}) from {url}", asset.target);
-
-    reqwest::blocking::get(url)
-        .and_then(|response| response.error_for_status())
-        .expect("download ffmpeg archive")
-        .bytes()
-        .expect("read ffmpeg archive")
-        .to_vec()
-}
-
-fn extract_ffmpeg(archive: &[u8], asset: &FfmpegAsset, binaries_dir: &Path, sidecar_path: &Path) {
-    let libs_dir = binaries_dir.join(format!("{}-libs", asset.sidecar_file_name));
-    if libs_dir.exists() {
-        fs::remove_dir_all(&libs_dir).expect("remove old ffmpeg library directory");
-    }
-
-    match asset.archive_kind {
-        ArchiveKind::Zip => {
-            extract_ffmpeg_zip(archive, asset, binaries_dir, sidecar_path, &libs_dir)
-        }
-        ArchiveKind::TarXz => {
-            let decoder = XzDecoder::new(Cursor::new(archive));
-            extract_ffmpeg_tar(decoder, asset, sidecar_path, &libs_dir);
-        }
-    }
-
-    make_executable(sidecar_path);
-
-    if cfg!(target_os = "macos") {
-        patch_macos_ffmpeg(asset, sidecar_path, &libs_dir);
-    }
-}
-
-fn extract_ffmpeg_zip(
-    archive: &[u8],
-    asset: &FfmpegAsset,
-    binaries_dir: &Path,
-    sidecar_path: &Path,
-    libs_dir: &Path,
-) {
-    let mut archive = ZipArchive::new(Cursor::new(archive)).expect("open ffmpeg zip archive");
-    let mut found_executable = false;
-
-    for index in 0..archive.len() {
-        let mut file = archive.by_index(index).expect("read ffmpeg zip entry");
-        if !file.is_file() {
-            continue;
-        }
-
-        let path = PathBuf::from(file.name());
-        let path_text = path.to_string_lossy();
-        if path.ends_with(Path::new("bin").join(asset.executable_name)) {
-            copy_reader_to_path(&mut file, sidecar_path);
-            found_executable = true;
-        } else if matches!(asset.source, FfmpegSource::ColorsWindMac)
-            && path_text.starts_with("lib/")
-            && path_text.ends_with(".dylib")
-        {
-            let file_name = path.file_name().expect("dylib file name");
-            copy_reader_to_path(&mut file, &libs_dir.join(file_name));
-        } else if asset.target.contains("windows") && path_text.ends_with(".dll") {
-            let file_name = path.file_name().expect("dll file name");
-            copy_reader_to_path(&mut file, &binaries_dir.join(file_name));
-        }
-    }
-
-    assert!(
-        found_executable,
-        "ffmpeg executable {} not found in {}",
-        asset.executable_name, asset.asset_name
-    );
-}
-
-fn extract_ffmpeg_tar<R: Read>(
-    reader: R,
-    asset: &FfmpegAsset,
-    sidecar_path: &Path,
-    libs_dir: &Path,
-) {
-    let mut archive = tar::Archive::new(reader);
-    let mut found_executable = false;
-
-    for entry in archive.entries().expect("read ffmpeg tar entries") {
-        let mut entry = entry.expect("read ffmpeg tar entry");
-        let entry_type = entry.header().entry_type();
-
-        // Symlinks are kept, not skipped. ffmpeg's lib/ is 14 symlinks against
-        // 7 real files, and the SONAMEs the dynamic loader actually asks for
-        // (libavdevice.so.63) are among the links -- dropping them left every
-        // library unresolvable while the extraction looked like it worked.
-        if !entry_type.is_file() && !entry_type.is_symlink() {
-            continue;
-        }
-
-        let path = entry.path().expect("read ffmpeg tar entry path");
-        let path_text = path.to_string_lossy();
-        if entry_type.is_file() && path.ends_with(Path::new("bin").join(asset.executable_name)) {
-            entry
-                .unpack(sidecar_path)
-                .expect("unpack ffmpeg executable");
-            found_executable = true;
-        } else if path_text.contains("/lib/") && path_text.contains(".so") {
-            // `tar::Entry::unpack` does not create parent directories, unlike
-            // the zip branch's copy_reader_to_path -- and extract_ffmpeg only
-            // ever removes libs_dir, never creates it. Idempotent and cheap, so
-            // it stays next to the write that needs it rather than becoming a
-            // precondition somewhere the tar branch cannot see.
-            fs::create_dir_all(libs_dir).expect("create ffmpeg library directory");
-
-            let file_name = path.file_name().expect("shared library file name");
-            let destination = libs_dir.join(file_name);
-
-            if entry_type.is_symlink() {
-                let target = entry
-                    .link_name()
-                    .expect("read ffmpeg symlink target")
-                    .expect("ffmpeg symlink has a target")
-                    .into_owned();
-
-                // These links are flattened into one directory, so a target
-                // naming any path at all -- absolute, or escaping via .. --
-                // would point somewhere this layout cannot reproduce. Refuse
-                // rather than silently create a link that resolves elsewhere.
-                assert!(
-                    target.components().count() == 1 && target.file_name().is_some(),
-                    "ffmpeg library symlink {} points outside its directory: {}",
-                    path_text,
-                    target.display()
-                );
-
-                symlink_library(&target, &destination);
-            } else {
-                entry
-                    .unpack(&destination)
-                    .expect("unpack ffmpeg shared library");
-            }
-        }
-    }
-
-    assert!(
-        found_executable,
-        "ffmpeg executable {} not found in {}",
-        asset.executable_name, asset.asset_name
-    );
-}
-
-/// Recreate a shared-library symlink. Order-independent: the tar may list a
-/// link before the file it points at, and a symlink does not require its
-/// target to exist yet.
-#[cfg(unix)]
-fn symlink_library(target: &Path, destination: &Path) {
-    // Freshly created directory, so a collision means the archive listed the
-    // same link twice -- surface it rather than leaving whichever won.
-    std::os::unix::fs::symlink(target, destination).expect("create ffmpeg library symlink");
-}
-
-/// Only the TarXz path extracts symlinks, and only Linux targets use it --
-/// macOS and Windows both take zips. This exists so build.rs still compiles on
-/// a Windows host, and panics rather than silently dropping the links again if
-/// some future target routes here.
-#[cfg(not(unix))]
-fn symlink_library(target: &Path, destination: &Path) {
-    panic!(
-        "cannot recreate ffmpeg library symlink {} -> {} on this platform",
-        destination.display(),
-        target.display()
-    );
-}
-
-fn copy_reader_to_path<R: Read>(reader: &mut R, destination: &Path) {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent).expect("create destination directory");
-    }
-
-    let mut output = fs::File::create(destination).expect("create extracted file");
-    std::io::copy(reader, &mut output).expect("copy extracted file");
-}
-
-fn make_executable(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut permissions = fs::metadata(path).expect("ffmpeg metadata").permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(path, permissions).expect("set ffmpeg executable bit");
-    }
-}
-
-fn patch_macos_ffmpeg(asset: &FfmpegAsset, sidecar_path: &Path, libs_dir: &Path) {
-    if !libs_dir.exists() {
-        return;
-    }
-
-    let libs_dir_name = libs_dir
-        .file_name()
-        .expect("ffmpeg lib directory name")
-        .to_string_lossy();
-    let mut patch_targets = vec![sidecar_path.to_path_buf()];
-    for entry in fs::read_dir(libs_dir).expect("read ffmpeg dylib directory") {
-        let entry = entry.expect("read ffmpeg dylib");
-        if entry
-            .path()
-            .extension()
-            .is_some_and(|extension| extension == "dylib")
-        {
-            patch_targets.push(entry.path());
-        }
-    }
-
-    for target in &patch_targets {
-        if target != sidecar_path {
-            let dylib_name = target
-                .file_name()
-                .expect("dylib file name")
-                .to_string_lossy();
-            run_command(
-                "install_name_tool",
-                &[
-                    "-id",
-                    &format!("@executable_path/{libs_dir_name}/{dylib_name}"),
-                ],
-                target,
-            );
-        }
-
-        let linked_libraries = linked_macos_libraries(target);
-        for original_path in linked_libraries {
-            let Some(library_name) = Path::new(&original_path).file_name() else {
-                continue;
-            };
-            let replacement = format!(
-                "@executable_path/{}/{}",
-                libs_dir_name,
-                library_name.to_string_lossy()
-            );
-            run_command(
-                "install_name_tool",
-                &["-change", original_path.as_str(), replacement.as_str()],
-                target,
-            );
-        }
-    }
-
-    for target in &patch_targets {
-        make_executable(target);
-        run_command("codesign", &["--force", "--sign", "-"], target);
-    }
-
-    println!("Prepared macOS ffmpeg sidecar for {}", asset.target);
-}
-
-fn linked_macos_libraries(path: &Path) -> Vec<String> {
-    let output = Command::new("otool")
-        .arg("-L")
-        .arg(path)
-        .output()
-        .expect("run otool");
-    assert!(
-        output.status.success(),
-        "otool failed for {}",
-        path.display()
-    );
-
-    String::from_utf8(output.stdout)
-        .expect("utf8 otool output")
-        .lines()
-        .filter_map(|line| {
-            let library = line.split_whitespace().next()?;
-            if library.contains("/FFmpeg-macOS/") && library.ends_with(".dylib") {
-                Some(library.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-fn run_command(program: &str, args: &[&str], path: &Path) {
-    let status = Command::new(program)
-        .args(args)
-        .arg(path)
-        .status()
-        .unwrap_or_else(|error| panic!("run {program} for {}: {error}", path.display()));
-    assert!(
-        status.success(),
-        "{program} failed for {} with status {status}",
-        path.display()
-    );
-}
-
-fn write_ffmpeg_license(manifest_dir: &Path) {
-    let licenses_dir = manifest_dir.join("..").join("LICENSES");
-    fs::create_dir_all(&licenses_dir).expect("create LICENSES directory");
-    fs::write(
-        licenses_dir.join("ffmpeg.txt"),
-        "FFmpeg is distributed under the GNU Lesser General Public License \
-         version 2.1 or later, depending on build configuration. LibreTexts Reader \
-         uses LGPL shared builds for the bundled sidecar.\n\n\
-         Sources:\n\
-         - https://github.com/BtbN/FFmpeg-Builds\n\
-         - https://github.com/ColorsWind/FFmpeg-macOS\n\
-         - https://ffmpeg.org/legal.html\n",
-    )
-    .expect("write ffmpeg license notice");
 }

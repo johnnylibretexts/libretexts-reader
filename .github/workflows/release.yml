@@ -76,7 +76,7 @@ jobs:
           npm ci
 
       - name: Materialize native libs via build.rs
-        # Load-bearing: this build triggers build.rs to download pdfium/ffmpeg so the
+        # Load-bearing: this build triggers build.rs to download pdfium so the
         # next step can Developer-ID re-sign them BEFORE tauri:build bundles them. Do
         # not remove or fold into the build step — the re-sign must happen in between.
         run: |
@@ -89,16 +89,11 @@ jobs:
           set -euo pipefail
           ID="$APPLE_SIGNING_IDENTITY"
           if [ -z "$ID" ]; then echo "APPLE_SIGNING_IDENTITY variable is not set" >&2; exit 1; fi
-          # ffmpeg dylibs (under binaries/<sidecar>-libs/) + any other bundled dylibs
-          find src-tauri/binaries -type f -name '*.dylib' \
-            -exec codesign --force --options runtime --timestamp --sign "$ID" {} \;
-          # pdfium dylib(s)
+          # pdfium dylib(s). Tauri signs what it builds; a bundled native it
+          # merely copies stays ad-hoc signed, and notarization rejects that.
           for lib in src-tauri/resources/pdfium/*/libpdfium.dylib; do
             codesign --force --options runtime --timestamp --sign "$ID" "$lib"
           done
-          # ffmpeg sidecar executable (exact target name; not the -libs dir or .sha256 markers)
-          codesign --force --options runtime --timestamp --sign "$ID" \
-            src-tauri/binaries/ffmpeg-aarch64-apple-darwin
 
       - name: Build signed bundle
         run: |
@@ -112,6 +107,13 @@ jobs:
           # scripts/ci/check-updater-key.sh covers, in the gate above.
           export LIBRETEXTS_READER_REQUIRE_UPDATER_KEY=1
           npm run tauri:build
+
+      # Reads the built .app, not build.rs. The notices were written to a path
+      # the bundler could not see for the whole life of the project, and no
+      # amount of reading the build script revealed it -- only opening the
+      # bundle did. Placed here, before anything is published.
+      - name: Licence notices are in the bundle
+        run: scripts/ci/check-licenses-bundled.sh
 
       - name: Locate DMG
         id: dmg
