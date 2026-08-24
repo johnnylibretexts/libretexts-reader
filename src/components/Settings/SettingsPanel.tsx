@@ -14,6 +14,7 @@ import { createSpeechEngine } from "../../lib/speech";
 import {
   SUPERTONIC_LANGUAGES,
   SUPERTONIC_VOICES,
+  supertonicSampleText,
   type SupertonicLanguage,
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
@@ -317,7 +318,18 @@ export function SettingsPanel() {
       // one being tested (the pending `voiceStyle` for Supertonic, the saved
       // `fishVoiceId` for Fish). Passing one here read as if it selected the
       // test voice, and did not.
-      const blob = await engine.synthesize({ text: SAMPLE_TEXT, speed: 1 });
+      // Supertonic auditions the pending language in that language, so the
+      // reader hears what the setting does. Fish keeps the fixed English
+      // string: the Supertonic language row is not a Fish parameter, and the
+      // billed-character counts this panel discloses are computed from
+      // `SAMPLE_TEXT` -- a language-dependent sample would make them wrong.
+      const blob = await engine.synthesize({
+        text:
+          ttsProvider === "supertonic"
+            ? supertonicSampleText(language)
+            : SAMPLE_TEXT,
+        speed: 1,
+      });
 
       setTestStatus(`Playing ${providerLabel} sample...`);
       await playBlob(blob);
@@ -566,23 +578,46 @@ export function SettingsPanel() {
               </select>
             </label>
 
-            <label className="flex flex-col gap-2 text-sm font-medium">
-              Language
-              <select
-                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-                onChange={(event) => {
-                  languageChosen.current = true;
-                  setLanguage(event.target.value as SupertonicLanguage);
-                }}
-                value={language}
+            <div className="flex flex-col gap-2">
+              <label className="flex flex-col gap-2 text-sm font-medium">
+                Pronunciation language
+                <select
+                  aria-describedby="supertonic-language-help"
+                  className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                  onChange={(event) => {
+                    languageChosen.current = true;
+                    setLanguage(event.target.value as SupertonicLanguage);
+                  }}
+                  value={language}
+                >
+                  {SUPERTONIC_LANGUAGES.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {/*
+                Named for what it does, and described outside the `label` so
+                the select's accessible name stays the label alone.
+
+                Called just "Language", this reads as "read my book to me in
+                Spanish" -- and a reader who sets it on an English textbook
+                gets English in a Spanish accent and concludes the engine is
+                broken. Supertonic has no translator and no language embedding
+                at all (`n_langs: 0` in the model's `tts.json`); the tag
+                `preprocess_text` wraps the text in only picks which
+                letter-to-sound rules apply to the characters already there.
+              */}
+              <span
+                className="text-xs text-neutral-500 dark:text-neutral-400"
+                id="supertonic-language-help"
               >
-                {SUPERTONIC_LANGUAGES.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                Sets how words are pronounced, not what they say. Supertonic
+                does not translate — choose the language your book is written
+                in. Test speaks a sample in the language you pick.
+              </span>
+            </div>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">

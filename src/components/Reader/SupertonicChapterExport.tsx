@@ -502,22 +502,41 @@ export function SupertonicChapterExport() {
               </select>
             </label>
 
-            <label className="flex flex-col gap-2 text-sm font-medium">
-              Language
-              <select
-                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-                onChange={(event) => {
-                  chooseLanguage(event.target.value as SupertonicLanguage);
-                }}
-                value={language}
+            <div className="flex flex-col gap-2">
+              <label className="flex flex-col gap-2 text-sm font-medium">
+                Pronunciation language
+                <select
+                  aria-describedby="supertonic-export-language-help"
+                  className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                  onChange={(event) => {
+                    chooseLanguage(event.target.value as SupertonicLanguage);
+                  }}
+                  value={language}
+                >
+                  {SUPERTONIC_LANGUAGES.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {/*
+                Worth the words here even more than in Settings: an export
+                encodes the whole chapter before the reader hears any of it,
+                so a language picked on the wrong understanding costs the full
+                run. Supertonic does not translate -- the tag only selects the
+                letter-to-sound rules for the chapter's own words. Kept
+                outside the `label` so the select's accessible name stays the
+                label alone.
+              */}
+              <span
+                className="text-xs text-neutral-500 dark:text-neutral-400"
+                id="supertonic-export-language-help"
               >
-                {SUPERTONIC_LANGUAGES.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                Pronunciation only — this does not translate the chapter.
+                Choose the language the chapter is written in.
+              </span>
+            </div>
           </>
         )}
 

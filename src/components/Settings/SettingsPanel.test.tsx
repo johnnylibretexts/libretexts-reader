@@ -246,7 +246,7 @@ describe("SettingsPanel voice test", () => {
     );
     expect(screen.getByLabelText("Voice style")).toHaveValue("F5");
     // The language they did not touch still picks up the loaded row.
-    expect(screen.getByLabelText("Language")).toHaveValue("en");
+    expect(screen.getByLabelText("Pronunciation language")).toHaveValue("en");
   });
 
   it("keeps the reader's pending selection when the save fails", async () => {
@@ -269,6 +269,43 @@ describe("SettingsPanel voice test", () => {
     // the assertion.
     await screen.findByText(/disk full/);
     expect(voiceStyle).toHaveValue("F3");
+  });
+
+  it("speaks the selected language when the reader auditions it", async () => {
+    // The one affordance for judging the Language control, and it used to be
+    // structurally incapable of demonstrating it: Test sent a hardcoded
+    // English string under whichever language tag was selected, so choosing
+    // Spanish produced English words read with Spanish phonology. Supertonic
+    // has no language embedding (`n_langs: 0`) and no translator -- the tag
+    // only picks the letter-to-sound rules -- so the sample text is the only
+    // thing that can make the audition honest.
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+
+    await user.selectOptions(
+      screen.getByLabelText("Pronunciation language"),
+      "es",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Test Supertonic voice/ }),
+    );
+
+    await waitFor(() => expect(engine.synthesize).toHaveBeenCalled());
+    expect(engine.synthesize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Esta es una prueba de voz de LibreTexts Reader.",
+      }),
+    );
+  });
+
+  it("tells the reader the setting does not translate the book", () => {
+    // A reader who reads "Language" as "read my book to me in Spanish" gets
+    // an English textbook in a Spanish accent and concludes the engine is
+    // broken. The control has to say what it actually does, on screen, next
+    // to itself -- the label alone was what created the expectation.
+    render(<SettingsPanel />);
+
+    expect(screen.getByText(/does not translate/i)).toBeInTheDocument();
   });
 });
 

@@ -212,11 +212,27 @@ describe("SupertonicChapterExport", () => {
     const user = userEvent.setup();
     const reader = render(<SupertonicChapterExport />);
 
-    await user.selectOptions(await screen.findByLabelText("Language"), "ko");
+    await user.selectOptions(
+      await screen.findByLabelText("Pronunciation language"),
+      "ko",
+    );
     reader.unmount();
     render(<SupertonicChapterExport />);
 
-    expect(await screen.findByLabelText("Language")).toHaveValue("ko");
+    expect(
+      await screen.findByLabelText("Pronunciation language"),
+    ).toHaveValue("ko");
+  });
+
+  it("tells the reader this export language does not translate the chapter", async () => {
+    // The same false promise the Settings control carried: picking Korean
+    // here exports the chapter's own words under Korean letter-to-sound
+    // rules, not a Korean chapter. An export is the expensive way to learn
+    // that -- it encodes the whole chapter before you hear a word of it.
+    estimateSupertonicChapter.mockResolvedValue(estimate());
+    render(<SupertonicChapterExport />);
+
+    expect(await screen.findByText(/does not translate/i)).toBeInTheDocument();
   });
 
   it("never prices the chapter for the drafts a retry is replacing", async () => {
