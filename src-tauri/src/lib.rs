@@ -6,6 +6,7 @@ pub mod error;
 pub mod net;
 mod paths;
 pub mod secrets;
+mod translate;
 pub mod tts;
 
 use content::cancel::ImportCancel;
