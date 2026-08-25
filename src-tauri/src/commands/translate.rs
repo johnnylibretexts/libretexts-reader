@@ -1119,4 +1119,275 @@ mod tests {
             assert!(with_math.contains("[[latex:eA==]]"), "got: {with_math}");
         }
     }
+
+    fn validation_setting(name: &str) -> String {
+        std::env::var(name).unwrap_or_else(|_| {
+            panic!("{name} is required; see docs/validation/translation-pre-release.md")
+        })
+    }
+
+    fn validation_sections() -> Vec<String> {
+        validation_setting("LIBRETEXTS_TRANSLATION_VALIDATION_SECTIONS")
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn validation_engines() -> (OpusMtEngine, OpusMtEngine) {
+        let root = PathBuf::from(validation_setting(
+            "LIBRETEXTS_TRANSLATION_VALIDATION_MODEL_ROOT",
+        ));
+        let (forward, reverse) = pair_models("en", "es").expect("en-es model pair");
+        let status = combined_model_status("en", "es", &forward, &reverse, &root);
+        assert!(
+            status.downloaded,
+            "validation models are incomplete: {:?}",
+            status.missing_files
+        );
+        (
+            OpusMtEngine::load(&forward, &pair_model_root(&root, "en", "es"))
+                .expect("load en-es model"),
+            OpusMtEngine::load(&reverse, &pair_model_root(&root, "es", "en"))
+                .expect("load es-en model"),
+        )
+    }
+
+    fn validation_connection() -> Connection {
+        Connection::open(validation_setting("LIBRETEXTS_TRANSLATION_VALIDATION_DB"))
+            .expect("open the explicit validation database")
+    }
+
+    fn score_back_translations(
+        sources: &[String],
+        translations: &[String],
+        reverse: &OpusMtEngine,
+    ) -> Vec<f64> {
+        let back = back_translate(translations, reverse);
+        sources
+            .iter()
+            .zip(back)
+            .map(|(source, hypothesis)| qa::chrf(&hypothesis, &mask_math(source).text))
+            .collect()
+    }
+
+    fn back_translate(translations: &[String], reverse: &OpusMtEngine) -> Vec<String> {
+        let targets = translations
+            .iter()
+            .map(|translation| mask_math(translation).text)
+            .collect::<Vec<_>>();
+        reverse.translate(&targets).expect("back-translation")
+    }
+
+    fn describe_scores(scores: &[f64]) -> (f64, f64, f64, f64) {
+        let mut sorted = scores.to_vec();
+        sorted.sort_by(f64::total_cmp);
+        let at = |fraction: f64| {
+            let index = ((sorted.len() - 1) as f64 * fraction).round() as usize;
+            sorted[index]
+        };
+        let mean = sorted.iter().sum::<f64>() / sorted.len() as f64;
+        (sorted[0], at(0.10), at(0.50), mean)
+    }
+
+    /// Empirical QA calibration using deterministic 5% samples from multiple
+    /// real chapters. The degraded pass deliberately assigns each Spanish
+    /// sentence to the next English source sentence, modelling a catastrophic
+    /// alignment/configuration failure without introducing another model.
+    #[test]
+    #[ignore = "requires explicit real chapters and downloaded translation models"]
+    fn pre_release_calibrates_translation_qa() {
+        let conn = validation_connection();
+        let (forward, reverse) = validation_engines();
+        let mut healthy_chapter_p10 = Vec::new();
+        let mut degraded_chapter_p10 = Vec::new();
+
+        for section_id in validation_sections() {
+            let (document, section): (String, String) = conn
+                .query_row(
+                    "SELECT d.title, s.title FROM sections s
+                      JOIN documents d ON d.id = s.document_id
+                     WHERE s.id = ?1",
+                    [&section_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("validation section exists");
+            let jobs = collect_sentence_jobs(&conn, &section_id).expect("collect chapter text");
+            let indices = qa::sample_indices(jobs.len());
+            let sources = indices
+                .iter()
+                .map(|&index| jobs[index].source.clone())
+                .collect::<Vec<_>>();
+            let translated = translate_sentences(&forward, &sources)
+                .expect("forward translation")
+                .into_iter()
+                .enumerate()
+                .map(|(index, translated)| {
+                    translated.unwrap_or_else(|| {
+                        panic!("math masking rejected validation sample {index}")
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let healthy_back = back_translate(&translated, &reverse);
+            let healthy = sources
+                .iter()
+                .zip(&healthy_back)
+                .map(|(source, hypothesis)| qa::chrf(hypothesis, &mask_math(source).text))
+                .collect::<Vec<_>>();
+            let mut degraded_translations = translated.clone();
+            degraded_translations.rotate_left(1);
+            let degraded = score_back_translations(&sources, &degraded_translations, &reverse);
+            let healthy_stats = describe_scores(&healthy);
+            let degraded_stats = describe_scores(&degraded);
+            healthy_chapter_p10.push(healthy_stats.1);
+            degraded_chapter_p10.push(degraded_stats.1);
+
+            println!(
+                "{document} — {section} ({} sentences, {} sampled)\n  healthy  min={:.2} p10={:.2} median={:.2} mean={:.2}\n  degraded min={:.2} p10={:.2} median={:.2} mean={:.2}",
+                jobs.len(),
+                sources.len(),
+                healthy_stats.0,
+                healthy_stats.1,
+                healthy_stats.2,
+                healthy_stats.3,
+                degraded_stats.0,
+                degraded_stats.1,
+                degraded_stats.2,
+                degraded_stats.3,
+            );
+            for ((source, translation), (back, score)) in sources
+                .iter()
+                .zip(&translated)
+                .zip(healthy_back.iter().zip(&healthy))
+                .filter(|(_, (_, score))| **score < QA_THRESHOLD)
+            {
+                println!(
+                    "  below threshold ({score:.2})\n    source: {source:?}\n    translated: {translation:?}\n    back: {back:?}"
+                );
+            }
+        }
+
+        assert!(
+            healthy_chapter_p10.len() >= 3,
+            "calibration requires at least three real chapters"
+        );
+        let healthy_floor = healthy_chapter_p10
+            .into_iter()
+            .reduce(f64::min)
+            .expect("healthy scores");
+        let degraded_ceiling = degraded_chapter_p10
+            .into_iter()
+            .reduce(f64::max)
+            .expect("degraded scores");
+        assert!(
+            healthy_floor > degraded_ceiling,
+            "no clean threshold separates healthy chapter p10 ({healthy_floor:.2}) from degraded chapter p10 ({degraded_ceiling:.2})"
+        );
+        let recommended = (healthy_floor + degraded_ceiling) / 2.0;
+        println!(
+            "chapter-p10 separation: degraded ceiling={degraded_ceiling:.2}, healthy floor={healthy_floor:.2}; midpoint={recommended:.2}, configured threshold={QA_THRESHOLD:.2}"
+        );
+        assert!(QA_THRESHOLD > degraded_ceiling && QA_THRESHOLD < healthy_floor);
+    }
+
+    /// Measures the production batch shape on one dense chapter. The sample
+    /// path is the no-escalation cost; the full reverse pass is the additional
+    /// escalation cost. Supertonic runs concurrently to expose CPU contention.
+    #[test]
+    #[ignore = "requires explicit real chapter, translation models, and Supertonic model"]
+    fn pre_release_benchmarks_dense_chapter_with_supertonic() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        let conn = validation_connection();
+        let section_id = validation_sections()
+            .into_iter()
+            .next()
+            .expect("one dense validation section");
+        let jobs = collect_sentence_jobs(&conn, &section_id).expect("collect dense chapter text");
+        let sources = jobs
+            .iter()
+            .map(|job| job.source.clone())
+            .collect::<Vec<_>>();
+        let (forward, reverse) = validation_engines();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let synthesis_count = Arc::new(AtomicUsize::new(0));
+        let synthesis_stop = stop.clone();
+        let synthesis_total = synthesis_count.clone();
+        let synthesis = std::thread::spawn(move || {
+            while !synthesis_stop.load(Ordering::Relaxed) {
+                crate::tts::supertonic::engine::synthesize_samples_blocking(
+                    "Las células utilizan energía para mantener su organización, crecer y reproducirse.",
+                    "M1",
+                    "es",
+                    1.0,
+                )
+                .expect("concurrent Supertonic synthesis");
+                synthesis_total.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        let forward_started = Instant::now();
+        let mut longest_progress_interval = Duration::ZERO;
+        let mut translated = Vec::with_capacity(sources.len());
+        for batch in sources.chunks(TRANSLATION_BATCH_SIZE) {
+            let batch_started = Instant::now();
+            let output = translate_sentences(&forward, batch).expect("forward batch");
+            longest_progress_interval = longest_progress_interval.max(batch_started.elapsed());
+            translated.extend(
+                output
+                    .into_iter()
+                    .zip(batch)
+                    .map(|(translation, source)| translation.unwrap_or_else(|| source.clone())),
+            );
+        }
+        let forward_elapsed = forward_started.elapsed();
+
+        let sample_indices = qa::sample_indices(sources.len());
+        let sample_sources = sample_indices
+            .iter()
+            .map(|&index| sources[index].clone())
+            .collect::<Vec<_>>();
+        let sample_translations = sample_indices
+            .iter()
+            .map(|&index| translated[index].clone())
+            .collect::<Vec<_>>();
+        let sample_started = Instant::now();
+        let sample_scores =
+            score_back_translations(&sample_sources, &sample_translations, &reverse);
+        let sample_elapsed = sample_started.elapsed();
+
+        let escalation_started = Instant::now();
+        let all_scores = score_back_translations(&sources, &translated, &reverse);
+        let escalation_elapsed = escalation_started.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        synthesis.join().expect("Supertonic worker");
+
+        println!(
+            "dense chapter: {} sentences\nforward: {:.2}s\nQA sample/no escalation: {:.2}s ({} sentences)\nQA full escalation: +{:.2}s\nend-to-end no escalation: {:.2}s\nend-to-end escalated: {:.2}s\nprogress updates: {}; longest interval/cancel bound: {:.2}s\nSupertonic utterances completed concurrently: {}\nQA failures at {:.1}: sample={}, full={}",
+            sources.len(),
+            forward_elapsed.as_secs_f64(),
+            sample_elapsed.as_secs_f64(),
+            sample_indices.len(),
+            escalation_elapsed.as_secs_f64(),
+            (forward_elapsed + sample_elapsed).as_secs_f64(),
+            (forward_elapsed + sample_elapsed + escalation_elapsed).as_secs_f64(),
+            sources.len().div_ceil(TRANSLATION_BATCH_SIZE) + 1,
+            longest_progress_interval.as_secs_f64(),
+            synthesis_count.load(Ordering::Relaxed),
+            QA_THRESHOLD,
+            sample_scores.iter().filter(|score| **score < QA_THRESHOLD).count(),
+            all_scores.iter().filter(|score| **score < QA_THRESHOLD).count(),
+        );
+
+        assert!(
+            longest_progress_interval < Duration::from_secs(10),
+            "progress and cooperative Cancel can be silent for {:.2}s",
+            longest_progress_interval.as_secs_f64()
+        );
+    }
 }

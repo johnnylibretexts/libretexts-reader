@@ -11,11 +11,12 @@ changing a dependency, and commit the result.
 The bundled native components (PDFium, and the `id3` and `mp4ameta` crates)
 carry their own full notices as separate files in this directory.
 
-The Supertonic voice model is **not** covered here: it is downloaded on the
-reader's own machine rather than distributed with the app, and its terms are
-recorded in `supertonic-model.md`.
+The Supertonic voice model and Opus-MT translation models are **not** covered
+here: they are downloaded on the reader's own machine rather than distributed
+with the app, and their terms are recorded in `supertonic-model.md` and
+`translation-models.md`.
 
-<!-- cargo-lock-sha256: 14c3200279897c6170c1129221de73d256bb53c51e6897278360ba7db797c26f -->
+<!-- cargo-lock-sha256: 4667e8365968e2b45dd014240a68ddaaea2307d145aa084a5806a67a21ee1ab7 -->
 <!-- npm-lock-sha256: 2b2d2cfb730c856d5c04f1fcf224a56fb16c635a1b4b988072195ca70207be1e -->
 
 ## Rust dependencies
@@ -26,8 +27,8 @@ ships.
 
 ### Summary
 
-- **Apache-2.0** — 304 components
-- **MIT** — 109 components
+- **Apache-2.0** — 271 components
+- **MIT** — 98 components
 - **ISC** — 21 components
 - **Unicode-3.0** — 19 components
 - **BSD-3-Clause** — 7 components
@@ -45,35 +46,24 @@ ships.
 - iri-string 0.7.12 — Apache-2.0 — https://github.com/lo48576/iri-string
 - ort-sys 2.0.0-rc.12 — Apache-2.0 — https://github.com/pykeio/ort
 - ort 2.0.0-rc.12 — Apache-2.0 — https://github.com/pykeio/ort
-- sentencepiece-sys 0.13.2 — Apache-2.0 — https://github.com/danieldk/sentencepiece.git
-- static_assertions 1.1.0 — Apache-2.0 — https://github.com/nvzqz/static-assertions-rs
 - tinyvec 1.11.0 — Apache-2.0 — https://github.com/Lokathor/tinyvec
 - utf8_iter 1.0.4 — Apache-2.0 — https://github.com/hsivonen/utf8_iter
 - zeroize 1.8.2 — Apache-2.0 — https://github.com/RustCrypto/utils
 - rustix 1.1.4 — Apache-2.0 — https://github.com/bytecodealliance/rustix
 - ring 0.17.14 — Apache-2.0 — https://github.com/briansmith/ring
-- sentencepiece-sys 0.13.2 — Apache-2.0 — https://github.com/danieldk/sentencepiece.git
 - zopfli 0.8.3 — Apache-2.0 — https://github.com/zopfli-rs/zopfli
-- macro_rules_attribute-proc_macro 0.2.3 — Apache-2.0 — https://github.com/danielhenrymantilla/macro_rules_attribute-rs
-- macro_rules_attribute 0.2.3 — Apache-2.0 — https://github.com/danielhenrymantilla/macro_rules_attribute-rs
 - tinyvec_macros 0.1.1 — Apache-2.0 — https://github.com/Soveu/tinyvec_macros
 - zerocopy 0.8.48 — Apache-2.0 — https://github.com/google/zerocopy
 - moxcms 0.8.1 — Apache-2.0 — https://github.com/awxkee/moxcms.git
 - pxfm 0.1.29 — Apache-2.0 — https://github.com/awxkee/pxfm
-- esaxx-rs 0.1.10 — Apache-2.0 — https://github.com/Narsil/esaxx-rs
 - serialize-to-javascript-impl 0.1.2 — Apache-2.0 — https://github.com/chippers/serialize-to-javascript
 - serialize-to-javascript 0.1.2 — Apache-2.0 — https://github.com/chippers/serialize-to-javascript
-- spm_precompiled 0.1.4 — Apache-2.0 — https://github.com/huggingface/spm_precompiled
-- tokenizers 0.22.2 — Apache-2.0 — https://github.com/huggingface/tokenizers
 - zune-core 0.5.1 — Apache-2.0 — https://github.com/etemesi254/zune-image
 - zune-jpeg 0.5.15 — Apache-2.0 — https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
 - ipnet 2.12.0 — Apache-2.0 — https://github.com/krisprice/ipnet
 - swift-rs 1.0.7 — Apache-2.0 — https://github.com/Brendonovich/swift-rs
 - json-patch 3.0.1 — Apache-2.0 — https://github.com/idubrov/json-patch
 - crc32fast 1.5.0 — Apache-2.0 — https://github.com/srijs/rust-crc32fast
-- derive_builder 0.20.2 — Apache-2.0 — https://github.com/colin-kiegel/rust-derive-builder
-- derive_builder_core 0.20.2 — Apache-2.0 — https://github.com/colin-kiegel/rust-derive-builder
-- derive_builder_macro 0.20.2 — Apache-2.0 — https://github.com/colin-kiegel/rust-derive-builder
 - fallible-iterator 0.3.0 — Apache-2.0 — https://github.com/sfackler/rust-fallible-iterator
 - fallible-streaming-iterator 0.1.9 — Apache-2.0 — https://github.com/sfackler/fallible-streaming-iterator
 - foreign-types-macros 0.2.3 — Apache-2.0 — https://github.com/sfackler/foreign-types
@@ -88,7 +78,7 @@ ships.
 - toml_datetime 1.1.1+spec-1.1.0 — Apache-2.0 — https://github.com/toml-rs/toml
 - toml_parser 1.1.2+spec-1.1.0 — Apache-2.0 — https://github.com/toml-rs/toml
 - toml_writer 1.1.1+spec-1.1.0 — Apache-2.0 — https://github.com/toml-rs/toml
-- unicode_categories 0.1.1 — Apache-2.0 — https://github.com/swgillespie/unicode-categories
+- sentencepiece-rs 0.2.2 — Apache-2.0 — https://github.com/Rayato159/sentencepiece-rs
 - jsonptr 0.6.3 — Apache-2.0 — https://github.com/chanced/jsonptr
 - futures-channel 0.3.32 — Apache-2.0 — https://github.com/rust-lang/futures-rs
 - futures-core 0.3.32 — Apache-2.0 — https://github.com/rust-lang/futures-rs
@@ -116,7 +106,6 @@ ships.
 - ahash 0.8.12 — Apache-2.0 — https://github.com/tkaitchuck/ahash
 - async-compression 0.4.42 — Apache-2.0 — https://github.com/Nullus157/async-compression
 - atomic-waker 1.1.2 — Apache-2.0 — https://github.com/smol-rs/atomic-waker
-- base64 0.13.1 — Apache-2.0 — https://github.com/marshallpierce/rust-base64
 - base64 0.21.7 — Apache-2.0 — https://github.com/marshallpierce/rust-base64
 - base64 0.22.1 — Apache-2.0 — https://github.com/marshallpierce/rust-base64
 - bitflags 1.3.2 — Apache-2.0 — https://github.com/bitflags/bitflags
@@ -132,8 +121,6 @@ ships.
 - core-graphics-types 0.2.0 — Apache-2.0 — https://github.com/servo/core-foundation-rs
 - core-graphics 0.25.0 — Apache-2.0 — https://github.com/servo/core-foundation-rs
 - crossbeam-channel 0.5.15 — Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
-- crossbeam-deque 0.8.7 — Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
-- crossbeam-epoch 0.9.20 — Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
 - crossbeam-utils 0.8.21 — Apache-2.0 — https://github.com/crossbeam-rs/crossbeam
 - displaydoc 0.2.5 — Apache-2.0 — https://github.com/yaahc/displaydoc
 - either 1.15.0 — Apache-2.0 — https://github.com/rayon-rs/either
@@ -171,7 +158,6 @@ ships.
 - muda 0.19.3 — Apache-2.0 — https://github.com/tauri-apps/muda
 - ndarray 0.17.2 — Apache-2.0 — https://github.com/rust-ndarray/ndarray
 - num-complex 0.4.6 — Apache-2.0 — https://github.com/rust-num/num-complex
-- num-derive 0.4.2 — Apache-2.0 — https://github.com/rust-num/num-derive
 - num-integer 0.1.46 — Apache-2.0 — https://github.com/rust-num/num-integer
 - num-traits 0.2.19 — Apache-2.0 — https://github.com/rust-num/num-traits
 - once_cell 1.21.4 — Apache-2.0 — https://github.com/matklad/once_cell
@@ -180,12 +166,7 @@ ships.
 - percent-encoding 2.3.2 — Apache-2.0 — https://github.com/servo/rust-url/
 - png 0.17.16 — Apache-2.0 — https://github.com/image-rs/image-png
 - png 0.18.1 — Apache-2.0 — https://github.com/image-rs/image-png
-- prost-derive 0.14.4 — Apache-2.0 — https://github.com/tokio-rs/prost
-- prost 0.14.4 — Apache-2.0 — https://github.com/tokio-rs/prost
 - rawpointer 0.2.1 — Apache-2.0 — https://github.com/bluss/rawpointer/
-- rayon-cond 0.4.0 — Apache-2.0 — https://github.com/cuviper/rayon-cond
-- rayon-core 1.13.0 — Apache-2.0 — https://github.com/rayon-rs/rayon
-- rayon 1.12.0 — Apache-2.0 — https://github.com/rayon-rs/rayon
 - regex-automata 0.4.14 — Apache-2.0 — https://github.com/rust-lang/regex
 - regex-syntax 0.8.10 — Apache-2.0 — https://github.com/rust-lang/regex
 - regex 1.12.3 — Apache-2.0 — https://github.com/rust-lang/regex
@@ -211,7 +192,6 @@ ships.
 - tendril 0.4.3 — Apache-2.0 — https://github.com/servo/tendril
 - tendril 0.5.0 — Apache-2.0 — https://github.com/servo/html5ever
 - thread_local 1.1.9 — Apache-2.0 — https://github.com/Amanieu/thread_local-rs
-- unicode-normalization-alignments 0.1.12 — Apache-2.0 — https://github.com/n1t0/unicode-normalization
 - unicode-normalization 0.1.25 — Apache-2.0 — https://github.com/unicode-rs/unicode-normalization
 - unicode-segmentation 1.13.2 — Apache-2.0 — https://github.com/unicode-rs/unicode-segmentation
 - unicode-width 0.2.2 — Apache-2.0 — https://github.com/unicode-rs/unicode-width
@@ -225,7 +205,6 @@ ships.
 - hashlink 0.9.1 — Apache-2.0 — https://github.com/kyren/hashlink
 - bit-set 0.8.0 — Apache-2.0 — https://github.com/contain-rs/bit-set
 - bit-vec 0.8.0 — Apache-2.0 — https://github.com/contain-rs/bit-vec
-- minimal-lexical 0.2.1 — Apache-2.0 — https://github.com/Alexhuszagh/minimal-lexical
 - block-buffer 0.10.4 — Apache-2.0 — https://github.com/RustCrypto/utils
 - chacha20 0.10.0 — Apache-2.0 — https://github.com/RustCrypto/stream-ciphers
 - cpufeatures 0.2.17 — Apache-2.0 — https://github.com/RustCrypto/utils
@@ -235,7 +214,6 @@ ships.
 - sha2 0.10.9 — Apache-2.0 — https://github.com/RustCrypto/hashes
 - rand_core 0.10.1 — Apache-2.0 — https://github.com/rust-random/rand_core
 - rand_core 0.6.4 — Apache-2.0 — https://github.com/rust-random/rand
-- rand_core 0.9.5 — Apache-2.0 — https://github.com/rust-random/rand
 - rand_distr 0.4.3 — Apache-2.0 — https://github.com/rust-random/rand
 - mp4ameta 0.11.0 — Apache-2.0 — https://github.com/Saecki/rust-mp4ameta
 - getrandom 0.2.17 — Apache-2.0 — https://github.com/rust-random/getrandom
@@ -255,7 +233,6 @@ ships.
 - async-trait 0.1.92 — Apache-2.0 — https://github.com/dtolnay/async-trait
 - cxx 1.0.199 — Apache-2.0 — https://github.com/dtolnay/cxx
 - cxxbridge-macro 1.0.199 — Apache-2.0 — https://github.com/dtolnay/cxx
-- dary_heap 0.3.9 — Apache-2.0 — https://github.com/hanmertens/dary_heap
 - dirs-sys 0.5.0 — Apache-2.0 — https://github.com/dirs-dev/dirs-sys-rs
 - dirs 6.0.0 — Apache-2.0 — https://github.com/soc/dirs-rs
 - dispatch2 0.3.1 — Apache-2.0 — https://github.com/madsmtm/objc2
@@ -272,32 +249,23 @@ ships.
 - link-cplusplus 1.0.12 — Apache-2.0 — https://github.com/dtolnay/link-cplusplus
 - mac 0.1.1 — Apache-2.0 — https://github.com/reem/rust-mac.git
 - miniz_oxide 0.8.9 — Apache-2.0 — https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
-- monostate-impl 0.1.18 — Apache-2.0 — https://github.com/dtolnay/monostate
-- monostate 0.1.18 — Apache-2.0 — https://github.com/dtolnay/monostate
 - mp4ameta_proc 0.6.0 — Apache-2.0 — https://github.com/Saecki/rust-mp4ameta
 - num-conv 0.2.1 — Apache-2.0 — https://github.com/jhpratt/num-conv
 - objc2-app-kit 0.3.2 — Apache-2.0 — https://github.com/madsmtm/objc2
 - objc2-core-foundation 0.3.2 — Apache-2.0 — https://github.com/madsmtm/objc2
 - objc2-exception-helper 0.1.1 — Apache-2.0 — https://github.com/madsmtm/objc2
 - objc2-web-kit 0.3.2 — Apache-2.0 — https://github.com/madsmtm/objc2
-- paste 1.0.15 — Apache-2.0 — https://github.com/dtolnay/paste
-- pastey 0.2.3 — Apache-2.0 — https://github.com/as1100k/pastey
 - pdfium-render 0.8.37 — Apache-2.0 — https://github.com/ajrcarey/pdfium-render
 - pin-project-lite 0.2.17 — Apache-2.0 — https://github.com/taiki-e/pin-project-lite
-- portable-atomic 1.13.1 — Apache-2.0 — https://github.com/taiki-e/portable-atomic
 - proc-macro2 1.0.106 — Apache-2.0 — https://github.com/dtolnay/proc-macro2
 - quote 1.0.45 — Apache-2.0 — https://github.com/dtolnay/quote
 - rand 0.10.1 — Apache-2.0 — https://github.com/rust-random/rand
 - rand 0.8.6 — Apache-2.0 — https://github.com/rust-random/rand
-- rand 0.9.4 — Apache-2.0 — https://github.com/rust-random/rand
-- rand_chacha 0.9.0 — Apache-2.0 — https://github.com/rust-random/rand
 - raw-window-handle 0.6.2 — Apache-2.0 — https://github.com/rust-windowing/raw-window-handle
 - rbook 0.7.10 — Apache-2.0 — https://github.com/DevinSterling/rbook
 - rustc-hash 2.1.2 — Apache-2.0 — https://github.com/rust-lang/rustc-hash
-- rustversion 1.0.22 — Apache-2.0 — https://github.com/dtolnay/rustversion
 - ryu 1.0.23 — Apache-2.0 — https://github.com/dtolnay/ryu
 - semver 1.0.28 — Apache-2.0 — https://github.com/dtolnay/semver
-- sentencepiece 0.13.2 — Apache-2.0 — https://github.com/danieldk/sentencepiece.git
 - serde-untagged 0.1.9 — Apache-2.0 — https://github.com/dtolnay/serde-untagged
 - serde 1.0.228 — Apache-2.0 — https://github.com/serde-rs/serde
 - serde_core 1.0.228 — Apache-2.0 — https://github.com/serde-rs/serde
@@ -372,14 +340,11 @@ ships.
 - rustls-webpki 0.103.13 — ISC — https://github.com/rustls/webpki
 - ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
 - ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
-- onig_sys 69.9.3 — MIT — https://github.com/rust-onig/rust-onig
-- onig 6.5.3 — MIT — https://github.com/iwillspeak/rust-onig
 - schemars_derive 0.8.22 — MIT — https://github.com/GREsau/schemars
 - brotli 8.0.2 — MIT — https://github.com/dropbox/rust-brotli
 - ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
 - mio 1.2.0 — MIT — https://github.com/tokio-rs/mio
 - ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
-- nom 7.1.3 — MIT — https://github.com/Geal/nom
 - hyper 0.14.32 — MIT — https://github.com/hyperium/hyper
 - libsqlite3-sys 0.30.1 — MIT — https://github.com/rusqlite/rusqlite
 - rusqlite 0.32.1 — MIT — https://github.com/rusqlite/rusqlite
@@ -412,11 +377,8 @@ ships.
 - precomputed-hash 0.1.1 — MIT — https://github.com/emilio/precomputed-hash
 - readability 0.3.0 — MIT — https://github.com/kumabook/readability.git
 - cfb 0.7.3 — MIT — https://github.com/mdsteele/rust-cfb
-- darling 0.20.11 — MIT — https://github.com/TedDriggs/darling
 - darling 0.23.0 — MIT — https://github.com/TedDriggs/darling
-- darling_core 0.20.11 — MIT — https://github.com/TedDriggs/darling
 - darling_core 0.23.0 — MIT — https://github.com/TedDriggs/darling
-- darling_macro 0.20.11 — MIT — https://github.com/TedDriggs/darling
 - darling_macro 0.23.0 — MIT — https://github.com/TedDriggs/darling
 - ico 0.5.0 — MIT — https://github.com/mdsteele/rust-ico
 - ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
@@ -424,12 +386,9 @@ ships.
 - schemars 0.8.22 — MIT — https://github.com/GREsau/schemars
 - schemars_derive 0.8.22 — MIT — https://github.com/GREsau/schemars
 - tokio-macros 2.7.0 — MIT — https://github.com/tokio-rs/tokio
-- compact_str 0.9.1 — MIT — https://github.com/ParkMyCar/compact_str
-- castaway 0.2.4 — MIT — https://github.com/sagebind/castaway
 - urlpattern 0.3.0 — MIT — https://github.com/denoland/rust-urlpattern
 - rfd 0.16.0 — MIT — https://github.com/PolyMeilex/rfd
 - dom_query 0.27.0 — MIT — https://github.com/niklak/dom_query
-- unit-prefix 0.5.2 — MIT — https://codeberg.org/commons-rs/unit-prefix
 - block2 0.6.2 — MIT — https://github.com/madsmtm/objc2
 - dpi 0.1.2 — MIT — https://github.com/rust-windowing/winit
 - libm 0.2.16 — MIT — https://github.com/rust-lang/compiler-builtins
@@ -469,8 +428,6 @@ ships.
 - derive_more 0.99.20 — MIT — https://github.com/JelteF/derive_more
 - derive_more 2.1.1 — MIT — https://github.com/JelteF/derive_more
 - same-file 1.0.6 — MIT — https://github.com/BurntSushi/same-file
-- console 0.16.4 — MIT — https://github.com/console-rs/console
-- indicatif 0.18.6 — MIT — https://github.com/console-rs/indicatif
 - os_pipe 1.2.3 — MIT — https://github.com/oconnor663/os_pipe.rs
 - shared_child 1.1.1 — MIT — https://github.com/oconnor663/shared_child.rs
 - open 5.3.4 — MIT — https://github.com/Byron/open-rs

@@ -204,10 +204,7 @@ where
             tokio::fs::create_dir_all(parent).await?;
         }
         let temp_path = temp_download_path(&target_path)?;
-        let url = format!(
-            "https://huggingface.co/{}/resolve/main/{}",
-            model.repo, file.path
-        );
+        let url = model_file_url(model, file);
         download_verified(
             &client,
             Download {
@@ -235,6 +232,13 @@ where
 
     on_progress("Complete", downloaded, total.max(downloaded))?;
     Ok(root.to_string_lossy().into_owned())
+}
+
+fn model_file_url(model: &TranslationModel, file: &ModelFile) -> String {
+    format!(
+        "https://huggingface.co/{}/resolve/{}/{}",
+        model.repo, model.revision, file.path
+    )
 }
 
 fn model_file_path(root: &Path, file: &ModelFile) -> AppResult<PathBuf> {
@@ -291,6 +295,7 @@ mod tests {
         TranslationModel {
             model_id: "test/model@pinned".into(),
             repo: "test/model".into(),
+            revision: "test-revision".into(),
             files,
             verified: true,
         }
@@ -304,6 +309,24 @@ mod tests {
         let status = model_status(&model, root.path());
         assert!(!status.downloaded);
         assert!(status.missing_files.contains(&"model.bin".to_string()));
+    }
+
+    #[test]
+    fn pinned_download_urls_use_the_immutable_revision_not_main() {
+        let model = crate::translate::catalog::resolve_pair("en", "es").unwrap();
+        let weights = model
+            .files
+            .iter()
+            .find(|file| file.path == "model.bin")
+            .unwrap();
+
+        let url = model_file_url(&model, weights);
+
+        assert_eq!(
+            url,
+            "https://huggingface.co/michaelfeil/ct2fast-opus-mt-en-es/resolve/76ec296588e2234f9b7dfad5254219a0f5ecb7af/model.bin"
+        );
+        assert!(!url.contains("/resolve/main/"));
     }
 
     #[test]

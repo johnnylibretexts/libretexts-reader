@@ -65,10 +65,10 @@ If Fish Audio is enabled, the translated narration is then sent to Fish for spee
 synthesis just like any other text being read. Translation itself still uses no cloud
 translation service; the Fish Audio disclosure below applies to that spoken text.
 
-The app prefers its own versioned, checksum-verified model conversions. If one is not
-available, Settings identifies the unverified community repository and requires explicit
-confirmation before downloading it from the same `huggingface.co` host. These community
-repositories are not controlled by LibreTexts Reader and can change upstream.
+The app prefers versioned, checksum-verified model conversions pinned to an immutable
+repository revision. If one is not available, Settings identifies the unverified community
+repository and requires explicit confirmation before downloading it from the same
+`huggingface.co` host. Unverified repositories follow a moving upstream revision.
 
 ## Fish Audio (optional, off by default)
 

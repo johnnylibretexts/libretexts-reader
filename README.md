@@ -138,4 +138,6 @@ their full notices as separate files in the same directory.
 
 The on-device voice model is downloaded to your machine rather than distributed
 with the app; its terms, and what they mean for audio you export, are in
-`LICENSES/supertonic-model.md`.
+`LICENSES/supertonic-model.md`. The on-device translation models are likewise
+downloaded rather than bundled; their provenance and Apache-2.0 terms are in
+`LICENSES/translation-models.md`.

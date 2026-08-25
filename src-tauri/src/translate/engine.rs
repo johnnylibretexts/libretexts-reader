@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use ctranslate2::tokenizers::sentencepiece::Tokenizer;
-use ctranslate2::{ComputeType, Config, Translator};
+use ctranslate2::{ComputeType, Config, Tokenizer, Translator};
+use sentencepiece_rs::SentencePieceProcessor;
 
 use crate::error::{AppError, AppResult};
 use crate::translate::catalog::TranslationModel;
@@ -28,18 +28,49 @@ pub(crate) fn translate_sentences(
 }
 
 pub(crate) struct OpusMtEngine {
-    translator: Translator<Tokenizer>,
+    translator: Translator<MarianTokenizer>,
+}
+
+/// Pure-Rust SentencePiece keeps its protobuf parser out of the native symbol
+/// table. The native SentencePiece library embedded by ct2rs otherwise
+/// collides with ONNX Runtime's newer protobuf and aborts the whole app during
+/// model load.
+struct MarianTokenizer {
+    encoder: SentencePieceProcessor,
+    decoder: SentencePieceProcessor,
+}
+
+impl MarianTokenizer {
+    fn from_files(source: &Path, target: &Path) -> anyhow::Result<Self> {
+        Ok(Self {
+            encoder: SentencePieceProcessor::open(source)?,
+            decoder: SentencePieceProcessor::open(target)?,
+        })
+    }
+}
+
+impl Tokenizer for MarianTokenizer {
+    fn encode(&self, input: &str) -> anyhow::Result<Vec<String>> {
+        let mut pieces = self.encoder.encode(input)?;
+        pieces.push("</s>".to_string());
+        Ok(pieces)
+    }
+
+    fn decode(&self, tokens: Vec<String>) -> anyhow::Result<String> {
+        self.decoder.decode(&tokens).map_err(Into::into)
+    }
 }
 
 impl OpusMtEngine {
     pub(crate) fn load(model: &TranslationModel, root: &Path) -> AppResult<Self> {
-        let tokenizer = Tokenizer::from_file(root.join("source.spm"), root.join("target.spm"))
-            .map_err(|error| {
-                AppError::Model(format!(
-                    "could not load tokenizer for {}: {error}",
-                    model.model_id
-                ))
-            })?;
+        let tokenizer =
+            MarianTokenizer::from_files(&root.join("source.spm"), &root.join("target.spm"))
+                .map_err(|error| {
+                    AppError::Model(format!(
+                        "could not load tokenizer for {}: {error}",
+                        model.model_id
+                    ))
+                })?;
         let config = Config {
             compute_type: ComputeType::INT8,
             ..Config::default()

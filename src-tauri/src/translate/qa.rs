@@ -12,11 +12,12 @@ const SAMPLE_FRACTION: f64 = 0.05;
 const SAMPLE_FLOOR: usize = 5;
 const SAMPLE_CAP: usize = 50;
 
-/// Provisional. The 50-70 band is healthy back-translation and below 30 is
-/// catastrophic, but the useful cutoff for textbook prose against these
-/// specific models is empirical and MUST be calibrated over real chapters
-/// before release. See "Open items" in the design doc.
-pub(crate) const QA_THRESHOLD: f64 = 45.0;
+/// Calibrated against deterministic samples from five real textbook chapters.
+/// Healthy chapter p10 scores bottomed out at 49.48 while deliberately
+/// misaligned translations stayed at or below 13.89. Legitimate paraphrases
+/// scored as low as 24.68, so the conservative cutoff of 20 retains the
+/// measured separation without rejecting those valid translations.
+pub(crate) const QA_THRESHOLD: f64 = 20.0;
 
 fn ngram_counts(text: &str, n: usize) -> HashMap<String, usize> {
     let chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
