@@ -2,11 +2,30 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SpeechEngine, SpeechEngineSettings } from "../../lib/speech";
+import { SUPERTONIC_LANGUAGES } from "../../lib/supertonic";
 
 const createSpeechEngine = vi.fn((_settings: SpeechEngineSettings) => engine);
 const setSetting = vi.fn(async (_key: string, _value: unknown) => undefined);
 const getFishKeyStatus = vi.fn(async () => ({ present: false, valid: false }));
 const getAllSettings = vi.fn(async (): Promise<Record<string, unknown>> => ({}));
+const listTranslationTargets = vi.fn(async (_sourceLang: string) => ["es"]);
+const getTranslationModelStatus = vi.fn(
+  async (_sourceLang: string, _targetLang: string) => ({
+    downloaded: true,
+    downloadedBytes: 310_000_000,
+    totalBytes: 310_000_000,
+    verified: true,
+  }),
+);
+const ensureTranslationModelsDownloaded = vi.fn(
+  async (_sourceLang: string, _targetLang: string) => "",
+);
+const cancelTranslationModelDownload = vi.fn(async () => undefined);
+let tauriRuntime = false;
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async () => () => undefined),
+}));
 
 vi.mock("../../lib/speech", async () => ({
   ...(await vi.importActual<typeof import("../../lib/speech")>(
@@ -16,10 +35,10 @@ vi.mock("../../lib/speech", async () => ({
     createSpeechEngine(settings),
 }));
 
-// isTauriRuntime false keeps the model-status effect and the download-progress
-// `listen` subscription out of the way: neither is what this file is about.
+// Most tests keep desktop-only model effects out of the way. Translation
+// download cases opt in so they exercise status, consent, and progress wiring.
 vi.mock("../../lib/tauri", () => ({
-  isTauriRuntime: () => false,
+  isTauriRuntime: () => tauriRuntime,
   api: {
     getSupertonicModelStatus: vi.fn(async () => ({ downloaded: true })),
     ensureSupertonicModelDownloaded: vi.fn(async () => ""),
@@ -27,6 +46,16 @@ vi.mock("../../lib/tauri", () => ({
     getFishKeyStatus: () => getFishKeyStatus(),
     listFishVoices: vi.fn(async () => []),
     getAllSettings: () => getAllSettings(),
+    listTranslationTargets: (sourceLang: string) =>
+      listTranslationTargets(sourceLang),
+    getTranslationModelStatus: (sourceLang: string, targetLang: string) =>
+      getTranslationModelStatus(sourceLang, targetLang),
+    ensureTranslationModelsDownloaded: (
+      sourceLang: string,
+      targetLang: string,
+    ) => ensureTranslationModelsDownloaded(sourceLang, targetLang),
+    cancelTranslationModelDownload: () =>
+      cancelTranslationModelDownload(),
   },
 }));
 
@@ -51,6 +80,16 @@ describe("SettingsPanel voice test", () => {
     // shared across tests in this file -- so both have to be put back or a
     // hydrate failure seeded by one test leaks into the next.
     getAllSettings.mockResolvedValue({});
+    listTranslationTargets.mockResolvedValue(["es"]);
+    getTranslationModelStatus.mockResolvedValue({
+      downloaded: true,
+      downloadedBytes: 310_000_000,
+      totalBytes: 310_000_000,
+      verified: true,
+    });
+    ensureTranslationModelsDownloaded.mockResolvedValue("");
+    cancelTranslationModelDownload.mockResolvedValue(undefined);
+    tauriRuntime = false;
     useSettingsStore.setState({
       hydrated: true,
       hydrateFailed: false,
@@ -59,6 +98,7 @@ describe("SettingsPanel voice test", () => {
       ttsProvider: "supertonic",
       supertonicVoiceStyle: "M1",
       supertonicLanguage: "en",
+      translationTargetLang: null,
       fishVoiceId: null,
     });
   });
@@ -246,7 +286,7 @@ describe("SettingsPanel voice test", () => {
     );
     expect(screen.getByLabelText("Voice style")).toHaveValue("F5");
     // The language they did not touch still picks up the loaded row.
-    expect(screen.getByLabelText("Pronunciation language")).toHaveValue("en");
+    expect(screen.getByLabelText("Read aloud in")).toHaveValue("original");
   });
 
   it("keeps the reader's pending selection when the save fails", async () => {
@@ -282,8 +322,9 @@ describe("SettingsPanel voice test", () => {
     const user = userEvent.setup();
     render(<SettingsPanel />);
 
+    await screen.findByRole("option", { name: "Spanish" });
     await user.selectOptions(
-      screen.getByLabelText("Pronunciation language"),
+      screen.getByLabelText("Read aloud in"),
       "es",
     );
     await user.click(
@@ -298,14 +339,135 @@ describe("SettingsPanel voice test", () => {
     );
   });
 
-  it("tells the reader the setting does not translate the book", () => {
-    // A reader who reads "Language" as "read my book to me in Spanish" gets
-    // an English textbook in a Spanish accent and concludes the engine is
-    // broken. The control has to say what it actually does, on screen, next
-    // to itself -- the label alone was what created the expectation.
+  it("explains that translation changes speech while the page stays original", () => {
     render(<SettingsPanel />);
 
-    expect(screen.getByText(/does not translate/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/on-device machine translation/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/page stays in its original language/i),
+    ).toBeInTheDocument();
+  });
+
+  it("defaults to the book's original language and has no second language control", async () => {
+    render(<SettingsPanel />);
+
+    expect(await screen.findByLabelText("Read aloud in")).toHaveValue(
+      "original",
+    );
+    expect(
+      screen.queryByLabelText("Pronunciation language"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Translate audio to"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves one language for both translation and pronunciation", async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+
+    await screen.findByRole("option", { name: "Spanish" });
+    await user.selectOptions(
+      await screen.findByLabelText("Read aloud in"),
+      "es",
+    );
+    await user.click(screen.getByRole("button", { name: /Save/ }));
+
+    await waitFor(() =>
+      expect(setSetting).toHaveBeenCalledWith(
+        "translation_target_lang",
+        "es",
+      ),
+    );
+    expect(setSetting).toHaveBeenCalledWith("supertonic_language", "es");
+    expect(ensureTranslationModelsDownloaded).not.toHaveBeenCalled();
+  });
+
+  it("offers only targets Supertonic can speak", async () => {
+    listTranslationTargets.mockResolvedValue(["es", "unsupported"]);
+    render(<SettingsPanel />);
+
+    await screen.findByRole("option", { name: "Spanish" });
+    const options = within(await screen.findByLabelText("Read aloud in"))
+      .getAllByRole("option")
+      .map((option) => option.getAttribute("value"))
+      .filter(
+        (value): value is (typeof SUPERTONIC_LANGUAGES)[number]["id"] =>
+          value !== "original" && value !== null,
+      );
+    const speakable = SUPERTONIC_LANGUAGES.map((language) => language.id);
+    expect(options).toContain("es");
+    expect(options.every((option) => speakable.includes(option))).toBe(true);
+  });
+
+  it("shows the pair size and downloads only after explicit confirmation", async () => {
+    tauriRuntime = true;
+    getTranslationModelStatus.mockResolvedValue({
+      downloaded: false,
+      downloadedBytes: 0,
+      totalBytes: 310_000_000,
+      verified: true,
+    });
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+
+    await screen.findByRole("option", { name: "Spanish" });
+    await user.selectOptions(
+      await screen.findByLabelText("Read aloud in"),
+      "es",
+    );
+    expect(await screen.findByText(/310 MB/)).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Download translation models/ }),
+    );
+    expect(ensureTranslationModelsDownloaded).not.toHaveBeenCalled();
+
+    const gate = screen.getByRole("group", {
+      name: /translation model download confirmation/i,
+    });
+    expect(within(gate).getByText(/310 MB/)).toBeInTheDocument();
+    await user.click(
+      within(gate).getByRole("button", { name: /Confirm download/ }),
+    );
+    await waitFor(() =>
+      expect(ensureTranslationModelsDownloaded).toHaveBeenCalledWith(
+        "en",
+        "es",
+      ),
+    );
+  });
+
+  it("warns before downloading an unverified translation pair", async () => {
+    tauriRuntime = true;
+    getTranslationModelStatus.mockResolvedValue({
+      downloaded: false,
+      downloadedBytes: 0,
+      totalBytes: 310_000_000,
+      verified: false,
+    });
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+
+    await screen.findByRole("option", { name: "Spanish" });
+    await user.selectOptions(
+      await screen.findByLabelText("Read aloud in"),
+      "es",
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Download translation models/,
+      }),
+    );
+
+    const gate = screen.getByRole("group", {
+      name: /translation model download confirmation/i,
+    });
+    expect(gate).toHaveTextContent(/English.*Spanish/i);
+    expect(gate).toHaveTextContent(/stored locally/i);
+    expect(gate).toHaveTextContent(/unverified community models/i);
   });
 });
 
@@ -322,6 +484,7 @@ describe("attribution", () => {
       ttsProvider: "supertonic",
       supertonicVoiceStyle: "M1",
       supertonicLanguage: "en",
+      translationTargetLang: null,
       fishVoiceId: null,
     });
   });
@@ -388,6 +551,7 @@ describe("choosing a provider that bills", () => {
       ttsProvider: "supertonic",
       supertonicVoiceStyle: "M1",
       supertonicLanguage: "en",
+      translationTargetLang: null,
       fishVoiceId: null,
     });
   });

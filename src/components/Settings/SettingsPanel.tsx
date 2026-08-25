@@ -19,6 +19,7 @@ import {
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
 import { useSettingsStore, type TtsProvider } from "../../stores/settings";
+import type * as Domain from "../../types/domain";
 import { FishAudioSettings } from "./FishAudioSettings";
 import { SPEECH_BILLED_LOOKAHEAD_SENTENCES } from "../../stores/player";
 
@@ -46,6 +47,27 @@ const TTS_PROVIDERS: {
 
 const SAMPLE_TEXT = "LibreTexts Reader voice test.";
 const TEST_PLAYBACK_TIMEOUT_MS = 30_000;
+// Settings does not receive the active Document yet. Task 11 wires its
+// persisted source language into playback; English is the Task 10 catalogue
+// source and keeps this surface honest for the only complete QA pair today.
+const TRANSLATION_SOURCE_LANGUAGE: SupertonicLanguage = "en";
+const SUPERTONIC_LANGUAGE_IDS = new Set(
+  SUPERTONIC_LANGUAGES.map((language) => language.id),
+);
+
+function translationModelSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 MB";
+  }
+  return `${Math.round(bytes / 1_000_000)} MB`;
+}
+
+function languageName(language: SupertonicLanguage) {
+  return (
+    SUPERTONIC_LANGUAGES.find((option) => option.id === language)?.name ??
+    language.toUpperCase()
+  );
+}
 
 export function SettingsPanel() {
   const hydrated = useSettingsStore((state) => state.hydrated);
@@ -62,8 +84,8 @@ export function SettingsPanel() {
   const supertonicVoiceStyle = useSettingsStore(
     (state) => state.supertonicVoiceStyle,
   );
-  const supertonicLanguage = useSettingsStore(
-    (state) => state.supertonicLanguage,
+  const translationTargetLang = useSettingsStore(
+    (state) => state.translationTargetLang,
   );
   const saveTtsSettings = useSettingsStore((state) => state.saveTtsSettings);
 
@@ -78,8 +100,10 @@ export function SettingsPanel() {
 
   const [voiceStyle, setVoiceStyle] =
     useState<SupertonicVoiceStyle>(supertonicVoiceStyle);
-  const [language, setLanguage] =
-    useState<SupertonicLanguage>(supertonicLanguage);
+  const [language, setLanguage] = useState<SupertonicLanguage | null>(
+    translationTargetLang,
+  );
+  const effectiveLanguage = language ?? TRANSLATION_SOURCE_LANGUAGE;
   // One flag per draft. These stay editable while a failed load has Save
   // disabled, so a reader can line up their pick while waiting -- and the
   // retry that finally succeeds must not replace it at the very moment Save
@@ -155,6 +179,22 @@ export function SettingsPanel() {
   const [supertonicModelError, setSupertonicModelError] = useState<
     string | null
   >(null);
+  const [translationTargets, setTranslationTargets] = useState<
+    SupertonicLanguage[]
+  >([]);
+  const [translationModelStatus, setTranslationModelStatus] =
+    useState<Domain.TranslationModelStatus | null>(null);
+  const [translationModelProgress, setTranslationModelProgress] =
+    useState<Domain.TranslationModelDownloadProgress | null>(null);
+  const [translationModelError, setTranslationModelError] = useState<
+    string | null
+  >(null);
+  const [confirmingTranslationDownload, setConfirmingTranslationDownload] =
+    useState(false);
+  const [downloadingTranslationModels, setDownloadingTranslationModels] =
+    useState(false);
+  const [cancellingTranslationDownload, setCancellingTranslationDownload] =
+    useState(false);
 
   // Seed the drafts from the store once settings finish loading -- not on
   // every change to those rows. The draft belongs to the reader from the
@@ -176,9 +216,99 @@ export function SettingsPanel() {
       setVoiceStyle(settings.supertonicVoiceStyle);
     }
     if (!languageChosen.current) {
-      setLanguage(settings.supertonicLanguage);
+      setLanguage(settings.translationTargetLang);
     }
   }, [hydrated, hydrateFailed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listTranslationTargets(TRANSLATION_SOURCE_LANGUAGE)
+      .then((targets) => {
+        if (cancelled) {
+          return;
+        }
+        setTranslationTargets(
+          targets.filter(
+            (target): target is SupertonicLanguage =>
+              SUPERTONIC_LANGUAGE_IDS.has(target as SupertonicLanguage),
+          ),
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTranslationModelError(displayError(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setConfirmingTranslationDownload(false);
+    setTranslationModelProgress(null);
+    setTranslationModelStatus(null);
+    setTranslationModelError(null);
+    if (!language || !isTauriRuntime()) {
+      return;
+    }
+
+    let cancelled = false;
+    const target = language;
+    void api
+      .getTranslationModelStatus(TRANSLATION_SOURCE_LANGUAGE, target)
+      .then((status) => {
+        if (!cancelled) {
+          setTranslationModelStatus(status);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTranslationModelError(displayError(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [language]);
+
+  useEffect(() => {
+    if (!language || !isTauriRuntime()) {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    const target = language;
+    void listen<Domain.TranslationModelDownloadProgress>(
+      "translation-model-download-progress",
+      (event) => {
+        if (
+          event.payload.sourceLang === TRANSLATION_SOURCE_LANGUAGE &&
+          event.payload.targetLang === target
+        ) {
+          setTranslationModelProgress(event.payload);
+        }
+      },
+    )
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+        } else {
+          unlisten = cleanup;
+        }
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setTranslationModelError(displayError(error));
+        }
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [language]);
 
   // A provider change invalidates any confirmation already on screen: it
   // named a provider and a cost that no longer apply.
@@ -264,7 +394,8 @@ export function SettingsPanel() {
   async function persistDraft() {
     await saveTtsSettings({
       supertonicVoiceStyle: voiceStyle,
-      supertonicLanguage: language,
+      translationTargetLang: language,
+      ...(language === null ? {} : { supertonicLanguage: language }),
     });
   }
 
@@ -299,7 +430,7 @@ export function SettingsPanel() {
     try {
       const engine = createSpeechEngine({
         ttsProvider,
-        supertonicLanguage: language,
+        supertonicLanguage: effectiveLanguage,
         // The pending selection, not the saved row -- Test previews what the
         // reader is about to save, exactly as `language` above does.
         supertonicVoiceStyle: voiceStyle,
@@ -326,7 +457,7 @@ export function SettingsPanel() {
       const blob = await engine.synthesize({
         text:
           ttsProvider === "supertonic"
-            ? supertonicSampleText(language)
+            ? supertonicSampleText(effectiveLanguage)
             : SAMPLE_TEXT,
         speed: 1,
       });
@@ -370,6 +501,60 @@ export function SettingsPanel() {
     }
   }
 
+  async function downloadTranslationModels() {
+    if (!language) {
+      return;
+    }
+    const target = language;
+    setConfirmingTranslationDownload(false);
+    setDownloadingTranslationModels(true);
+    setCancellingTranslationDownload(false);
+    setTranslationModelError(null);
+    setTranslationModelProgress({
+      sourceLang: TRANSLATION_SOURCE_LANGUAGE,
+      targetLang: target,
+      pair: `${TRANSLATION_SOURCE_LANGUAGE}-${target}`,
+      file: "Preparing",
+      downloaded: translationModelStatus?.downloadedBytes ?? 0,
+      total: translationModelStatus?.totalBytes ?? 0,
+    });
+
+    try {
+      await api.ensureTranslationModelsDownloaded(
+        TRANSLATION_SOURCE_LANGUAGE,
+        target,
+      );
+      const status = await api.getTranslationModelStatus(
+        TRANSLATION_SOURCE_LANGUAGE,
+        target,
+      );
+      setTranslationModelStatus(status);
+      setTranslationModelProgress({
+        sourceLang: TRANSLATION_SOURCE_LANGUAGE,
+        targetLang: target,
+        pair: `${TRANSLATION_SOURCE_LANGUAGE}-${target}`,
+        file: "Complete",
+        downloaded: status.downloadedBytes,
+        total: status.totalBytes,
+      });
+    } catch (error) {
+      if (!/cancel/i.test(displayError(error))) {
+        setTranslationModelError(displayError(error));
+      }
+    } finally {
+      setDownloadingTranslationModels(false);
+      setCancellingTranslationDownload(false);
+    }
+  }
+
+  function cancelTranslationDownload() {
+    setCancellingTranslationDownload(true);
+    void api.cancelTranslationModelDownload().catch((error) => {
+      setCancellingTranslationDownload(false);
+      setTranslationModelError(displayError(error));
+    });
+  }
+
   // `!hydrated`, not `!hydrated && loading`: the gap between mount and
   // `hydrate()` setting `loading` used to render fully editable controls
   // seeded from DEFAULT_SETTINGS, and a style picked in it was silently
@@ -402,6 +587,21 @@ export function SettingsPanel() {
     : supertonicModelStatus
       ? "Model not downloaded"
       : "Checking model";
+  const translationDownloaded =
+    translationModelProgress?.downloaded ??
+    translationModelStatus?.downloadedBytes ??
+    0;
+  const translationTotal =
+    translationModelProgress?.total ??
+    translationModelStatus?.totalBytes ??
+    0;
+  const translationProgressPercent =
+    translationTotal > 0
+      ? Math.min(
+          100,
+          Math.round((translationDownloaded / translationTotal) * 100),
+        )
+      : 0;
 
   /**
    * Deliberately leaves `saveError` alone. These are separate actions with
@@ -580,45 +780,157 @@ export function SettingsPanel() {
 
             <div className="flex flex-col gap-2">
               <label className="flex flex-col gap-2 text-sm font-medium">
-                Pronunciation language
+                Read aloud in
                 <select
                   aria-describedby="supertonic-language-help"
                   className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+                  disabled={downloadingTranslationModels}
                   onChange={(event) => {
                     languageChosen.current = true;
-                    setLanguage(event.target.value as SupertonicLanguage);
+                    setLanguage(
+                      event.target.value === "original"
+                        ? null
+                        : (event.target.value as SupertonicLanguage),
+                    );
                   }}
-                  value={language}
+                  value={language ?? "original"}
                 >
-                  {SUPERTONIC_LANGUAGES.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.name}
+                  <option value="original">Original language</option>
+                  {translationTargets.map((target) => (
+                    <option key={target} value={target}>
+                      {languageName(target)}
                     </option>
                   ))}
                 </select>
               </label>
-              {/*
-                Named for what it does, and described outside the `label` so
-                the select's accessible name stays the label alone.
-
-                Called just "Language", this reads as "read my book to me in
-                Spanish" -- and a reader who sets it on an English textbook
-                gets English in a Spanish accent and concludes the engine is
-                broken. Supertonic has no translator and no language embedding
-                at all (`n_langs: 0` in the model's `tts.json`); the tag
-                `preprocess_text` wraps the text in only picks which
-                letter-to-sound rules apply to the characters already there.
-              */}
               <span
                 className="text-xs text-neutral-500 dark:text-neutral-400"
                 id="supertonic-language-help"
               >
-                Sets how words are pronounced, not what they say. Supertonic
-                does not translate — choose the language your book is written
-                in. Test speaks a sample in the language you pick.
+                Uses on-device machine translation for spoken narration only.
+                The page stays in its original language.
               </span>
             </div>
           </div>
+
+          {language ? (
+            <div className="mt-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Translation models</h3>
+                  <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                    {languageName(TRANSLATION_SOURCE_LANGUAGE)} →{" "}
+                    {languageName(language)}
+                    {translationModelStatus
+                      ? ` · ${translationModelSize(translationModelStatus.totalBytes)} · ${translationModelStatus.downloaded ? "Ready" : "Not downloaded"}`
+                      : " · Checking model size"}
+                  </p>
+                </div>
+                {!translationModelStatus?.downloaded &&
+                !confirmingTranslationDownload ? (
+                  <button
+                    className="inline-flex h-10 items-center gap-2 rounded-md border border-neutral-200 px-4 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                    disabled={
+                      !translationModelStatus || downloadingTranslationModels
+                    }
+                    onClick={() => setConfirmingTranslationDownload(true)}
+                    type="button"
+                  >
+                    <Download className="size-4" aria-hidden="true" />
+                    Download translation models
+                  </button>
+                ) : translationModelStatus?.downloaded ? (
+                  <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                    <Check className="size-4" aria-hidden="true" />
+                    Downloaded
+                  </span>
+                ) : null}
+              </div>
+
+              {confirmingTranslationDownload && translationModelStatus ? (
+                <div
+                  aria-label="Translation model download confirmation"
+                  className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+                  role="group"
+                >
+                  <p className="font-medium">
+                    Download {languageName(TRANSLATION_SOURCE_LANGUAGE)} →{" "}
+                    {languageName(language)} translation models?
+                  </p>
+                  <p className="mt-1">
+                    The forward and reverse models use{" "}
+                    {translationModelSize(translationModelStatus.totalBytes)} and
+                    remain stored locally on this device.
+                  </p>
+                  {!translationModelStatus.verified ? (
+                    <p className="mt-2 font-medium">
+                      These are unverified community models. Review their
+                      provenance before downloading.
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      className="inline-flex h-9 items-center rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      onClick={() => void downloadTranslationModels()}
+                      type="button"
+                    >
+                      Confirm download
+                    </button>
+                    <button
+                      className="inline-flex h-9 items-center rounded-md border border-amber-300 px-3 text-sm font-medium hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-amber-800 dark:hover:bg-amber-900/40"
+                      onClick={() => setConfirmingTranslationDownload(false)}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {downloadingTranslationModels || translationModelProgress ? (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+                    <span>
+                      {translationModelProgress?.file ?? "Preparing"} ·{" "}
+                      {translationModelSize(translationDownloaded)} /{" "}
+                      {translationModelSize(translationTotal)}
+                    </span>
+                    {downloadingTranslationModels ? (
+                      <button
+                        className="font-medium text-neutral-700 hover:text-neutral-950 disabled:opacity-50 dark:text-neutral-200 dark:hover:text-white"
+                        disabled={cancellingTranslationDownload}
+                        onClick={cancelTranslationDownload}
+                        type="button"
+                      >
+                        {cancellingTranslationDownload
+                          ? "Cancelling…"
+                          : "Cancel download"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div
+                    aria-label="Translation model download"
+                    aria-valuemax={100}
+                    aria-valuemin={0}
+                    aria-valuenow={translationProgressPercent}
+                    className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800"
+                    role="progressbar"
+                  >
+                    <div
+                      className="h-full rounded-full bg-brand-700 transition-[width]"
+                      style={{ width: `${translationProgressPercent}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {translationModelError ? (
+                <p className="mt-2 text-sm text-red-700 dark:text-red-300">
+                  {translationModelError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
             <div>
