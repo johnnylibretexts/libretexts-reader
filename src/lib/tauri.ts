@@ -250,6 +250,32 @@ export const api = {
   clearFishApiKey: () => invokeDesktop<void>("clear_fish_api_key"),
   listFishVoices: () => invokeDesktop<SpeechVoice[]>("list_fish_voices"),
 
+  translateSection: (sectionId: string) =>
+    invokeDesktop<Domain.TranslateSectionResult>("translate_section", {
+      sectionId,
+    }),
+  cancelSectionTranslation: () =>
+    invokeDesktop<void>("cancel_section_translation"),
+  getTranslationModelStatus: (sourceLang: string, targetLang: string) =>
+    invokeDesktop<Domain.TranslationModelStatus>(
+      "get_translation_model_status",
+      { sourceLang, targetLang },
+    ),
+  ensureTranslationModelsDownloaded: (
+    sourceLang: string,
+    targetLang: string,
+  ) =>
+    invokeDesktop<string>("ensure_translation_models_downloaded", {
+      sourceLang,
+      targetLang,
+    }),
+  cancelTranslationModelDownload: () =>
+    invokeDesktop<void>("cancel_translation_model_download"),
+  listTranslationTargets: (sourceLang = "en") =>
+    invokeWithBrowserFallback<string[]>([], "list_translation_targets", {
+      sourceLang,
+    }),
+
   getSetting: <T = unknown>(key: string) =>
     invokeWithBrowserFallback<T | null>(null, "get_setting", { key }),
   setSetting: (key: string, value: unknown) =>

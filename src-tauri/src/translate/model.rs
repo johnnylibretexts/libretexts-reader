@@ -57,7 +57,7 @@ type DownloadOutcome = Result<String, String>;
 /// caller starts it; later callers subscribe to that same result and Cancel
 /// stops the shared operation.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct TranslationDownload {
+pub struct TranslationDownload {
     cancel: TranslationDownloadCancel,
     in_flight: Arc<Mutex<Option<broadcast::Sender<DownloadOutcome>>>>,
 }
@@ -158,11 +158,25 @@ pub(crate) fn model_status(model: &TranslationModel, root: &Path) -> ModelStatus
 }
 
 /// Download and verify every file in `model` into the explicitly supplied root.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn fetch(
     model: &TranslationModel,
     root: &Path,
     cancel: TranslationDownloadCancel,
 ) -> AppResult<String> {
+    fetch_with_progress(model, root, cancel, |_, _, _| Ok(())).await
+}
+
+/// `fetch` with model-wide byte progress for the Tauri command surface.
+pub(crate) async fn fetch_with_progress<F>(
+    model: &TranslationModel,
+    root: &Path,
+    cancel: TranslationDownloadCancel,
+    mut on_progress: F,
+) -> AppResult<String>
+where
+    F: FnMut(&str, u64, u64) -> AppResult<()>,
+{
     if model.files.is_empty() {
         return Err(AppError::Model(format!(
             "translation model {} has no downloadable file manifest",
@@ -174,11 +188,15 @@ pub(crate) async fn fetch(
     let client = reqwest::Client::builder()
         .user_agent(TRANSLATION_USER_AGENT)
         .build()?;
+    let total = model.files.iter().map(|file| file.size_bytes).sum::<u64>();
+    let mut downloaded = 0_u64;
+    on_progress("Preparing", downloaded, total)?;
 
     for file in &model.files {
         cancel.check()?;
         let target_path = model_file_path(root, file)?;
         if file_complete(&target_path, file)? {
+            downloaded += target_path.metadata()?.len();
             continue;
         }
 
@@ -200,16 +218,22 @@ pub(crate) async fn fetch(
                 read_timeout: READ_TIMEOUT,
                 error: AppError::Model,
             },
-            |_, _| cancel.check(),
+            |file_downloaded, _| {
+                cancel.check()?;
+                let current = downloaded + file_downloaded;
+                on_progress(&file.path, current, total.max(current))
+            },
         )
         .await?;
 
         if target_path.exists() {
             tokio::fs::remove_file(&target_path).await?;
         }
-        tokio::fs::rename(temp_path, target_path).await?;
+        tokio::fs::rename(temp_path, &target_path).await?;
+        downloaded += target_path.metadata()?.len();
     }
 
+    on_progress("Complete", downloaded, total.max(downloaded))?;
     Ok(root.to_string_lossy().into_owned())
 }
 

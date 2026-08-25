@@ -50,6 +50,33 @@ export type ImportStage = "fetching" | "parsing" | "tokenizing" | "storing" | "c
 
 export type ImportProgress = { documentId: string, stage: ImportStage, current: number, total: number, message: string | null, };
 
+export type TranslationModelStatus = {
+  downloaded: boolean;
+  downloadedBytes: number;
+  totalBytes: number;
+  verified: boolean;
+  missingFiles?: string[];
+  sourceLang?: string;
+  targetLang?: string;
+};
+
+export type TranslationProgress = { sectionId: string, done: number, total: number, };
+
+export type TranslationModelDownloadProgress = {
+  sourceLang: string;
+  targetLang: string;
+  pair: string;
+  file: string;
+  downloaded: number;
+  total: number;
+};
+
+export type TranslateSectionResult =
+  | { status: "original", sourceLang: string, sentenceCount: number }
+  | { status: "needsDownload", sourceLang: string, targetLang: string, modelStatus: TranslationModelStatus }
+  | { status: "complete", sourceLang: string, targetLang: string, fallbackCount: number, sentenceCount: number }
+  | { status: "cancelled", sourceLang: string, targetLang: string, done: number, total: number, fallbackCount: number, sentenceCount: number };
+
 /** Mirrors `AppError::kind` in `src-tauri/src/error.rs`. Kept in sync by `scripts/ci/check-error-kinds.sh`. */
 export type AppErrorKind = "database" | "pool" | "io" | "serde" | "http" | "readability" | "epub" | "pdf" | "openstax" | "libretexts" | "pressbooks" | "model" | "voice" | "auth" | "tts" | "drm_protected" | "tauri" | "invalid_input" | "cancelled" | "migration" | "payment_required" | "rate_limited";
 

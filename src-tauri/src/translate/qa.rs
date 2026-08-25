@@ -76,11 +76,7 @@ pub(crate) fn sample_indices(total: usize) -> Vec<usize> {
 }
 
 pub(crate) fn should_escalate(scores: &[f64]) -> bool {
-    if scores.is_empty() {
-        return false;
-    }
-    let mean = scores.iter().sum::<f64>() / scores.len() as f64;
-    mean < QA_THRESHOLD
+    scores.iter().any(|score| *score < QA_THRESHOLD)
 }
 
 #[cfg(test)]
@@ -137,6 +133,10 @@ mod tests {
     fn escalates_only_when_the_sample_looks_bad() {
         assert!(!should_escalate(&[80.0, 75.0, 90.0]));
         assert!(should_escalate(&[20.0, 15.0, 25.0]));
+        assert!(
+            should_escalate(&[100.0, 0.0]),
+            "one catastrophic sampled sentence must escalate the chapter"
+        );
         // An empty sample is not evidence of failure.
         assert!(!should_escalate(&[]));
     }
