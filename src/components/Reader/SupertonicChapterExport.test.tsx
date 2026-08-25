@@ -115,6 +115,7 @@ describe("SupertonicChapterExport", () => {
       fishVoiceId: null,
       supertonicVoiceStyle: "M1",
       supertonicLanguage: "en",
+      translationTargetLang: null,
     });
     getFishCredit.mockResolvedValue(12.5);
     exportSupertonicChapterMp3.mockResolvedValue({
@@ -205,34 +206,29 @@ describe("SupertonicChapterExport", () => {
     expect(await screen.findByLabelText("Voice")).toHaveValue("F3");
   });
 
-  it("remembers its export language across a trip out of the Reader", async () => {
-    // Its own flag, not one shared with Voice: a single "chosen" flag would
-    // freeze Language on whatever it held the moment Voice was touched.
-    estimateSupertonicChapter.mockResolvedValue(estimate());
-    const user = userEvent.setup();
-    const reader = render(<SupertonicChapterExport />);
-
-    await user.selectOptions(
-      await screen.findByLabelText("Pronunciation language"),
-      "ko",
+  it("uses the saved translation target with no second language control", async () => {
+    useSettingsStore.setState({ translationTargetLang: "es" });
+    estimateSupertonicChapter.mockResolvedValue(
+      estimate({
+        outputPath: "/tmp/001 - Chapter One - Supertonic - M1 - es.m4a",
+      }),
     );
-    reader.unmount();
     render(<SupertonicChapterExport />);
 
+    await waitFor(() => expect(estimateSupertonicChapter).toHaveBeenCalled());
+    expect(estimateSupertonicChapter.mock.calls[0][0]).toMatchObject({
+      language: "es",
+    });
     expect(
-      await screen.findByLabelText("Pronunciation language"),
-    ).toHaveValue("ko");
-  });
+      screen.queryByLabelText("Pronunciation language"),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/M1 - es\.m4a/)).toBeInTheDocument();
 
-  it("tells the reader this export language does not translate the chapter", async () => {
-    // The same false promise the Settings control carried: picking Korean
-    // here exports the chapter's own words under Korean letter-to-sound
-    // rules, not a Korean chapter. An export is the expensive way to learn
-    // that -- it encodes the whole chapter before you hear a word of it.
-    estimateSupertonicChapter.mockResolvedValue(estimate());
-    render(<SupertonicChapterExport />);
-
-    expect(await screen.findByText(/does not translate/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /M4A/ }));
+    await waitFor(() => expect(exportSupertonicChapterMp3).toHaveBeenCalled());
+    expect(exportSupertonicChapterMp3.mock.calls[0][0]).toMatchObject({
+      language: "es",
+    });
   });
 
   it("never prices the chapter for the drafts a retry is replacing", async () => {

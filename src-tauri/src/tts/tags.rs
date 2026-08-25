@@ -25,6 +25,7 @@ pub(crate) fn tag_chapter_export(
     path: &Path,
     document: &Document,
     section: &Section,
+    target_lang: Option<&str>,
 ) -> AppResult<()> {
     match path
         .extension()
@@ -32,8 +33,10 @@ pub(crate) fn tag_chapter_export(
         .map(str::to_ascii_lowercase)
         .as_deref()
     {
-        Some("mp3") => tag_chapter_mp3(path, document, section),
-        Some("m4a") | Some("mp4") | Some("m4b") => tag_chapter_mp4(path, document, section),
+        Some("mp3") => tag_chapter_mp3(path, document, section, target_lang),
+        Some("m4a") | Some("mp4") | Some("m4b") => {
+            tag_chapter_mp4(path, document, section, target_lang)
+        }
         other => Err(AppError::Tts(format!(
             "cannot tag an export with extension {}",
             other.unwrap_or("(none)")
@@ -48,12 +51,23 @@ pub(crate) fn tag_chapter_export(
 /// whatever their player calls those fields. MP4 has no dedicated copyright or
 /// source-URL atom pair matching TCOP/WOAS, so both land where a player will
 /// actually surface them.
-fn tag_chapter_mp4(path: &Path, document: &Document, section: &Section) -> AppResult<()> {
+fn tag_chapter_mp4(
+    path: &Path,
+    document: &Document,
+    section: &Section,
+    target_lang: Option<&str>,
+) -> AppResult<()> {
     let mut tag = mp4ameta::Tag::read_from_path(path)
         .map_err(|error| AppError::Tts(format!("could not read M4A tags: {error}")))?;
 
     tag.set_album(&document.title);
     tag.set_title(&section.title);
+    if let Some(language) = target_lang {
+        tag.set_data(
+            mp4ameta::FreeformIdent::new("com.apple.iTunes", "LANGUAGE"),
+            mp4ameta::Data::Utf8(language.to_string()),
+        );
+    }
 
     if let Some(license) = present(&document.license) {
         tag.set_copyright(license);
@@ -74,13 +88,21 @@ fn tag_chapter_mp4(path: &Path, document: &Document, section: &Section) -> AppRe
         .map_err(|error| AppError::Tts(format!("could not write M4A tags: {error}")))
 }
 
-fn tag_chapter_mp3(path: &Path, document: &Document, section: &Section) -> AppResult<()> {
+fn tag_chapter_mp3(
+    path: &Path,
+    document: &Document,
+    section: &Section,
+    target_lang: Option<&str>,
+) -> AppResult<()> {
     let mut tag = Tag::new();
 
     // Always known, so the tag is never empty even for a Source that supplied
     // no licence at all.
     tag.set_album(&document.title);
     tag.set_title(&section.title);
+    if let Some(language) = target_lang {
+        tag.add_frame(Frame::text("TLAN", language));
+    }
 
     if let Some(license) = present(&document.license) {
         tag.add_frame(Frame::text("TCOP", license));
@@ -169,7 +191,7 @@ mod tests {
     fn tagged(dir: &Path, document: &Document) -> Option<Tag> {
         let path = dir.join("chapter.mp3");
         std::fs::write(&path, FAKE_MP3).expect("the fake mp3");
-        tag_chapter_mp3(&path, document, &section()).expect("tagging should succeed");
+        tag_chapter_mp3(&path, document, &section(), None).expect("tagging should succeed");
         Tag::read_from_path(&path).ok()
     }
 
@@ -181,6 +203,21 @@ mod tests {
 
         assert_eq!(tag.album(), Some("Introduction to Philosophy"));
         assert_eq!(tag.title(), Some("Chapter One"));
+    }
+
+    #[test]
+    fn a_translated_mp3_carries_its_target_language() {
+        let dir = tempfile::tempdir().expect("a temporary export directory");
+        let path = dir.path().join("chapter.mp3");
+        std::fs::write(&path, FAKE_MP3).expect("the fake mp3");
+        tag_chapter_mp3(&path, &document(None, None), &section(), Some("es"))
+            .expect("tagging should succeed");
+
+        let tag = Tag::read_from_path(&path).expect("a tag should have been written");
+        assert_eq!(
+            tag.get("TLAN").and_then(|frame| frame.content().text()),
+            Some("es")
+        );
     }
 
     #[test]
@@ -273,6 +310,7 @@ mod tests {
             &path,
             &document(Some("CC BY 4.0"), Some("Jane Author")),
             &section(),
+            Some("es"),
         )
         .expect("tagging an m4a should succeed");
 
@@ -282,6 +320,8 @@ mod tests {
         assert_eq!(tag.copyright(), Some("CC BY 4.0"));
         // A plain name is an artist; a URL would go to the comment instead.
         assert_eq!(tag.artist(), Some("Jane Author"));
+        let language = mp4ameta::FreeformIdent::new("com.apple.iTunes", "LANGUAGE");
+        assert_eq!(tag.strings_of(&language).next(), Some("es"));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -296,7 +336,7 @@ mod tests {
         std::fs::write(&path, b"not audio").unwrap();
 
         let error =
-            super::tag_chapter_export(&path, &document(None, None), &section()).unwrap_err();
+            super::tag_chapter_export(&path, &document(None, None), &section(), None).unwrap_err();
 
         assert!(format!("{error}").contains("ogg"), "unexpected: {error}");
         std::fs::remove_dir_all(&dir).ok();

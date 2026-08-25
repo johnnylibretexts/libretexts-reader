@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::{Runtime, State, Window};
 use uuid::Uuid;
@@ -244,6 +245,7 @@ struct ChapterJob {
     material: ChapterMaterial,
     voice_style: String,
     language: String,
+    pub target_lang: Option<String>,
     output_path: PathBuf,
     cache_path: PathBuf,
     estimate: ChapterEstimate,
@@ -339,12 +341,35 @@ fn resolve_chapter_job(
     request: &ChapterRequest,
 ) -> AppResult<ChapterJob> {
     let config = supertonic_config_from_state(state)?;
-    let material = chapter_material(state, &request.document_id, &request.section_id)?;
+    let target_lang = saved_translation_target(state)?;
+    let material = chapter_material(
+        state,
+        &request.document_id,
+        &request.section_id,
+        target_lang.as_deref(),
+    )?;
     let model = model_for_provider(&request.provider)?;
-    let (voice_style, language) = resolve_voice_and_language(&request.provider, request, &config)?;
-    let output_path = output_path_for_chapter(&config, &material, &voice_style, &language, request);
-    let cache_path =
-        cache_path_for_chapter(&request.provider, model, &material, &voice_style, &language)?;
+    let (voice_style, requested_language) =
+        resolve_voice_and_language(&request.provider, request, &config)?;
+    // One setting owns both translation and pronunciation. Even a stale
+    // frontend request cannot send Spanish text through English rules.
+    let language = target_lang.clone().unwrap_or(requested_language);
+    let output_path = output_path_for_chapter(
+        &config,
+        &material,
+        &voice_style,
+        &language,
+        target_lang.as_deref(),
+        request,
+    );
+    let cache_path = cache_path_for_chapter(
+        &request.provider,
+        model,
+        &material,
+        &voice_style,
+        &language,
+        target_lang.as_deref(),
+    )?;
     let mut estimate = estimate_for_text(
         &material,
         &language,
@@ -363,6 +388,7 @@ fn resolve_chapter_job(
         material,
         voice_style,
         language,
+        target_lang,
         output_path,
         cache_path,
         estimate,
@@ -431,6 +457,7 @@ pub async fn export_supertonic_chapter_mp3(
             &job.output_path,
             &job.material.document,
             &job.material.section,
+            job.target_lang.as_deref(),
         )?;
         let bytes = tokio::fs::metadata(&job.output_path).await?.len();
         return Ok(ChapterExport {
@@ -470,6 +497,7 @@ pub async fn export_supertonic_chapter_mp3(
         &job.output_path,
         &job.material.document,
         &job.material.section,
+        job.target_lang.as_deref(),
     )?;
     // The file on disk, not the synthesized buffer: the tag added above is
     // part of what the reader receives.
@@ -582,17 +610,30 @@ fn chapter_material(
     state: &State<'_, DbPool>,
     document_id: &str,
     section_id: &str,
+    target_lang: Option<&str>,
 ) -> AppResult<ChapterMaterial> {
     let conn = state.get()?;
-    let document = library::get_document(&conn, document_id)?;
-    let section = library::list_sections(&conn, document_id)?
+    chapter_material_from_conn(&conn, document_id, section_id, target_lang)
+}
+
+fn chapter_material_from_conn(
+    conn: &Connection,
+    document_id: &str,
+    section_id: &str,
+    target_lang: Option<&str>,
+) -> AppResult<ChapterMaterial> {
+    let document = library::get_document(conn, document_id)?;
+    let section = library::list_sections(conn, document_id)?
         .into_iter()
         .find(|section| section.id == section_id)
         .ok_or_else(|| AppError::InvalidInput("section does not belong to document".into()))?;
-    let paragraphs = library::list_paragraphs(&conn, section_id, None)?;
+    let paragraphs = library::list_paragraphs(conn, section_id, target_lang)?;
     let text = paragraphs
         .into_iter()
-        .map(|paragraph| normalize_for_tts(paragraph.text.trim()))
+        // `sentence_speech` is the translated-or-fallback form, parallel to
+        // the display offsets. Reading `paragraph.text` here would throw the
+        // lookup away and export the original chapter again.
+        .map(|paragraph| paragraph.sentence_speech.join(" "))
         .filter(|paragraph| !paragraph.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
@@ -608,6 +649,13 @@ fn chapter_material(
         section,
         text,
     })
+}
+
+fn saved_translation_target(state: &State<'_, DbPool>) -> AppResult<Option<String>> {
+    let conn = state.get()?;
+    Ok(settings::get_setting(&conn, "translation_target_lang")?
+        .and_then(|value| value.as_str().map(str::trim).map(str::to_lowercase))
+        .filter(|value| !value.is_empty() && value != "original"))
 }
 
 async fn synthesize_supertonic_audio(
@@ -815,6 +863,59 @@ mod billable_tests {
         // Fish bills text, and a multi-byte character is one character. Using
         // len() here would overstate an accented or CJK chapter by 2-3x.
         assert_eq!(billable_characters("héllo", "fish", false, false), 5);
+    }
+
+    #[test]
+    fn billing_counts_the_characters_actually_sent() {
+        let english = "The cell divides.";
+        let spanish = "La célula se divide.";
+
+        assert_ne!(
+            billable_characters(english, "fish", false, false),
+            billable_characters(spanish, "fish", false, false),
+        );
+    }
+}
+
+#[cfg(test)]
+mod translated_material_tests {
+    use super::*;
+    use crate::db::migrations::apply_migrations;
+
+    #[test]
+    fn chapter_material_and_billing_use_translated_speech_with_per_sentence_fallback() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_migrations(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO documents
+                  (id, title, source_type, source_metadata, word_count, imported_at, source_language)
+                  VALUES
+                  ('doc-1', 'Biology', 'openstax', '{}', 5, '2026-01-01T00:00:00Z', 'en');
+             INSERT INTO sections (id, document_id, ordinal, title, word_count)
+                  VALUES ('sec-1', 'doc-1', 0, 'Mitosis', 5);
+             INSERT INTO paragraphs (id, section_id, ordinal, text, sentence_offsets)
+                  VALUES ('para-1', 'sec-1', 0,
+                          'The cell divides. Mitosis begins.',
+                          '[[0,17],[18,33]]');
+             INSERT INTO sentence_translations
+                  (paragraph_id, sentence_index, target_lang, text, qa_status)
+                  VALUES ('para-1', 0, 'es', 'La célula se divide.', 'passed');",
+        )
+        .unwrap();
+
+        let original = chapter_material_from_conn(&conn, "doc-1", "sec-1", None).unwrap();
+        let spanish = chapter_material_from_conn(&conn, "doc-1", "sec-1", Some("es")).unwrap();
+
+        assert_eq!(original.text, "The cell divides. Mitosis begins.");
+        assert_eq!(spanish.text, "La célula se divide. Mitosis begins.");
+        assert_eq!(
+            billable_characters(&spanish.text, "fish", false, false),
+            spanish.text.chars().count() as u32,
+        );
+        assert_ne!(
+            billable_characters(&original.text, "fish", false, false),
+            billable_characters(&spanish.text, "fish", false, false),
+        );
     }
 }
 
