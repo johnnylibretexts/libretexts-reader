@@ -14,6 +14,15 @@ publisher's servers, and Supertonic needs a one-time model download first.
 **[PRIVACY.md](PRIVACY.md) lists every host the app can contact and why** — read
 that rather than trusting this paragraph.
 
+The app can also translate spoken narration on device. Choose a language under
+**Read aloud in**, confirm the displayed translation-model download, and the
+current chapter is machine-translated before speech synthesis. The book stays
+in its original language on screen, so highlighting and reading position remain
+anchored to the source text; only the audio and exported chapter audio use the
+translation. Translation itself never calls a translation service. If you use
+the optional Fish Audio provider, the translated narration is sent to Fish for
+speech synthesis under the same policy described below.
+
 > **Developed in partnership with LibreTexts.** LibreTexts Reader is an open-source
 > project developed by johnnylibretexts in partnership with LibreTexts, who hold the
 > copyright. It is not affiliated with, endorsed by, or sponsored by OpenStax or
@@ -81,9 +90,10 @@ On macOS, successful local builds produce:
 - `target/release/bundle/dmg/LibreTexts Reader_<version>_aarch64.dmg`
 
 Supertonic playback and chapter export run through the Rust ONNX Runtime
-backend with on-demand model downloads. Supertonic exports **M4A** (AAC via
-macOS AudioToolbox); Fish Audio returns MP3 from its API. The two providers
-ship different containers on purpose — see
+backend with on-demand model downloads. Optional on-device chapter translation
+uses CTranslate2/Opus-MT models downloaded after confirmation in Settings.
+Supertonic exports **M4A** (AAC via macOS AudioToolbox); Fish Audio returns MP3
+from its API. The two providers ship different containers on purpose — see
 [ADR 0004](docs/adr/0004-supertonic-exports-aac-not-mp3.md).
 
 ## Fish Audio (optional cloud voice)

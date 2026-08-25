@@ -11,6 +11,7 @@ import { ModelDownloadProgress } from "./ModelDownloadProgress";
 import { usePlayerStore } from "../stores/player";
 import { useSettingsStore } from "../stores/settings";
 import { SPEECH_ENGINE_BILLS } from "../lib/speech";
+import { useTranslationStore } from "../stores/translation";
 
 interface MiniPlayerProps {
   onClose: () => void;
@@ -29,6 +30,9 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const isBuffering = usePlayerStore((state) => state.isBuffering);
   const modelDownload = usePlayerStore((state) => state.modelDownload);
+  const translationRunning = useTranslationStore(
+    (state) => state.sectionState.status === "running",
+  );
   const error = usePlayerStore((state) => state.error);
   const positionError = usePlayerStore((state) => state.positionError);
   const engineBills =
@@ -37,7 +41,8 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
    * See `PlaybackControls` for why Pause stays live through the one-time
    * voice download and through a billing engine's buffering.
    */
-  const playDisabled = isBuffering && !modelDownload && !engineBills;
+  const playDisabled =
+    translationRunning || (isBuffering && !modelDownload && !engineBills);
   const canSwitchToSupertonic = usePlayerStore(
     (state) => state.canSwitchToSupertonic,
   );
@@ -107,7 +112,7 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
 
         <div className="flex items-center gap-2">
           <IconButton
-            disabled={isBuffering}
+            disabled={isBuffering || translationRunning}
             label="Back"
             icon={SkipBack}
             onClick={() => void skipBack()}
@@ -120,7 +125,7 @@ export function MiniPlayer({ onClose }: MiniPlayerProps) {
             primary
           />
           <IconButton
-            disabled={isBuffering}
+            disabled={isBuffering || translationRunning}
             label="Forward"
             icon={SkipForward}
             onClick={() => void skipForward()}

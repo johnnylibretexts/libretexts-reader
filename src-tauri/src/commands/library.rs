@@ -52,6 +52,16 @@ pub async fn delete_document(state: State<'_, DbPool>, id: String) -> AppResult<
 }
 
 #[tauri::command]
+pub async fn set_document_source_language(
+    state: State<'_, DbPool>,
+    document_id: String,
+    source_language: String,
+) -> AppResult<()> {
+    let mut conn = state.get()?;
+    library::set_document_source_language(&mut conn, &document_id, &source_language)
+}
+
+#[tauri::command]
 pub async fn search_documents(state: State<'_, DbPool>, query: String) -> AppResult<Vec<Document>> {
     let conn = state.get()?;
     library::search_documents(&conn, &query)

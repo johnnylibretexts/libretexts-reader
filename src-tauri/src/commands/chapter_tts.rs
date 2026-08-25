@@ -349,11 +349,14 @@ fn resolve_chapter_job(
         target_lang.as_deref(),
     )?;
     let model = model_for_provider(&request.provider)?;
-    let (voice_style, requested_language) =
+    let (voice_style, _requested_language) =
         resolve_voice_and_language(&request.provider, request, &config)?;
     // One setting owns both translation and pronunciation. Even a stale
-    // frontend request cannot send Spanish text through English rules.
-    let language = target_lang.clone().unwrap_or(requested_language);
+    // frontend request cannot send Spanish text through English rules; with
+    // Original selected, the per-book source language is authoritative too.
+    let language = target_lang
+        .clone()
+        .unwrap_or_else(|| material.document.source_language.clone());
     let output_path = output_path_for_chapter(
         &config,
         &material,

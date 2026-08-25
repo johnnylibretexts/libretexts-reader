@@ -16,6 +16,7 @@ const DOCUMENT: Domain.Document = {
   license: null,
   attribution: null,
   wordCount: 8,
+  sourceLanguage: "en",
   importedAt: "2026-01-01T00:00:00Z",
   lastOpenedAt: null,
   progress: 0,

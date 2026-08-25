@@ -70,6 +70,7 @@ const engine: SpeechEngine = {
 
 const { SettingsPanel } = await import("./SettingsPanel");
 const { useSettingsStore } = await import("../../stores/settings");
+const { usePlayerStore } = await import("../../stores/player");
 
 describe("SettingsPanel voice test", () => {
   beforeEach(() => {
@@ -101,6 +102,7 @@ describe("SettingsPanel voice test", () => {
       translationTargetLang: null,
       fishVoiceId: null,
     });
+    usePlayerStore.setState({ document: null });
   });
 
   it("tests the voice style the reader has selected, not the one last saved", async () => {
@@ -362,6 +364,36 @@ describe("SettingsPanel voice test", () => {
     expect(
       screen.queryByLabelText("Translate audio to"),
     ).not.toBeInTheDocument();
+  });
+
+  it("prices the model pair from the open book's source language", async () => {
+    tauriRuntime = true;
+    usePlayerStore.setState({
+      document: {
+        id: "doc-1",
+        title: "Un livre",
+        sourceType: "epub",
+        sourceMetadata: null,
+        coverImagePath: null,
+        license: null,
+        attribution: null,
+        wordCount: 10,
+        sourceLanguage: "fr",
+        importedAt: "2026-01-01T00:00:00Z",
+        lastOpenedAt: null,
+        progress: 0,
+      },
+    });
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+
+    await screen.findByRole("option", { name: "Spanish" });
+    await user.selectOptions(screen.getByLabelText("Read aloud in"), "es");
+
+    await waitFor(() =>
+      expect(getTranslationModelStatus).toHaveBeenCalledWith("fr", "es"),
+    );
+    expect(listTranslationTargets).toHaveBeenCalledWith("fr");
   });
 
   it("saves one language for both translation and pronunciation", async () => {

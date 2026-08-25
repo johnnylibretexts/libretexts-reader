@@ -169,6 +169,7 @@ mod tests {
             license: license.map(str::to_string),
             attribution: attribution.map(str::to_string),
             word_count: 8,
+            source_language: "en".into(),
             imported_at: Utc::now(),
             last_opened_at: None,
             progress: 0.0,

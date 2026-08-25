@@ -24,7 +24,7 @@ network requests at all.
 
 | Host | When | Why |
 | --- | --- | --- |
-| `huggingface.co` | Once, when you download the Supertonic voice model | The on-device speech model (~383 MB). Started by you from Settings, or by the first press of Play. |
+| `huggingface.co` | When you download the Supertonic voice model or an on-device translation pair | The speech model (~383 MB) and the forward-plus-reverse translation models for languages you choose. Translation downloads start only after you confirm their displayed size in Settings. |
 | `openstax.org` | Browsing or importing from OpenStax | Catalog listings, book content, images |
 | `commons.libretexts.org` and the per-subject `*.libretexts.org` sites | Browsing or importing from LibreTexts | Catalog listings, book content |
 | 15 bundled Pressbooks hosts (`milnepublishing.geneseo.edu`, `*.pressbooks.pub`, and other university sites) | Browsing or importing from Pressbooks | Catalog listings, book content. The list is bundled in `src-tauri/resources/catalog/pressbooks-networks.json`; the app refuses any host not on it. |
@@ -52,6 +52,23 @@ Supertonic runs entirely on your machine and needs no key, no account, and no ne
 
 So: offline after setup, not offline on first run. The download is triggered by you, from
 Settings or by the first press of Play. Nothing downloads silently in the background.
+
+## On-device translation
+
+Machine translation changes spoken narration only; the book remains in its original
+language on screen. Translation runs entirely on your machine, and no sentence is sent
+to Hugging Face or any translation service. The app contacts `huggingface.co` only to
+download the forward and reverse models for a language pair after you confirm the total
+size in Settings.
+
+If Fish Audio is enabled, the translated narration is then sent to Fish for speech
+synthesis just like any other text being read. Translation itself still uses no cloud
+translation service; the Fish Audio disclosure below applies to that spoken text.
+
+The app prefers its own versioned, checksum-verified model conversions. If one is not
+available, Settings identifies the unverified community repository and requires explicit
+confirmation before downloading it from the same `huggingface.co` host. These community
+repositories are not controlled by LibreTexts Reader and can change upstream.
 
 ## Fish Audio (optional, off by default)
 

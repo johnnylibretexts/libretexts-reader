@@ -21,7 +21,10 @@ import {
 import { useSettingsStore, type TtsProvider } from "../../stores/settings";
 import type * as Domain from "../../types/domain";
 import { FishAudioSettings } from "./FishAudioSettings";
-import { SPEECH_BILLED_LOOKAHEAD_SENTENCES } from "../../stores/player";
+import {
+  SPEECH_BILLED_LOOKAHEAD_SENTENCES,
+  usePlayerStore,
+} from "../../stores/player";
 
 const TTS_PROVIDERS: {
   id: TtsProvider;
@@ -47,10 +50,6 @@ const TTS_PROVIDERS: {
 
 const SAMPLE_TEXT = "LibreTexts Reader voice test.";
 const TEST_PLAYBACK_TIMEOUT_MS = 30_000;
-// Settings does not receive the active Document yet. Task 11 wires its
-// persisted source language into playback; English is the Task 10 catalogue
-// source and keeps this surface honest for the only complete QA pair today.
-const TRANSLATION_SOURCE_LANGUAGE: SupertonicLanguage = "en";
 const SUPERTONIC_LANGUAGE_IDS = new Set(
   SUPERTONIC_LANGUAGES.map((language) => language.id),
 );
@@ -62,7 +61,7 @@ function translationModelSize(bytes: number) {
   return `${Math.round(bytes / 1_000_000)} MB`;
 }
 
-function languageName(language: SupertonicLanguage) {
+function languageName(language: string) {
   return (
     SUPERTONIC_LANGUAGES.find((option) => option.id === language)?.name ??
     language.toUpperCase()
@@ -88,6 +87,10 @@ export function SettingsPanel() {
     (state) => state.translationTargetLang,
   );
   const saveTtsSettings = useSettingsStore((state) => state.saveTtsSettings);
+  const documentSourceLanguage = usePlayerStore(
+    (state) => state.document?.sourceLanguage ?? null,
+  );
+  const translationSourceLanguage = documentSourceLanguage ?? "en";
 
   const activeProvider =
     TTS_PROVIDERS.find((provider) => provider.id === ttsProvider) ??
@@ -103,7 +106,8 @@ export function SettingsPanel() {
   const [language, setLanguage] = useState<SupertonicLanguage | null>(
     translationTargetLang,
   );
-  const effectiveLanguage = language ?? TRANSLATION_SOURCE_LANGUAGE;
+  const effectiveLanguage = (language ??
+    translationSourceLanguage) as SupertonicLanguage;
   // One flag per draft. These stay editable while a failed load has Save
   // disabled, so a reader can line up their pick while waiting -- and the
   // retry that finally succeeds must not replace it at the very moment Save
@@ -223,7 +227,7 @@ export function SettingsPanel() {
   useEffect(() => {
     let cancelled = false;
     void api
-      .listTranslationTargets(TRANSLATION_SOURCE_LANGUAGE)
+      .listTranslationTargets(translationSourceLanguage)
       .then((targets) => {
         if (cancelled) {
           return;
@@ -243,7 +247,7 @@ export function SettingsPanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [translationSourceLanguage]);
 
   useEffect(() => {
     setConfirmingTranslationDownload(false);
@@ -257,7 +261,7 @@ export function SettingsPanel() {
     let cancelled = false;
     const target = language;
     void api
-      .getTranslationModelStatus(TRANSLATION_SOURCE_LANGUAGE, target)
+      .getTranslationModelStatus(translationSourceLanguage, target)
       .then((status) => {
         if (!cancelled) {
           setTranslationModelStatus(status);
@@ -271,7 +275,7 @@ export function SettingsPanel() {
     return () => {
       cancelled = true;
     };
-  }, [language]);
+  }, [language, translationSourceLanguage]);
 
   useEffect(() => {
     if (!language || !isTauriRuntime()) {
@@ -285,7 +289,7 @@ export function SettingsPanel() {
       "translation-model-download-progress",
       (event) => {
         if (
-          event.payload.sourceLang === TRANSLATION_SOURCE_LANGUAGE &&
+          event.payload.sourceLang === translationSourceLanguage &&
           event.payload.targetLang === target
         ) {
           setTranslationModelProgress(event.payload);
@@ -308,7 +312,7 @@ export function SettingsPanel() {
       disposed = true;
       unlisten?.();
     };
-  }, [language]);
+  }, [language, translationSourceLanguage]);
 
   // A provider change invalidates any confirmation already on screen: it
   // named a provider and a cost that no longer apply.
@@ -511,9 +515,9 @@ export function SettingsPanel() {
     setCancellingTranslationDownload(false);
     setTranslationModelError(null);
     setTranslationModelProgress({
-      sourceLang: TRANSLATION_SOURCE_LANGUAGE,
+      sourceLang: translationSourceLanguage,
       targetLang: target,
-      pair: `${TRANSLATION_SOURCE_LANGUAGE}-${target}`,
+      pair: `${translationSourceLanguage}-${target}`,
       file: "Preparing",
       downloaded: translationModelStatus?.downloadedBytes ?? 0,
       total: translationModelStatus?.totalBytes ?? 0,
@@ -521,18 +525,18 @@ export function SettingsPanel() {
 
     try {
       await api.ensureTranslationModelsDownloaded(
-        TRANSLATION_SOURCE_LANGUAGE,
+        translationSourceLanguage,
         target,
       );
       const status = await api.getTranslationModelStatus(
-        TRANSLATION_SOURCE_LANGUAGE,
+        translationSourceLanguage,
         target,
       );
       setTranslationModelStatus(status);
       setTranslationModelProgress({
-        sourceLang: TRANSLATION_SOURCE_LANGUAGE,
+        sourceLang: translationSourceLanguage,
         targetLang: target,
-        pair: `${TRANSLATION_SOURCE_LANGUAGE}-${target}`,
+        pair: `${translationSourceLanguage}-${target}`,
         file: "Complete",
         downloaded: status.downloadedBytes,
         total: status.totalBytes,
@@ -819,7 +823,7 @@ export function SettingsPanel() {
                 <div>
                   <h3 className="text-sm font-semibold">Translation models</h3>
                   <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-                    {languageName(TRANSLATION_SOURCE_LANGUAGE)} →{" "}
+                    {languageName(translationSourceLanguage)} →{" "}
                     {languageName(language)}
                     {translationModelStatus
                       ? ` · ${translationModelSize(translationModelStatus.totalBytes)} · ${translationModelStatus.downloaded ? "Ready" : "Not downloaded"}`
@@ -854,7 +858,7 @@ export function SettingsPanel() {
                   role="group"
                 >
                   <p className="font-medium">
-                    Download {languageName(TRANSLATION_SOURCE_LANGUAGE)} →{" "}
+                    Download {languageName(translationSourceLanguage)} →{" "}
                     {languageName(language)} translation models?
                   </p>
                   <p className="mt-1">

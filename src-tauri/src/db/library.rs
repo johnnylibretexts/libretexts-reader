@@ -18,6 +18,7 @@ use crate::error::{AppError, AppResult};
 /// own would otherwise hand the card a bar wider than its track.
 const DOCUMENT_COLUMNS: &str = "d.id, d.title, d.source_type, d.source_metadata,
                 d.cover_image_path, d.license, d.attribution, d.word_count,
+                COALESCE(NULLIF(TRIM(d.source_language), ''), 'en') AS source_language,
                 d.imported_at, d.last_opened_at,
                 COALESCE(
                     MIN(1.0, MAX(0.0,
@@ -247,6 +248,57 @@ pub fn delete_document(conn: &Connection, id: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Correct a book's declared/detected language and discard speech translations
+/// derived from the old source language.
+pub fn set_document_source_language(
+    conn: &mut Connection,
+    document_id: &str,
+    source_language: &str,
+) -> AppResult<()> {
+    let source_language = source_language
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    if source_language.len() < 2
+        || source_language.len() > 16
+        || !source_language
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character == '-')
+    {
+        return Err(AppError::InvalidInput(
+            "source language must be a short language code such as en or es".into(),
+        ));
+    }
+
+    let tx = conn.transaction()?;
+    let updated = tx.execute(
+        "UPDATE documents SET source_language = ?1 WHERE id = ?2",
+        params![source_language, document_id],
+    )?;
+    if updated == 0 {
+        return Err(AppError::InvalidInput("document was not found".into()));
+    }
+    tx.execute(
+        "DELETE FROM sentence_translations
+          WHERE paragraph_id IN (
+                SELECT p.id
+                  FROM paragraphs p
+                  JOIN sections s ON s.id = p.section_id
+                 WHERE s.document_id = ?1
+          )",
+        [document_id],
+    )?;
+    tx.execute(
+        "DELETE FROM section_translations
+          WHERE section_id IN (
+                SELECT id FROM sections WHERE document_id = ?1
+          )",
+        [document_id],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn document_image_paths(conn: &Connection, document_id: &str) -> AppResult<Vec<String>> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT section_images.local_path
@@ -336,8 +388,8 @@ fn collect_rows<T>(rows: impl Iterator<Item = Result<T, rusqlite::Error>>) -> Ap
 fn document_from_row(row: &rusqlite::Row<'_>) -> Result<Document, rusqlite::Error> {
     let source_type: String = row.get(2)?;
     let source_metadata: String = row.get(3)?;
-    let imported_at: String = row.get(8)?;
-    let last_opened_at: Option<String> = row.get(9)?;
+    let imported_at: String = row.get(9)?;
+    let last_opened_at: Option<String> = row.get(10)?;
 
     Ok(Document {
         id: row.get(0)?,
@@ -348,13 +400,14 @@ fn document_from_row(row: &rusqlite::Row<'_>) -> Result<Document, rusqlite::Erro
         license: row.get(5)?,
         attribution: row.get(6)?,
         word_count: row.get(7)?,
-        imported_at: parse_datetime(&imported_at).map_err(to_sql_conversion_error(8))?,
+        source_language: row.get(8)?,
+        imported_at: parse_datetime(&imported_at).map_err(to_sql_conversion_error(9))?,
         last_opened_at: last_opened_at
             .as_deref()
             .map(parse_datetime)
             .transpose()
-            .map_err(to_sql_conversion_error(9))?,
-        progress: row.get(10)?,
+            .map_err(to_sql_conversion_error(10))?,
+        progress: row.get(11)?,
     })
 }
 
@@ -510,6 +563,38 @@ mod tests {
 
         let paragraphs = super::list_paragraphs(&conn, "sec-1", Some("es")).unwrap();
         assert!(!paragraphs[0].sentence_speech[0].contains("[[latex:"));
+    }
+
+    #[test]
+    fn correcting_the_source_language_invalidates_translations_from_the_old_source() {
+        let mut conn = seed_section_with_two_sentences();
+        conn.execute_batch(
+            "INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Primera frase.', 'passed');
+             INSERT INTO section_translations
+                 (section_id, target_lang, source_lang, status, model_id, updated_at)
+             VALUES ('sec-1', 'es', 'en', 'complete', 'model-v1', '2026-08-24T00:00:00Z');",
+        )
+        .unwrap();
+
+        super::set_document_source_language(&mut conn, "doc-1", " FR ").unwrap();
+
+        assert_eq!(
+            super::get_document(&conn, "doc-1").unwrap().source_language,
+            "fr"
+        );
+        let sentence_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sentence_translations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let section_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM section_translations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!((sentence_rows, section_rows), (0, 0));
     }
 
     /// Every Source must survive a persist-and-list round trip.

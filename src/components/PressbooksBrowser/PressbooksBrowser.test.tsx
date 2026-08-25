@@ -112,6 +112,7 @@ function importedDocument(overrides: Partial<Domain.Document> = {}): Domain.Docu
     license: null,
     attribution: null,
     wordCount: 0,
+    sourceLanguage: "en",
     importedAt: "2026-08-17T00:00:00Z",
     lastOpenedAt: null,
     progress: 0,

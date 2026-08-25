@@ -43,6 +43,7 @@ const DOCUMENT: Domain.Document = {
   license: null,
   attribution: null,
   wordCount: 8,
+  sourceLanguage: "en",
   importedAt: "2026-01-01T00:00:00Z",
   lastOpenedAt: null,
   progress: 0,
@@ -228,6 +229,24 @@ describe("SupertonicChapterExport", () => {
     await waitFor(() => expect(exportSupertonicChapterMp3).toHaveBeenCalled());
     expect(exportSupertonicChapterMp3.mock.calls[0][0]).toMatchObject({
       language: "es",
+    });
+  });
+
+  it("uses the book source language when Read aloud is Original", async () => {
+    usePlayerStore.setState({
+      document: { ...DOCUMENT, sourceLanguage: "fr" },
+    });
+    useSettingsStore.setState({
+      translationTargetLang: null,
+      supertonicLanguage: "es",
+    });
+    estimateSupertonicChapter.mockResolvedValue(estimate());
+
+    render(<SupertonicChapterExport />);
+
+    await waitFor(() => expect(estimateSupertonicChapter).toHaveBeenCalled());
+    expect(estimateSupertonicChapter.mock.calls[0][0]).toMatchObject({
+      language: "fr",
     });
   });
 

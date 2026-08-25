@@ -53,7 +53,9 @@ export function SupertonicChapterExport() {
   // a fallback.
   const voiceStyle: SupertonicVoiceStyle = chosenVoiceStyle ?? defaultVoiceStyle;
   const language: SupertonicLanguage =
-    translationTargetLang ?? defaultLanguage;
+    translationTargetLang ??
+    (document?.sourceLanguage as SupertonicLanguage | undefined) ??
+    defaultLanguage;
   const [estimate, setEstimate] = useState<SupertonicChapterEstimate | null>(
     null,
   );

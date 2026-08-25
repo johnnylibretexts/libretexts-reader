@@ -47,6 +47,7 @@ function libraryDocument(
     license: null,
     attribution: null,
     wordCount: 90000,
+    sourceLanguage: "en",
     importedAt: "2026-08-17T00:00:00Z",
     lastOpenedAt: null,
     progress: 0,

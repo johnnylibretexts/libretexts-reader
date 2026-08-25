@@ -260,6 +260,7 @@ mod tests {
                 license: None,
                 attribution: None,
                 word_count: 10,
+                source_language: "en".into(),
                 imported_at: Utc::now(),
                 last_opened_at: None,
                 progress: 0.0,

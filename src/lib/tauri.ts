@@ -132,6 +132,11 @@ export const api = {
     invokeDesktop<Domain.SectionImage[]>("list_section_images", { sectionId }),
   deleteDocument: (id: string) =>
     invokeDesktop<void>("delete_document", { id }),
+  setDocumentSourceLanguage: (documentId: string, sourceLanguage: string) =>
+    invokeDesktop<void>("set_document_source_language", {
+      documentId,
+      sourceLanguage,
+    }),
   searchDocuments: (query: string) =>
     invokeWithBrowserFallback<Domain.Document[]>([], "search_documents", {
       query,

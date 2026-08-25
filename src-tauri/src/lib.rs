@@ -57,6 +57,7 @@ pub fn run() {
             commands::library::list_paragraphs,
             commands::library::list_section_images,
             commands::library::delete_document,
+            commands::library::set_document_source_language,
             commands::library::search_documents,
             commands::content::cancel_import,
             commands::content::import_openstax,

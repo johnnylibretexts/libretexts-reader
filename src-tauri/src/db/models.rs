@@ -14,6 +14,7 @@ pub struct Document {
     pub license: Option<String>,
     pub attribution: Option<String>,
     pub word_count: u32,
+    pub source_language: String,
     pub imported_at: DateTime<Utc>,
     pub last_opened_at: Option<DateTime<Utc>>,
     /// How far into the book the resume cursor sits, from 0.0 to 1.0.
