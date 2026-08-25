@@ -37,16 +37,28 @@ xcrun notarytool store-credentials jr-notary \
 
 ### Important: sign the bundled native libraries first
 
-Tauri signs the main binary, but **not** `libpdfium.dylib`. Notarization rejects
-ad-hoc-signed Mach-O files, so sign
-the **source** library with Developer ID + hardened runtime + secure timestamp
-before building. Signing it *after* the build is not equivalent: the edit
-invalidates Tauri's signature over the enclosing `.app`.
+Tauri signs the main binary, but **not** bundled native libraries such as
+`libpdfium.dylib` or `libctranslate2.dylib`. It does not report the omission;
+notarization later rejects the ad-hoc-signed Mach-O file. Sign each **source**
+library with Developer ID + hardened runtime + secure timestamp before building.
+Signing it *after* the build is not equivalent: the edit invalidates Tauri's
+signature over the enclosing `.app`.
+
+`ct2rs` 0.10 currently compiles CTranslate2 with `BUILD_SHARED_LIBS=OFF` and
+links `libctranslate2.a` into the app, so this version should not contain a
+`libctranslate2.dylib`. If that crate or the app's packaging switches to a
+dynamic library, stage it under `src-tauri/resources/` and sign it beside
+PDFium before `tauri:build`; never assume Tauri signed it automatically.
 
 ```bash
 ID="Developer ID Application: <Name> (<TEAMID>)"
 codesign --force --options runtime --timestamp --sign "$ID" \
   src-tauri/resources/pdfium/*/libpdfium.dylib
+
+# Normally matches nothing with ct2rs 0.10. If a dynamic CTranslate2 library
+# is staged for bundling, every matching file must be signed before the build.
+find src-tauri/resources -name 'libctranslate2*.dylib' -exec \
+  codesign --force --options runtime --timestamp --sign "$ID" {} +
 
 # Verify nothing ad-hoc survived into the bundle after building:
 #   find "target/release/bundle/macos/LibreTexts Reader.app" -type f \
@@ -54,7 +66,8 @@ codesign --force --options runtime --timestamp --sign "$ID" \
 # Expect no output. Any line printed here is a notarization rejection.
 ```
 
-(This dir is a gitignored local asset; re-sign after any PDFium bump.)
+(These are gitignored local assets; re-sign after any PDFium or CTranslate2
+bump.)
 
 **Where it lands in the bundle**, which is not where you would guess:
 
