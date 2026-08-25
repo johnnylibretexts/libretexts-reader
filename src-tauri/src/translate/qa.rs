@@ -2,7 +2,7 @@
 //!
 //! chrF: character n-gram F-score, beta 2 (recall weighted, the standard for
 //! chrF). No model, no dependency, no I/O -- which is what keeps the whole
-//! quality gate testable in CI without a 155MB download present.
+//! quality gate testable in CI without a model download present.
 
 use std::collections::HashMap;
 
@@ -12,12 +12,48 @@ const SAMPLE_FRACTION: f64 = 0.05;
 const SAMPLE_FLOOR: usize = 5;
 const SAMPLE_CAP: usize = 50;
 
-/// Calibrated against deterministic samples from five real textbook chapters.
-/// Healthy chapter p10 scores bottomed out at 49.48 while deliberately
-/// misaligned translations stayed at or below 13.89. Legitimate paraphrases
-/// scored as low as 24.68, so the conservative cutoff of 20 retains the
-/// measured separation without rejecting those valid translations.
-pub(crate) const QA_THRESHOLD: f64 = 20.0;
+/// Per-language chrF cutoffs calibrated against deterministic 5% samples from
+/// five real textbook chapters. Each value is the midpoint between the lowest
+/// healthy chapter p10 and highest deliberately-misaligned chapter p10. Turkish
+/// and Vietnamese have overlapping bands; their midpoint is an explicit
+/// conservative compromise rather than an invented clean separation.
+pub(crate) fn threshold_for(language: &str) -> f64 {
+    match language {
+        "ko" => 13.08,
+        "ja" => 13.92,
+        "ar" => 20.85,
+        "bg" => 19.32,
+        "cs" => 21.25,
+        "da" => 29.63,
+        "de" => 22.98,
+        "el" => 18.39,
+        "es" => 23.49,
+        "et" => 21.08,
+        "fi" => 14.32,
+        "fr" => 16.25,
+        "hi" => 19.49,
+        "hr" => 27.65,
+        "hu" => 22.14,
+        "id" => 18.01,
+        "it" => 24.09,
+        "lt" => 11.97,
+        "lv" => 21.37,
+        "nl" => 20.60,
+        "pl" => 18.16,
+        "pt" => 15.47,
+        "ro" => 22.28,
+        "ru" => 23.08,
+        "sk" => 17.46,
+        "sl" => 20.91,
+        "sv" => 25.68,
+        "tr" => 13.95,
+        "uk" => 18.26,
+        "vi" => 11.11,
+        // Translation is English-hubbed, so this is only a defensive fallback
+        // for corrupt or future settings rather than a releasable pair.
+        _ => 20.0,
+    }
+}
 
 fn ngram_counts(text: &str, n: usize) -> HashMap<String, usize> {
     let chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
@@ -76,8 +112,8 @@ pub(crate) fn sample_indices(total: usize) -> Vec<usize> {
     (0..wanted).map(|step| step * stride).collect()
 }
 
-pub(crate) fn should_escalate(scores: &[f64]) -> bool {
-    scores.iter().any(|score| *score < QA_THRESHOLD)
+pub(crate) fn should_escalate(scores: &[f64], threshold: f64) -> bool {
+    scores.iter().any(|score| *score < threshold)
 }
 
 #[cfg(test)]
@@ -132,13 +168,20 @@ mod tests {
 
     #[test]
     fn escalates_only_when_the_sample_looks_bad() {
-        assert!(!should_escalate(&[80.0, 75.0, 90.0]));
-        assert!(should_escalate(&[20.0, 15.0, 25.0]));
+        assert!(!should_escalate(&[80.0, 75.0, 90.0], 20.0));
+        assert!(should_escalate(&[20.0, 15.0, 25.0], 20.0));
         assert!(
-            should_escalate(&[100.0, 0.0]),
+            should_escalate(&[100.0, 0.0], 20.0),
             "one catastrophic sampled sentence must escalate the chapter"
         );
         // An empty sample is not evidence of failure.
-        assert!(!should_escalate(&[]));
+        assert!(!should_escalate(&[], 20.0));
+    }
+
+    #[test]
+    fn every_translation_language_has_an_explicit_calibrated_threshold() {
+        for language in crate::translate::catalog::TRANSLATION_LANGUAGES {
+            assert_ne!(threshold_for(language), 20.0, "missing {language}");
+        }
     }
 }

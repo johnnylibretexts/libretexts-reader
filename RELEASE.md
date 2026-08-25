@@ -240,9 +240,8 @@ xcrun stapler validate "/tmp/qtest/LibreTexts Reader.app"
 spctl -a -t exec -vvv "/tmp/qtest/LibreTexts Reader.app"
 ```
 
-**`release.yml` does not do any of this yet** — `release.yml:131-133` is the
-single-pass sequence, so the automated path still produces a DMG whose inner
-`.app` is unstapled. See #102.
+The automated `release.yml` workflow implements this same two-pass sequence and
+validates both the published DMG and the enclosed app. See #102.
 
 ## 3. Pre-publish verification
 

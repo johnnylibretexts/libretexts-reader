@@ -19,6 +19,7 @@ import {
   type SupertonicVoiceStyle,
 } from "../../lib/supertonic";
 import { useSettingsStore, type TtsProvider } from "../../stores/settings";
+import { useTranslationStore } from "../../stores/translation";
 import type * as Domain from "../../types/domain";
 import { FishAudioSettings } from "./FishAudioSettings";
 import {
@@ -396,11 +397,24 @@ export function SettingsPanel() {
   }
 
   async function persistDraft() {
+    const previousLanguage = useSettingsStore.getState().translationTargetLang;
     await saveTtsSettings({
       supertonicVoiceStyle: voiceStyle,
       translationTargetLang: language,
       ...(language === null ? {} : { supertonicLanguage: language }),
     });
+    if (language !== previousLanguage) {
+      useTranslationStore.setState({
+        sectionState: {
+          status: "idle",
+          done: 0,
+          total: 0,
+          fallbackCount: 0,
+          sentenceCount: 0,
+          error: null,
+        },
+      });
+    }
   }
 
   /**
@@ -862,9 +876,9 @@ export function SettingsPanel() {
                     {languageName(language)} translation models?
                   </p>
                   <p className="mt-1">
-                    The forward and reverse models use{" "}
+                    The verified on-device model uses{" "}
                     {translationModelSize(translationModelStatus.totalBytes)} and
-                    remain stored locally on this device.
+                    remains stored locally on this device.
                   </p>
                   {!translationModelStatus.verified ? (
                     <p className="mt-2 font-medium">

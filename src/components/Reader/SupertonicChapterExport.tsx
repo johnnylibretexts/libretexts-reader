@@ -19,6 +19,7 @@ import {
 } from "../../stores/chapterExport";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
+import { useTranslationStore } from "../../stores/translation";
 import { requiresExportConfirmation } from "./exportGate";
 
 export function SupertonicChapterExport() {
@@ -39,6 +40,10 @@ export function SupertonicChapterExport() {
   );
   const settingsHydrated = useSettingsStore((state) => state.hydrated);
   const settingsFailed = useSettingsStore((state) => state.hydrateFailed);
+  const translation = useTranslationStore((state) => state.sectionState);
+  const translateSection = useTranslationStore(
+    (state) => state.translateSection,
+  );
 
   const chosenVoiceStyle = useChapterExportStore((state) => state.voiceStyle);
   const chooseVoiceStyle = useChapterExportStore(
@@ -120,7 +125,11 @@ export function SupertonicChapterExport() {
   // and Generate would write them an MP3 from an engine they never chose.
   // SettingsPanel disables Test for exactly this reason.
   const exportBlocked =
-    exporting || checkingExport || estimating || settingsFailed;
+    exporting ||
+    checkingExport ||
+    estimating ||
+    translation.status === "running" ||
+    settingsFailed;
 
   // Stop any in-flight preview playback and release its blob URL when the
   // reader view unmounts, not just when playback ends or a new preview starts.
@@ -174,7 +183,7 @@ export function SupertonicChapterExport() {
   // screen -- it named a character count and provider that no longer apply.
   useEffect(() => {
     setPendingExport(null);
-  }, [ttsProvider, section?.id]);
+  }, [translationTargetLang, ttsProvider, section?.id]);
 
   useEffect(() => {
     // Clear FIRST, on every dependency change, before anything async starts.
@@ -197,7 +206,13 @@ export function SupertonicChapterExport() {
     // the commit a change arrives and stays false until the drafts catch up
     // -- on a retry as well as on the first load, where a flag the seeding
     // effect merely set could only cover the first.
-    if (!document || !section || !fishVoiceReady || !seeded) {
+    if (
+      !document ||
+      !section ||
+      !fishVoiceReady ||
+      !seeded ||
+      (translationTargetLang && translation.status !== "complete")
+    ) {
       setEstimateError(null);
       // Cleared here too: a run cancelled by a dependency change skips its own
       // `finally`, so returning without this leaves `estimating` true for
@@ -246,6 +261,8 @@ export function SupertonicChapterExport() {
     language,
     section,
     ttsProvider,
+    translation.status,
+    translationTargetLang,
     voiceStyle,
   ]);
 
@@ -341,6 +358,38 @@ export function SupertonicChapterExport() {
   // two failure modes (stale value, no value) are both closed.
   async function requestExport(force: boolean) {
     setError(null);
+
+    if (translationTargetLang) {
+      setCheckingExport(true);
+      try {
+        await translateSection(activeSection.id);
+        const state = useTranslationStore.getState().sectionState;
+        if (state.status !== "complete") {
+          setError(
+            state.error ??
+              "The chapter translation did not complete, so it was not exported.",
+          );
+          return;
+        }
+        const translatedParagraphs = await api.listParagraphs(
+          activeSection.id,
+          translationTargetLang,
+        );
+        const player = usePlayerStore.getState();
+        if (
+          player.document?.id !== activeDocument.id ||
+          player.sections[player.currentSectionIndex]?.id !== activeSection.id
+        ) {
+          return;
+        }
+        usePlayerStore.setState({ paragraphs: translatedParagraphs });
+      } catch (error) {
+        setError(displayError(error));
+        return;
+      } finally {
+        setCheckingExport(false);
+      }
+    }
 
     let relevantEstimate = estimate;
     if (isFish) {

@@ -62,7 +62,7 @@ changing a dependency, and commit the result.
 The bundled native components (PDFium, and the \`id3\` and \`mp4ameta\` crates)
 carry their own full notices as separate files in this directory.
 
-The Supertonic voice model and Opus-MT translation models are **not** covered
+The Supertonic voice model and M2M100 translation model are **not** covered
 here: they are downloaded on the reader's own machine rather than distributed
 with the app, and their terms are recorded in \`supertonic-model.md\` and
 \`translation-models.md\`.

@@ -91,7 +91,7 @@ On macOS, successful local builds produce:
 
 Supertonic playback and chapter export run through the Rust ONNX Runtime
 backend with on-demand model downloads. Optional on-device chapter translation
-uses CTranslate2/Opus-MT models downloaded after confirmation in Settings.
+uses a CTranslate2/M2M100 model downloaded after confirmation in Settings.
 Supertonic exports **M4A** (AAC via macOS AudioToolbox); Fish Audio returns MP3
 from its API. The two providers ship different containers on purpose — see
 [ADR 0004](docs/adr/0004-supertonic-exports-aac-not-mp3.md).
@@ -138,6 +138,6 @@ their full notices as separate files in the same directory.
 
 The on-device voice model is downloaded to your machine rather than distributed
 with the app; its terms, and what they mean for audio you export, are in
-`LICENSES/supertonic-model.md`. The on-device translation models are likewise
-downloaded rather than bundled; their provenance and Apache-2.0 terms are in
+`LICENSES/supertonic-model.md`. The on-device translation model is likewise
+downloaded rather than bundled; its provenance and MIT terms are in
 `LICENSES/translation-models.md`.

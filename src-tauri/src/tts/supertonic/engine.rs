@@ -675,4 +675,24 @@ mod latency_bench {
              check [profile.dev] opt-level in the workspace Cargo.toml"
         );
     }
+
+    #[test]
+    #[ignore]
+    fn supertonic_repeated_synthesis_memory_probe() {
+        let iterations = std::env::var("LIBRETEXTS_SUPERTONIC_MEMORY_ITERATIONS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(20);
+        for _ in 0..iterations {
+            let samples = synthesize_samples_blocking(
+                "Las células utilizan energía para mantener su organización, crecer y reproducirse.",
+                "M1",
+                "es",
+                1.0,
+            )
+            .expect("synthesis");
+            assert!(!samples.is_empty());
+        }
+        println!("completed {iterations} repeated real-model syntheses");
+    }
 }

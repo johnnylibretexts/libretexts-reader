@@ -11,13 +11,13 @@ changing a dependency, and commit the result.
 The bundled native components (PDFium, and the `id3` and `mp4ameta` crates)
 carry their own full notices as separate files in this directory.
 
-The Supertonic voice model and Opus-MT translation models are **not** covered
+The Supertonic voice model and M2M100 translation model are **not** covered
 here: they are downloaded on the reader's own machine rather than distributed
 with the app, and their terms are recorded in `supertonic-model.md` and
 `translation-models.md`.
 
-<!-- cargo-lock-sha256: 4667e8365968e2b45dd014240a68ddaaea2307d145aa084a5806a67a21ee1ab7 -->
-<!-- npm-lock-sha256: 2b2d2cfb730c856d5c04f1fcf224a56fb16c635a1b4b988072195ca70207be1e -->
+<!-- cargo-lock-sha256: 001af5abd5c8542582373dfeac855c05ad860686aa025ff1a1d6f0668276bdbf -->
+<!-- npm-lock-sha256: 37e574a196f74be1ff64f0cf33ac9bc40ab5d07f3b5ee7713431cd32eeae4bdc -->
 
 ## Rust dependencies
 
@@ -228,7 +228,7 @@ ships.
 - ctor 0.8.0 — Apache-2.0 — https://github.com/mmastrac/rust-ctor
 - bytemuck 1.25.0 — Apache-2.0 — https://github.com/Lokathor/bytemuck
 - httpdate 1.0.3 — Apache-2.0 — https://github.com/pyfisch/httpdate
-- libretexts-reader 0.1.0-beta.2 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
+- libretexts-reader 0.1.0-beta.3 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
 - anyhow 1.0.102 — Apache-2.0 — https://github.com/dtolnay/anyhow
 - async-trait 0.1.92 — Apache-2.0 — https://github.com/dtolnay/async-trait
 - cxx 1.0.199 — Apache-2.0 — https://github.com/dtolnay/cxx

@@ -9,6 +9,8 @@ const estimateSupertonicChapter = vi.fn();
 const exportSupertonicChapterMp3 = vi.fn();
 const getFishCredit = vi.fn();
 const previewSupertonicTts = vi.fn();
+const translateSection = vi.fn();
+const listParagraphs = vi.fn();
 const setSetting = vi.fn(async (_key: string, _value: unknown) => undefined);
 
 vi.mock("../../lib/tauri", () => ({
@@ -25,14 +27,23 @@ vi.mock("../../lib/tauri", () => ({
     get previewSupertonicTts() {
       return previewSupertonicTts;
     },
+    get translateSection() {
+      return translateSection;
+    },
+    get listParagraphs() {
+      return listParagraphs;
+    },
+    cancelSectionTranslation: vi.fn(async () => undefined),
     setSetting: (key: string, value: unknown) => setSetting(key, value),
   },
+  isTauriRuntime: () => false,
 }));
 
 const { SupertonicChapterExport } = await import("./SupertonicChapterExport");
 const { usePlayerStore } = await import("../../stores/player");
 const { useSettingsStore } = await import("../../stores/settings");
 const { useChapterExportStore } = await import("../../stores/chapterExport");
+const { useTranslationStore } = await import("../../stores/translation");
 
 const DOCUMENT: Domain.Document = {
   id: "doc-1",
@@ -119,6 +130,24 @@ describe("SupertonicChapterExport", () => {
       translationTargetLang: null,
     });
     getFishCredit.mockResolvedValue(12.5);
+    translateSection.mockResolvedValue({
+      status: "complete",
+      sourceLang: "en",
+      targetLang: "es",
+      fallbackCount: 0,
+      sentenceCount: 1,
+    });
+    listParagraphs.mockResolvedValue(PARAGRAPHS);
+    useTranslationStore.setState({
+      sectionState: {
+        status: "idle",
+        done: 0,
+        total: 0,
+        fallbackCount: 0,
+        sentenceCount: 0,
+        error: null,
+      },
+    });
     exportSupertonicChapterMp3.mockResolvedValue({
       outputPath: "/tmp/Chapter One.mp3",
       cached: false,
@@ -216,16 +245,18 @@ describe("SupertonicChapterExport", () => {
     );
     render(<SupertonicChapterExport />);
 
-    await waitFor(() => expect(estimateSupertonicChapter).toHaveBeenCalled());
-    expect(estimateSupertonicChapter.mock.calls[0][0]).toMatchObject({
-      language: "es",
-    });
+    expect(estimateSupertonicChapter).not.toHaveBeenCalled();
     expect(
       screen.queryByLabelText("Pronunciation language"),
     ).not.toBeInTheDocument();
-    expect(await screen.findByText(/M1 - es\.m4a/)).toBeInTheDocument();
-
     await userEvent.click(screen.getByRole("button", { name: /M4A/ }));
+    await waitFor(() => expect(translateSection).toHaveBeenCalledWith("sec-1"));
+    await waitFor(() => expect(estimateSupertonicChapter).toHaveBeenCalled());
+    const lastEstimateCall =
+      estimateSupertonicChapter.mock.calls[
+        estimateSupertonicChapter.mock.calls.length - 1
+      ];
+    expect(lastEstimateCall[0]).toMatchObject({ language: "es" });
     await waitFor(() => expect(exportSupertonicChapterMp3).toHaveBeenCalled());
     expect(exportSupertonicChapterMp3.mock.calls[0][0]).toMatchObject({
       language: "es",

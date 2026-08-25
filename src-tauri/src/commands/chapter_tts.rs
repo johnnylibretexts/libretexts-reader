@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{Runtime, State, Window};
 use uuid::Uuid;
@@ -13,6 +13,7 @@ use crate::db::settings;
 use crate::error::{AppError, AppResult};
 use crate::net::download::{download_verified, Download};
 use crate::secrets::{KeyringSecretStore, SecretStore, FISH_KEY_ACCOUNT};
+use crate::translate::catalog;
 use crate::tts::fish::client::FishClient;
 use crate::tts::fish::provider::FishProvider;
 use crate::tts::fish::FISH_MODEL;
@@ -342,6 +343,14 @@ fn resolve_chapter_job(
 ) -> AppResult<ChapterJob> {
     let config = supertonic_config_from_state(state)?;
     let target_lang = saved_translation_target(state)?;
+    if let Some(target_lang) = target_lang.as_deref() {
+        ensure_translation_ready_for_export(
+            state,
+            &request.document_id,
+            &request.section_id,
+            target_lang,
+        )?;
+    }
     let material = chapter_material(
         state,
         &request.document_id,
@@ -396,6 +405,60 @@ fn resolve_chapter_job(
         cache_path,
         estimate,
     })
+}
+
+/// Never synthesize source-language fallbacks and label them as translated.
+/// The frontend prepares translation before Generate, but this command-level
+/// guard also protects stale webviews and direct command callers.
+fn ensure_translation_ready_for_export(
+    state: &State<'_, DbPool>,
+    document_id: &str,
+    section_id: &str,
+    target_lang: &str,
+) -> AppResult<()> {
+    let conn = state.get()?;
+    ensure_translation_ready_for_export_in(&conn, document_id, section_id, target_lang)
+}
+
+fn ensure_translation_ready_for_export_in(
+    conn: &Connection,
+    document_id: &str,
+    section_id: &str,
+    target_lang: &str,
+) -> AppResult<()> {
+    let source_lang: String = conn.query_row(
+        "SELECT COALESCE(NULLIF(TRIM(source_language), ''), 'en')
+           FROM documents WHERE id = ?1",
+        [document_id],
+        |row| row.get(0),
+    )?;
+    let source_lang = source_lang.to_lowercase();
+    if source_lang == target_lang {
+        return Ok(());
+    }
+
+    let model = catalog::resolve_pair(&source_lang, target_lang).ok_or_else(|| {
+        AppError::Model(format!(
+            "No on-device translation model is available for {source_lang} → {target_lang}."
+        ))
+    })?;
+    let cached: Option<(String, String)> = conn
+        .query_row(
+            "SELECT status, model_id FROM section_translations
+              WHERE section_id = ?1 AND target_lang = ?2",
+            rusqlite::params![section_id, target_lang],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let ready = cached
+        .as_ref()
+        .is_some_and(|(status, model_id)| status == "complete" && model_id == &model.model_id);
+    if !ready {
+        return Err(AppError::Model(format!(
+            "Translate this chapter to {target_lang} before exporting it."
+        )));
+    }
+    Ok(())
 }
 
 /// Write bytes into place via a uniquely-named temp file.
@@ -905,6 +968,20 @@ mod translated_material_tests {
                   VALUES ('para-1', 0, 'es', 'La célula se divide.', 'passed');",
         )
         .unwrap();
+
+        assert!(
+            ensure_translation_ready_for_export_in(&conn, "doc-1", "sec-1", "es").is_err(),
+            "a translated export must not silently synthesize source-language fallbacks"
+        );
+        let model_id = catalog::resolve_pair("en", "es").unwrap().model_id;
+        conn.execute(
+            "INSERT INTO section_translations
+                 (section_id, target_lang, source_lang, status, model_id, updated_at)
+             VALUES ('sec-1', 'es', 'en', 'complete', ?1, '2026-08-25T00:00:00Z')",
+            [model_id],
+        )
+        .unwrap();
+        ensure_translation_ready_for_export_in(&conn, "doc-1", "sec-1", "es").unwrap();
 
         let original = chapter_material_from_conn(&conn, "doc-1", "sec-1", None).unwrap();
         let spanish = chapter_material_from_conn(&conn, "doc-1", "sec-1", Some("es")).unwrap();

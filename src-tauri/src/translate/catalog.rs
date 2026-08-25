@@ -1,12 +1,11 @@
-//! Which translation model serves a pair, and whether we vouch for it.
+//! Pinned translation coverage for every language Supertonic can pronounce.
 //!
-//! Two tiers on purpose. The pinned tier is converted from official
-//! Helsinki-NLP weights and pinned by both repository revision and SHA256 per
-//! file -- `gaudi/opus-mt-en-es-ctranslate2` ships config and vocab with no
-//! `model.bin` at all, and a pinned manifest makes that class of breakage
-//! impossible rather than merely unlikely. The fallback tier follows a
-//! community repo's moving branch, so it is marked unverified and the reader
-//! is asked before it is fetched.
+//! Supertonic exposes 31 spoken languages plus the special `na` pronunciation
+//! fallback. Translation is intentionally an English hub: every one of the 30
+//! non-English spoken languages has an English -> language direction and a
+//! language -> English direction. A single M2M100 runtime serves those pairs,
+//! so readers download and verify roughly 496 MB once instead of keeping 60
+//! mostly duplicated model directories.
 
 use crate::tts::supertonic::voice::SUPERTONIC_LANGUAGES;
 
@@ -18,9 +17,12 @@ pub(crate) struct ModelFile {
 
 pub(crate) struct TranslationModel {
     pub model_id: String,
+    pub cache_key: String,
     pub repo: String,
     pub revision: String,
     pub files: Vec<ModelFile>,
+    pub source_token: String,
+    pub target_token: String,
     pub verified: bool,
 }
 
@@ -30,139 +32,83 @@ struct PinnedFile {
     sha256: &'static str,
 }
 
-struct PinnedModel {
-    source: &'static str,
-    target: &'static str,
-    repo: &'static str,
-    revision: &'static str,
-    files: &'static [PinnedFile],
-}
+const REPO: &str = "gn64/M2M100_418M_CTranslate2";
+const REVISION: &str = "18e406c615ef2991fa74d53734bf66b0a6b10cb4";
+const CACHE_KEY: &str = "m2m100-418m-int8-18e406c";
 
-const COMMON_CONFIG: PinnedFile = PinnedFile {
-    path: "config.json",
-    size_bytes: 159,
-    sha256: "0c2f6fa2057c7264d052fb4a62ba3476eeae70487acddfa8e779a53a00cbf44c",
-};
-const COMMON_VOCABULARY: PinnedFile = PinnedFile {
-    path: "shared_vocabulary.txt",
-    size_bytes: 666_435,
-    sha256: "77aee99211b7b8e569e0fb5b95dac01aba9f31bca2d1380b1fc6050797825ec6",
-};
-const ENGLISH_SPM: PinnedFile = PinnedFile {
-    path: "source.spm",
-    size_bytes: 801_636,
-    sha256: "4dd547c24816a335e7b0b2e63376a8f1b3cbfc671eda5ab808dd44fdadaa8791",
-};
-const SPANISH_SPM: PinnedFile = PinnedFile {
-    path: "target.spm",
-    size_bytes: 825_924,
-    sha256: "e236ee6d866b635c0142114f8647f39831f9d92534aa2aad75c942f6a78ad0e3",
-};
-
-const EN_ES_FILES: &[PinnedFile] = &[
+const FILES: &[PinnedFile] = &[
     PinnedFile {
         path: "model.bin",
-        size_bytes: 155_502_501,
-        sha256: "36cd9bcb181fc6d5832deeaf770ce183ff4edbbc5e4fe0f86cec92da4379f3b7",
-    },
-    COMMON_CONFIG,
-    COMMON_VOCABULARY,
-    ENGLISH_SPM,
-    SPANISH_SPM,
-];
-
-const ES_EN_FILES: &[PinnedFile] = &[
-    PinnedFile {
-        path: "model.bin",
-        size_bytes: 155_502_501,
-        sha256: "3a3b91dcb396ee7b682554e7d9f501909385c48b478a691bfe9bf9e3e32d3656",
-    },
-    COMMON_CONFIG,
-    COMMON_VOCABULARY,
-    PinnedFile {
-        path: "source.spm",
-        size_bytes: SPANISH_SPM.size_bytes,
-        sha256: SPANISH_SPM.sha256,
+        size_bytes: 490_667_752,
+        sha256: "a1826980fc5c037e69c7ac94fcb56c03001a66f380eb71863cc0a3879e71421b",
     },
     PinnedFile {
-        path: "target.spm",
-        size_bytes: ENGLISH_SPM.size_bytes,
-        sha256: ENGLISH_SPM.sha256,
+        path: "config.json",
+        size_bytes: 223,
+        sha256: "8f6496adfc930cbfecbe8281112197705c488fab47d34b4829b06d7f478909af",
+    },
+    PinnedFile {
+        path: "shared_vocabulary.json",
+        size_bytes: 2_796_509,
+        sha256: "7eb5d0ff184c6095c7c10f9911c0aea492250abd12854f9c3d787c64b1c6397e",
+    },
+    PinnedFile {
+        path: "sentencepiece.bpe.model",
+        size_bytes: 2_423_393,
+        sha256: "d8f7c76ed2a5e0822be39f0a4f95a55eb19c78f4593ce609e2edbc2aea4d380a",
     },
 ];
 
-/// Published CTranslate2 conversions, locked to immutable Hugging Face commits
-/// and to the SHA256 and byte length of every file the runtime opens.
-const PINNED: &[PinnedModel] = &[
-    PinnedModel {
-        source: "en",
-        target: "es",
-        repo: "michaelfeil/ct2fast-opus-mt-en-es",
-        revision: "76ec296588e2234f9b7dfad5254219a0f5ecb7af",
-        files: EN_ES_FILES,
-    },
-    PinnedModel {
-        source: "es",
-        target: "en",
-        repo: "michaelfeil/ct2fast-opus-mt-es-en",
-        revision: "437f5ffc6c8544943c685ea405650e0d17cf6098",
-        files: ES_EN_FILES,
-    },
+/// Supertonic's actual spoken-language list, excluding English and the `na`
+/// language-agnostic pronunciation fallback.
+pub(crate) const TRANSLATION_LANGUAGES: &[&str] = &[
+    "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "id",
+    "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi",
 ];
-
-/// Pairs with no pinned conversion yet. Fetched only after the reader accepts
-/// an unverified model.
-const FALLBACK: &[(&str, &str, &str)] = &[("en", "sw", "michaelfeil/ct2fast-opus-mt-en-sw")];
 
 pub(crate) fn resolve_pair(source: &str, target: &str) -> Option<TranslationModel> {
     if source == target {
         return None;
     }
-    if let Some(pinned) = PINNED
-        .iter()
-        .find(|model| model.source == source && model.target == target)
-    {
-        return Some(TranslationModel {
-            model_id: format!("{}@{}", pinned.repo, pinned.revision),
-            repo: pinned.repo.to_string(),
-            revision: pinned.revision.to_string(),
-            files: pinned
-                .files
-                .iter()
-                .map(|file| ModelFile {
-                    path: file.path.to_string(),
-                    size_bytes: file.size_bytes,
-                    sha256: file.sha256.to_string(),
-                })
-                .collect(),
-            verified: true,
-        });
+    let covered = (source == "en" && TRANSLATION_LANGUAGES.contains(&target))
+        || (target == "en" && TRANSLATION_LANGUAGES.contains(&source));
+    if !covered {
+        return None;
     }
-    FALLBACK
-        .iter()
-        .find(|(from, to, _)| *from == source && *to == target)
-        .map(|(_, _, repo)| TranslationModel {
-            model_id: format!("{repo}@unverified"),
-            repo: (*repo).to_string(),
-            revision: "main".to_string(),
-            files: Vec::new(),
-            verified: false,
-        })
+
+    Some(TranslationModel {
+        // Include the direction because the language controls are part of the
+        // inference configuration and therefore part of cache validity.
+        model_id: format!("{REPO}@{REVISION}:{source}-{target}"),
+        cache_key: CACHE_KEY.to_string(),
+        repo: REPO.to_string(),
+        revision: REVISION.to_string(),
+        files: FILES
+            .iter()
+            .map(|file| ModelFile {
+                path: file.path.to_string(),
+                size_bytes: file.size_bytes,
+                sha256: file.sha256.to_string(),
+            })
+            .collect(),
+        source_token: format!("__{source}__"),
+        target_token: format!("__{target}__"),
+        verified: true,
+    })
 }
 
 pub(crate) fn available_targets(source: &str) -> Vec<String> {
-    PINNED
-        .iter()
-        .filter(|model| model.source == source)
-        .map(|model| model.target.to_string())
-        .chain(
-            FALLBACK
-                .iter()
-                .filter(|(from, _, _)| *from == source)
-                .map(|(_, to, _)| (*to).to_string()),
-        )
-        .filter(|target| SUPERTONIC_LANGUAGES.contains(&target.as_str()))
-        .collect()
+    if source == "en" {
+        return TRANSLATION_LANGUAGES
+            .iter()
+            .filter(|target| SUPERTONIC_LANGUAGES.contains(target))
+            .map(|target| (*target).to_string())
+            .collect();
+    }
+    if TRANSLATION_LANGUAGES.contains(&source) {
+        return vec!["en".to_string()];
+    }
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -170,60 +116,62 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prefers_the_pinned_conversion_over_the_community_one() {
-        let model = resolve_pair("en", "es").expect("en-es is pinned");
-        assert!(model.verified);
-        assert!(!model.files.is_empty());
-        assert!(
-            model.files.iter().any(|file| file.path == "model.bin"),
-            "a translation model without weights is the gaudi/opus-mt-en-es \
-             failure this catalogue exists to make impossible"
-        );
-        assert!(model.files.iter().all(|file| file.sha256.len() == 64));
-    }
-
-    #[test]
-    fn pinned_manifests_have_no_release_placeholders() {
-        for pinned in PINNED {
-            assert_ne!(pinned.revision, "main");
-            assert_eq!(pinned.revision.len(), 40);
-            assert!(!pinned.files.is_empty());
-            for file in pinned.files {
-                assert!(file.size_bytes > 0, "{} has no byte length", file.path);
-                assert_eq!(file.sha256.len(), 64, "{} has a bad SHA256", file.path);
-                assert!(
-                    file.sha256.bytes().any(|byte| byte != b'0'),
-                    "{} still has a placeholder SHA256",
-                    file.path
-                );
-            }
+    fn every_supertonic_spoken_language_has_both_english_directions() {
+        assert_eq!(TRANSLATION_LANGUAGES.len(), 30);
+        for language in TRANSLATION_LANGUAGES {
+            let forward = resolve_pair("en", language).expect("forward pair");
+            let reverse = resolve_pair(language, "en").expect("reverse pair");
+            assert_eq!(forward.cache_key, reverse.cache_key);
+            assert_eq!(forward.source_token, "__en__");
+            assert_eq!(forward.target_token, format!("__{language}__"));
+            assert_eq!(reverse.source_token, format!("__{language}__"));
+            assert_eq!(reverse.target_token, "__en__");
         }
     }
 
     #[test]
-    fn falls_back_to_an_unverified_repo_and_says_so() {
-        let model = resolve_pair("en", "sw").expect("swahili is fallback-only");
-        assert!(!model.verified);
+    fn language_agnostic_pronunciation_is_not_a_translation_target() {
+        assert!(SUPERTONIC_LANGUAGES.contains(&"na"));
+        assert!(!TRANSLATION_LANGUAGES.contains(&"na"));
+        assert!(resolve_pair("en", "na").is_none());
+        assert!(!available_targets("en").contains(&"na".to_string()));
     }
 
     #[test]
-    fn refuses_a_pair_nothing_covers_and_refuses_a_no_op() {
+    fn manifest_is_complete_immutable_and_sha256_pinned() {
+        let model = resolve_pair("en", "es").expect("pinned model");
+        assert!(model.verified);
+        assert_eq!(model.revision.len(), 40);
+        assert_ne!(model.revision, "main");
+        assert_eq!(model.files.len(), 4);
+        for required in [
+            "model.bin",
+            "config.json",
+            "shared_vocabulary.json",
+            "sentencepiece.bpe.model",
+        ] {
+            let file = model
+                .files
+                .iter()
+                .find(|file| file.path == required)
+                .unwrap_or_else(|| panic!("missing {required}"));
+            assert!(file.size_bytes > 0);
+            assert_eq!(file.sha256.len(), 64);
+            assert!(file.sha256.bytes().any(|byte| byte != b'0'));
+        }
+    }
+
+    #[test]
+    fn refuses_cross_language_unknown_and_no_op_pairs() {
+        assert!(resolve_pair("es", "fr").is_none());
         assert!(resolve_pair("en", "klingon").is_none());
-        assert!(
-            resolve_pair("es", "es").is_none(),
-            "source == target is not a translation"
-        );
+        assert!(resolve_pair("es", "es").is_none());
     }
 
     #[test]
     fn every_offered_target_is_one_supertonic_can_speak() {
-        // Translating into a language the speech engine cannot pronounce
-        // produces nothing usable, so the two catalogues gate each other.
         for target in available_targets("en") {
-            assert!(
-                SUPERTONIC_LANGUAGES.contains(&target.as_str()),
-                "{target} is not a Supertonic language"
-            );
+            assert!(SUPERTONIC_LANGUAGES.contains(&target.as_str()));
         }
     }
 }

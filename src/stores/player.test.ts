@@ -266,6 +266,33 @@ describe("playback through SpeechEngine", () => {
     );
   });
 
+  it("reloads original speech after translated narration is turned off", async () => {
+    const engine = await createFake();
+    const translated = PARAGRAPHS.map((paragraph) => ({
+      ...paragraph,
+      sentenceSpeech: paragraph.sentenceSpeech.map(() => "Narración traducida."),
+    }));
+    const { usePlayerStore, listParagraphs } = await loadPlayer(
+      [engine],
+      PARAGRAPHS,
+      { translatedParagraphs: translated },
+    );
+    const { useSettingsStore } = await import("./settings");
+    useSettingsStore.setState({ translationTargetLang: "es" });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    usePlayerStore.getState().pause();
+
+    useSettingsStore.setState({ translationTargetLang: null });
+    await usePlayerStore.getState().play();
+
+    expect(listParagraphs).toHaveBeenLastCalledWith("sec-1", null);
+    expect(
+      engine.calls.some((call) => call.text === "First sentence spoken."),
+    ).toBe(true);
+  });
+
   it("synthesizes the current sentence through whichever engine is active", async () => {
     const engine = await createFake();
     const { usePlayerStore } = await loadPlayer([engine]);

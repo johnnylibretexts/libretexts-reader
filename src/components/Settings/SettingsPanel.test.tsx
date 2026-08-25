@@ -417,8 +417,11 @@ describe("SettingsPanel voice test", () => {
     expect(ensureTranslationModelsDownloaded).not.toHaveBeenCalled();
   });
 
-  it("offers only targets Supertonic can speak", async () => {
-    listTranslationTargets.mockResolvedValue(["es", "unsupported"]);
+  it("offers every translated Supertonic language but not the neutral fallback", async () => {
+    const translated = SUPERTONIC_LANGUAGES.map((language) => language.id).filter(
+      (language) => language !== "en" && language !== "na",
+    );
+    listTranslationTargets.mockResolvedValue([...translated, "unsupported"]);
     render(<SettingsPanel />);
 
     await screen.findByRole("option", { name: "Spanish" });
@@ -429,9 +432,9 @@ describe("SettingsPanel voice test", () => {
         (value): value is (typeof SUPERTONIC_LANGUAGES)[number]["id"] =>
           value !== "original" && value !== null,
       );
-    const speakable = SUPERTONIC_LANGUAGES.map((language) => language.id);
-    expect(options).toContain("es");
-    expect(options.every((option) => speakable.includes(option))).toBe(true);
+    expect([...options].sort()).toEqual([...translated].sort());
+    expect(options).toHaveLength(30);
+    expect(options).not.toContain("na");
   });
 
   it("shows the pair size and downloads only after explicit confirmation", async () => {
@@ -439,7 +442,7 @@ describe("SettingsPanel voice test", () => {
     getTranslationModelStatus.mockResolvedValue({
       downloaded: false,
       downloadedBytes: 0,
-      totalBytes: 310_000_000,
+      totalBytes: 495_887_877,
       verified: true,
     });
     const user = userEvent.setup();
@@ -450,7 +453,7 @@ describe("SettingsPanel voice test", () => {
       await screen.findByLabelText("Read aloud in"),
       "es",
     );
-    expect(await screen.findByText(/310 MB/)).toBeInTheDocument();
+    expect(await screen.findByText(/496 MB/)).toBeInTheDocument();
 
     await user.click(
       screen.getByRole("button", { name: /Download translation models/ }),
@@ -460,7 +463,7 @@ describe("SettingsPanel voice test", () => {
     const gate = screen.getByRole("group", {
       name: /translation model download confirmation/i,
     });
-    expect(within(gate).getByText(/310 MB/)).toBeInTheDocument();
+    expect(within(gate).getByText(/496 MB/)).toBeInTheDocument();
     await user.click(
       within(gate).getByRole("button", { name: /Confirm download/ }),
     );

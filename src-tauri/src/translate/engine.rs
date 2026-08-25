@@ -28,43 +28,45 @@ pub(crate) fn translate_sentences(
 }
 
 pub(crate) struct OpusMtEngine {
-    translator: Translator<MarianTokenizer>,
+    translator: Translator<M2m100Tokenizer>,
+    target_token: String,
 }
 
 /// Pure-Rust SentencePiece keeps its protobuf parser out of the native symbol
 /// table. The native SentencePiece library embedded by ct2rs otherwise
 /// collides with ONNX Runtime's newer protobuf and aborts the whole app during
 /// model load.
-struct MarianTokenizer {
-    encoder: SentencePieceProcessor,
-    decoder: SentencePieceProcessor,
+struct M2m100Tokenizer {
+    processor: SentencePieceProcessor,
+    source_token: String,
 }
 
-impl MarianTokenizer {
-    fn from_files(source: &Path, target: &Path) -> anyhow::Result<Self> {
+impl M2m100Tokenizer {
+    fn from_file(path: &Path, source_token: &str) -> anyhow::Result<Self> {
         Ok(Self {
-            encoder: SentencePieceProcessor::open(source)?,
-            decoder: SentencePieceProcessor::open(target)?,
+            processor: SentencePieceProcessor::open(path)?,
+            source_token: source_token.to_string(),
         })
     }
 }
 
-impl Tokenizer for MarianTokenizer {
+impl Tokenizer for M2m100Tokenizer {
     fn encode(&self, input: &str) -> anyhow::Result<Vec<String>> {
-        let mut pieces = self.encoder.encode(input)?;
+        let mut pieces = vec![self.source_token.clone()];
+        pieces.extend(self.processor.encode(input)?);
         pieces.push("</s>".to_string());
         Ok(pieces)
     }
 
     fn decode(&self, tokens: Vec<String>) -> anyhow::Result<String> {
-        self.decoder.decode(&tokens).map_err(Into::into)
+        self.processor.decode(&tokens).map_err(Into::into)
     }
 }
 
 impl OpusMtEngine {
     pub(crate) fn load(model: &TranslationModel, root: &Path) -> AppResult<Self> {
         let tokenizer =
-            MarianTokenizer::from_files(&root.join("source.spm"), &root.join("target.spm"))
+            M2m100Tokenizer::from_file(&root.join("sentencepiece.bpe.model"), &model.source_token)
                 .map_err(|error| {
                     AppError::Model(format!(
                         "could not load tokenizer for {}: {error}",
@@ -82,14 +84,23 @@ impl OpusMtEngine {
             ))
         })?;
 
-        Ok(Self { translator })
+        Ok(Self {
+            translator,
+            target_token: model.target_token.clone(),
+        })
     }
 }
 
 impl TranslationProvider for OpusMtEngine {
     fn translate(&self, sentences: &[String]) -> AppResult<Vec<String>> {
+        let target_prefixes = vec![vec![self.target_token.clone()]; sentences.len()];
         self.translator
-            .translate_batch(sentences, &Default::default(), None)
+            .translate_batch_with_target_prefix(
+                sentences,
+                &target_prefixes,
+                &Default::default(),
+                None,
+            )
             .map(|results| results.into_iter().map(|(text, _score)| text).collect())
             .map_err(|error| AppError::Model(format!("translation failed: {error}")))
     }
@@ -105,7 +116,7 @@ mod tests {
     #[test]
     fn translating_masks_math_and_restores_it_or_falls_back() {
         // A fake provider: the trait exists so the pipeline is testable without a
-        // 155MB model present, which is the whole reason it is a trait.
+        // 496 MB model present, which is the whole reason it is a trait.
         struct EchoProvider;
         impl TranslationProvider for EchoProvider {
             fn translate(&self, sentences: &[String]) -> AppResult<Vec<String>> {

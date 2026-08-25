@@ -294,9 +294,12 @@ mod tests {
     fn test_model(files: Vec<ModelFile>) -> TranslationModel {
         TranslationModel {
             model_id: "test/model@pinned".into(),
+            cache_key: "test-model".into(),
             repo: "test/model".into(),
             revision: "test-revision".into(),
             files,
+            source_token: "__en__".into(),
+            target_token: "__es__".into(),
             verified: true,
         }
     }
@@ -324,7 +327,7 @@ mod tests {
 
         assert_eq!(
             url,
-            "https://huggingface.co/michaelfeil/ct2fast-opus-mt-en-es/resolve/76ec296588e2234f9b7dfad5254219a0f5ecb7af/model.bin"
+            "https://huggingface.co/gn64/M2M100_418M_CTranslate2/resolve/18e406c615ef2991fa74d53734bf66b0a6b10cb4/model.bin"
         );
         assert!(!url.contains("/resolve/main/"));
     }

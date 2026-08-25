@@ -95,6 +95,12 @@ interface PlayerState {
 }
 
 let utteranceToken = 0;
+// The section/source/target whose speech forms were last prepared. Settings can
+// change while Reader is unmounted (or even while playback is active), so the
+// next sentence must detect that its cached `sentenceSpeech` belongs to the old
+// choice. This key avoids a database reload on every sentence while still
+// making translated -> Original take effect before any more audio is spoken.
+let preparedNarrationKey: string | null = null;
 // Monotonic token so an earlier navigation (document load or section move) that
 // resolves late cannot overwrite the state of a newer one.
 let navToken = 0;
@@ -177,6 +183,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   loadDocument: async (documentId: string) => {
     const requestId = ++navToken;
+    preparedNarrationKey = null;
     cancelSpeech();
     set({
       loading: true,
@@ -246,6 +253,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         error: null,
         canSwitchToSupertonic: false,
       });
+      const targetLanguage = useSettingsStore.getState().translationTargetLang;
+      if (!targetLanguage || targetLanguage === document.sourceLanguage) {
+        preparedNarrationKey = narrationKey(get(), null);
+      }
       await persistPlaybackState(set, get());
       // After the persist, not before: a successful write clears the notice,
       // and a book that opened at page one because its cursor could not be
@@ -266,12 +277,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   play: async () => {
-    if (
-      needsCurrentSectionTranslation(get()) &&
-      !(await prepareCurrentSectionTranslation(set, get))
-    ) {
-      return;
-    }
     await speakCurrentSentence(set, get);
   },
 
@@ -291,6 +296,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   reset: () => {
     cancelSpeech();
+    preparedNarrationKey = null;
     // Invalidate any in-flight load/navigation so a late response cannot
     // repopulate the state we are clearing here.
     navToken += 1;
@@ -369,6 +375,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         error: null,
         canSwitchToSupertonic: false,
       });
+      preparedNarrationKey = null;
       useTranslationStore.setState({
         sectionState: {
           status: "idle",
@@ -447,6 +454,12 @@ async function speakCurrentSentence(
   get: () => PlayerState,
   options: SpeakOptions = {},
 ) {
+  if (
+    !currentSectionNarrationIsPrepared(get()) &&
+    !(await prepareCurrentSectionNarration(set, get))
+  ) {
+    return;
+  }
   const state = get();
   const sentence = currentSentence(state);
   if (!sentence) {
@@ -482,6 +495,65 @@ async function speakCurrentSentence(
     get,
     requireInitialBuffer,
   );
+}
+
+/** Make `sentenceSpeech` match the current saved translation choice. */
+async function prepareCurrentSectionNarration(
+  set: (partial: Partial<PlayerState>) => void,
+  get: () => PlayerState,
+) {
+  const state = get();
+  const section = state.sections[state.currentSectionIndex];
+  if (!section || !state.document) {
+    return true;
+  }
+  const effectiveTarget = effectiveNarrationTarget(state);
+  const key = narrationKey(state, effectiveTarget);
+  if (preparedNarrationKey === key) {
+    return true;
+  }
+
+  if (effectiveTarget) {
+    const prepared = await prepareCurrentSectionTranslation(set, get);
+    if (prepared) {
+      preparedNarrationKey = key;
+    }
+    return prepared;
+  }
+
+  try {
+    const paragraphs = await api.listParagraphs(section.id, null);
+    const current = get();
+    if (
+      current.document?.id !== state.document.id ||
+      current.sections[current.currentSectionIndex]?.id !== section.id
+    ) {
+      return false;
+    }
+    set({ paragraphs });
+    preparedNarrationKey = key;
+    return true;
+  } catch (error) {
+    set({
+      isPlaying: false,
+      error: displayError(error),
+      canSwitchToSupertonic: false,
+    });
+    return false;
+  }
+}
+
+function currentSectionNarrationIsPrepared(state: PlayerState) {
+  return (
+    preparedNarrationKey === narrationKey(state, effectiveNarrationTarget(state))
+  );
+}
+
+function effectiveNarrationTarget(state: PlayerState) {
+  const targetLanguage = useSettingsStore.getState().translationTargetLang;
+  return targetLanguage && targetLanguage !== state.document?.sourceLanguage
+    ? targetLanguage
+    : null;
 }
 
 /**
@@ -526,6 +598,7 @@ async function prepareCurrentSectionTranslation(
       return false;
     }
     set({ paragraphs });
+    preparedNarrationKey = narrationKey(get(), targetLanguage);
     return true;
   } catch (error) {
     set({
@@ -537,13 +610,11 @@ async function prepareCurrentSectionTranslation(
   }
 }
 
-function needsCurrentSectionTranslation(state: PlayerState) {
-  const targetLanguage = useSettingsStore.getState().translationTargetLang;
-  return Boolean(
-    state.sections[state.currentSectionIndex] &&
-      targetLanguage &&
-      targetLanguage !== state.document?.sourceLanguage,
-  );
+function narrationKey(state: PlayerState, targetLanguage: string | null) {
+  const section = state.sections[state.currentSectionIndex];
+  return state.document && section
+    ? `${state.document.id}:${section.id}:${targetLanguage ?? "original"}`
+    : null;
 }
 
 /**
@@ -1157,6 +1228,7 @@ async function moveToPosition(
     let paragraphs = get().paragraphs;
     let sectionImages = get().sectionImages;
     if (position.sectionIndex !== get().currentSectionIndex) {
+      preparedNarrationKey = null;
       const section = get().sections[position.sectionIndex];
       if (!section) {
         // Reset the buffering UI instead of leaving it stuck on "Loading section".
@@ -1203,6 +1275,10 @@ async function moveToPosition(
       bufferingMessage: "",
       modelDownload: null,
     });
+    const targetLanguage = useSettingsStore.getState().translationTargetLang;
+    if (!targetLanguage || targetLanguage === get().document?.sourceLanguage) {
+      preparedNarrationKey = narrationKey(get(), null);
+    }
     await persistPlaybackState(set, get());
   } catch (error) {
     // Ignore failures from a navigation that a newer one (or reset) superseded.

@@ -15,7 +15,7 @@ pub(crate) fn detect_source_language(declared: Option<&str>, _sample: &str) -> S
         .map(str::trim)
         .filter(|value| !value.is_empty())
         // BCP-47 down to the primary subtag: `es-MX` and `es` are one source
-        // language as far as an Opus-MT pair is concerned.
+        // language as far as a translation pair is concerned.
         .and_then(|value| value.split(['-', '_']).next())
         .filter(|value| !value.is_empty())
         .map(|value| value.to_ascii_lowercase())
