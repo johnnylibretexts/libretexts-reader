@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
@@ -94,7 +96,12 @@ pub fn list_sections(conn: &Connection, document_id: &str) -> AppResult<Vec<Sect
     collect_rows(rows)
 }
 
-pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Paragraph>> {
+pub fn list_paragraphs(
+    conn: &Connection,
+    section_id: &str,
+    target_lang: Option<&str>,
+) -> AppResult<Vec<Paragraph>> {
+    let translations = load_translations(conn, section_id, target_lang)?;
     let mut statement = conn.prepare(
         "SELECT id, section_id, ordinal, text, sentence_offsets
          FROM paragraphs
@@ -102,6 +109,7 @@ pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Par
          ORDER BY ordinal",
     )?;
     let rows = statement.query_map(params![section_id], |row| {
+        let id: String = row.get(0)?;
         let raw_offsets: String = row.get(4)?;
         let text: String = row.get(3)?;
         let sentence_offsets: Vec<(usize, usize)> =
@@ -113,16 +121,27 @@ pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Par
                 )
             })?;
 
-        // Every Paragraph carries both forms, so this is the one place they can
-        // fall out of step — and they cannot, because the speech form is
-        // derived from the display form right here, sentence by sentence.
+        // Translation deliberately breaks the old "speech is derived from display"
+        // invariant. The one that survives -- and the one every consumer indexes on --
+        // is exactly one speech form per offset, in order. Falling back per index
+        // rather than per chapter is what makes a partially translated chapter a valid
+        // state rather than a corrupt one, which in turn is why Cancel needs no
+        // rollback.
         let sentence_speech = sentence_offsets
             .iter()
-            .map(|(start, end)| normalize_for_tts(text.get(*start..*end).unwrap_or_default()))
+            .enumerate()
+            .map(|(index, (start, end))| {
+                translations
+                    .get(&(id.clone(), index as i64))
+                    .map(|translation| normalize_for_tts(translation))
+                    .unwrap_or_else(|| {
+                        normalize_for_tts(text.get(*start..*end).unwrap_or_default())
+                    })
+            })
             .collect();
 
         Ok(Paragraph {
-            id: row.get(0)?,
+            id,
             section_id: row.get(1)?,
             ordinal: row.get(2)?,
             text,
@@ -132,6 +151,30 @@ pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Par
     })?;
 
     collect_rows(rows)
+}
+
+fn load_translations(
+    conn: &Connection,
+    section_id: &str,
+    target_lang: Option<&str>,
+) -> AppResult<HashMap<(String, i64), String>> {
+    let Some(target_lang) = target_lang else {
+        return Ok(HashMap::new());
+    };
+    let mut statement = conn.prepare(
+        "SELECT t.paragraph_id, t.sentence_index, t.text
+           FROM sentence_translations t
+           JOIN paragraphs p ON p.id = t.paragraph_id
+          WHERE p.section_id = ?1 AND t.target_lang = ?2 AND t.qa_status != 'rejected'",
+    )?;
+    let rows = statement.query_map(params![section_id, target_lang], |row| {
+        Ok((
+            (row.get::<_, String>(0)?, row.get::<_, i64>(1)?),
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
 }
 
 pub fn list_section_images(conn: &Connection, section_id: &str) -> AppResult<Vec<SectionImage>> {
@@ -371,9 +414,103 @@ fn to_sql_conversion_error(column: usize) -> impl FnOnce(AppError) -> rusqlite::
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::Connection;
+
     use crate::content::document::{DocumentBuilder, SectionBuilder};
     use crate::db::connection::temporary_pool;
+    use crate::db::migrations::apply_migrations;
     use crate::db::models::{PlaybackState, SourceType};
+
+    fn seed_section_with_two_sentences() -> Connection {
+        let mut conn = Connection::open_in_memory().expect("open an in-memory database");
+        apply_migrations(&mut conn).expect("apply migrations");
+        conn.execute_batch(
+            "INSERT INTO documents
+                 (id, title, source_type, source_metadata, word_count, source_language, imported_at)
+             VALUES ('doc-1', 'A Book', 'pasted', '{}', 4, 'en', '2026-08-24T00:00:00Z');
+             INSERT INTO sections (id, document_id, ordinal, title, word_count)
+             VALUES ('sec-1', 'doc-1', 0, 'One', 4);
+             INSERT INTO paragraphs (id, section_id, ordinal, text, sentence_offsets)
+             VALUES (
+                 'p1',
+                 'sec-1',
+                 0,
+                 'First sentence. Second sentence.',
+                 '[[0,15],[16,32]]'
+             );",
+        )
+        .expect("seed a section with two sentences");
+        conn
+    }
+
+    #[test]
+    fn a_translated_sentence_is_spoken_and_an_untranslated_one_falls_back() {
+        let conn = seed_section_with_two_sentences();
+        conn.execute(
+            "INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Primera frase.', 'passed')",
+            [],
+        )
+        .unwrap();
+
+        let paragraphs = super::list_paragraphs(&conn, "sec-1", Some("es")).unwrap();
+        let speech = &paragraphs[0].sentence_speech;
+
+        assert_eq!(speech[0], "Primera frase.");
+        assert_eq!(
+            speech[1], "Second sentence.",
+            "no row means the original, not silence"
+        );
+    }
+
+    #[test]
+    fn a_rejected_translation_is_never_spoken() {
+        let conn = seed_section_with_two_sentences();
+        conn.execute(
+            "INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Basura.', 'rejected')",
+            [],
+        )
+        .unwrap();
+
+        let paragraphs = super::list_paragraphs(&conn, "sec-1", Some("es")).unwrap();
+        assert_eq!(paragraphs[0].sentence_speech[0], "First sentence.");
+    }
+
+    #[test]
+    fn there_is_always_one_speech_form_per_offset() {
+        // Highlighting, the resume cursor, progress and chapter export all index
+        // on this equality. A short list breaks all four at once, far from here.
+        let conn = seed_section_with_two_sentences();
+        for target in [None, Some("es"), Some("fr")] {
+            let paragraphs = super::list_paragraphs(&conn, "sec-1", target).unwrap();
+            for paragraph in paragraphs {
+                assert_eq!(
+                    paragraph.sentence_offsets.len(),
+                    paragraph.sentence_speech.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_translated_math_token_is_still_normalized_before_it_is_spoken() {
+        // The translated branch must pass through `normalize_for_tts` too, or a
+        // restored `[[mathml:...]]` reaches the speech engine undecoded.
+        let conn = seed_section_with_two_sentences();
+        conn.execute(
+            "INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Resuelve [[latex:eA==]].', 'passed')",
+            [],
+        )
+        .unwrap();
+
+        let paragraphs = super::list_paragraphs(&conn, "sec-1", Some("es")).unwrap();
+        assert!(!paragraphs[0].sentence_speech[0].contains("[[latex:"));
+    }
 
     /// Every Source must survive a persist-and-list round trip.
     ///
@@ -503,7 +640,7 @@ mod tests {
 
         let sections = super::list_sections(&conn, &document_id).expect("sections should list");
         let paragraphs =
-            super::list_paragraphs(&conn, &sections[1].id).expect("paragraphs should list");
+            super::list_paragraphs(&conn, &sections[1].id, None).expect("paragraphs should list");
 
         let cursor = PlaybackState {
             document_id: document_id.clone(),
@@ -592,7 +729,7 @@ mod tests {
 
         let sections = super::list_sections(&conn, &document_id).expect("sections should list");
         let paragraphs =
-            super::list_paragraphs(&conn, &sections[1].id).expect("paragraphs should list");
+            super::list_paragraphs(&conn, &sections[1].id, None).expect("paragraphs should list");
 
         super::save_playback_state(
             &conn,

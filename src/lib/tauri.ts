@@ -123,8 +123,11 @@ export const api = {
     invokeDesktop<Domain.Document>("get_document", { id }),
   listSections: (documentId: string) =>
     invokeDesktop<Domain.Section[]>("list_sections", { documentId }),
-  listParagraphs: (sectionId: string) =>
-    invokeDesktop<Domain.Paragraph[]>("list_paragraphs", { sectionId }),
+  listParagraphs: (sectionId: string, targetLang: string | null = null) =>
+    invokeDesktop<Domain.Paragraph[]>("list_paragraphs", {
+      sectionId,
+      targetLang,
+    }),
   listSectionImages: (sectionId: string) =>
     invokeDesktop<Domain.SectionImage[]>("list_section_images", { sectionId }),
   deleteDocument: (id: string) =>

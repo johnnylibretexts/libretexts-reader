@@ -30,9 +30,10 @@ pub async fn list_sections(
 pub async fn list_paragraphs(
     state: State<'_, DbPool>,
     section_id: String,
+    target_lang: Option<String>,
 ) -> AppResult<Vec<Paragraph>> {
     let conn = state.get()?;
-    library::list_paragraphs(&conn, &section_id)
+    library::list_paragraphs(&conn, &section_id, target_lang.as_deref())
 }
 
 #[tauri::command]

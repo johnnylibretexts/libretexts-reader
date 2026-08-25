@@ -589,7 +589,7 @@ fn chapter_material(
         .into_iter()
         .find(|section| section.id == section_id)
         .ok_or_else(|| AppError::InvalidInput("section does not belong to document".into()))?;
-    let paragraphs = library::list_paragraphs(&conn, section_id)?;
+    let paragraphs = library::list_paragraphs(&conn, section_id, None)?;
     let text = paragraphs
         .into_iter()
         .map(|paragraph| normalize_for_tts(paragraph.text.trim()))
