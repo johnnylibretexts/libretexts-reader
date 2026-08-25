@@ -1,6 +1,13 @@
 # LibreTexts Reader Handoff
 
-Last updated: 2026-08-23
+Last updated: 2026-08-24
+
+> **`docs/superpowers/specs/` and `docs/superpowers/plans/` are no longer in the repo.**
+> They are gitignored working documents that live only on the machine they were
+> written on. Six references below point into those directories and will not
+> resolve in a fresh clone — they are kept because they name the document that
+> decided each piece of work, and whoever has the checkout has the file.
+> `docs/adr/` and `docs/agents/` are unaffected and still tracked.
 
 > **The public beta is cut, and the repo is public.**
 > [**v0.1.0-beta.2**](https://github.com/johnnylibretexts/libretexts-reader/releases/tag/v0.1.0-beta.2)

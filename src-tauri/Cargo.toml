@@ -74,6 +74,12 @@ unicode-normalization = "0.1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 async-trait = "0.1"
 rbook = "0.7.10"
+# Keep ct2rs' native SentencePiece wrapper disabled. Both it and the statically
+# linked ONNX Runtime embed different protobuf versions; linking them into one
+# desktop binary makes the process abort before the first translation. The
+# tokenizer below is pure Rust, so CTranslate2 and Supertonic can coexist.
+ctranslate2 = { package = "ct2rs", version = "0.10", default-features = false, features = ["ruy"] }
+sentencepiece-rs = "0.2.2"
 
 # Test-only. Neither crate is reachable from the built application: cargo does
 # not compile dev-dependencies into the lib or bin targets, so nothing here

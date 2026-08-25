@@ -47,6 +47,23 @@ afterEach(() => {
 });
 
 describe("hydrate", () => {
+  it("loads the saved read-aloud translation target", async () => {
+    vi.resetModules();
+    vi.doMock("../lib/tauri", () => ({
+      api: {
+        setSetting: vi.fn(async () => undefined),
+        getAllSettings: vi.fn(async () => ({
+          translation_target_lang: "es",
+        })),
+      },
+    }));
+    const { useSettingsStore } = await import("./settings");
+
+    await useSettingsStore.getState().hydrate();
+
+    expect(useSettingsStore.getState().translationTargetLang).toBe("es");
+  });
+
   it("can be retried after a failed load", async () => {
     // A failed load leaves every row at DEFAULT_SETTINGS with `hydrated`
     // true, and playback now builds its engine from two of those rows -- so
@@ -447,6 +464,19 @@ describe("hydrate", () => {
 });
 
 describe("settings store persistence failures", () => {
+  it("persists Original language as a null translation target", async () => {
+    const setSetting = vi.fn(async () => undefined);
+    const useSettingsStore = await loadSettingsStore(setSetting);
+
+    useSettingsStore.setState({ translationTargetLang: "es" });
+    await useSettingsStore
+      .getState()
+      .saveTtsSettings({ translationTargetLang: null });
+
+    expect(setSetting).toHaveBeenCalledWith("translation_target_lang", null);
+    expect(useSettingsStore.getState().translationTargetLang).toBeNull();
+  });
+
   it("saveTtsSettings rejects when the persist fails", async () => {
     const setSetting = vi.fn(async () => {
       throw new Error("disk full");

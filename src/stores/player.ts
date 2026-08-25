@@ -10,6 +10,7 @@ import {
 } from "../lib/speech";
 import { useSettingsStore } from "./settings";
 import type { SettingsStore } from "./settings";
+import { useTranslationStore } from "./translation";
 import type * as Domain from "../types/domain";
 
 interface Position {
@@ -69,6 +70,7 @@ interface PlayerState {
     sentenceIndex: number,
   ) => Promise<void>;
   setSection: (sectionIndex: number) => Promise<void>;
+  setDocumentSourceLanguage: (sourceLanguage: string) => Promise<void>;
   skipForward: () => Promise<void>;
   skipBack: () => Promise<void>;
   skipParagraphForward: () => Promise<void>;
@@ -93,6 +95,12 @@ interface PlayerState {
 }
 
 let utteranceToken = 0;
+// The section/source/target whose speech forms were last prepared. Settings can
+// change while Reader is unmounted (or even while playback is active), so the
+// next sentence must detect that its cached `sentenceSpeech` belongs to the old
+// choice. This key avoids a database reload on every sentence while still
+// making translated -> Original take effect before any more audio is spoken.
+let preparedNarrationKey: string | null = null;
 // Monotonic token so an earlier navigation (document load or section move) that
 // resolves late cannot overwrite the state of a newer one.
 let navToken = 0;
@@ -175,6 +183,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   loadDocument: async (documentId: string) => {
     const requestId = ++navToken;
+    preparedNarrationKey = null;
     cancelSpeech();
     set({
       loading: true,
@@ -218,7 +227,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         sections.findIndex((section) => section.id === saved?.sectionId),
       );
       const [paragraphs, sectionImages] = await Promise.all([
-        api.listParagraphs(sections[sectionIndex].id),
+        api.listParagraphs(
+          sections[sectionIndex].id,
+          useSettingsStore.getState().translationTargetLang,
+        ),
         api.listSectionImages(sections[sectionIndex].id),
       ]);
       if (requestId !== navToken) {
@@ -241,6 +253,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         error: null,
         canSwitchToSupertonic: false,
       });
+      const targetLanguage = useSettingsStore.getState().translationTargetLang;
+      if (!targetLanguage || targetLanguage === document.sourceLanguage) {
+        preparedNarrationKey = narrationKey(get(), null);
+      }
       await persistPlaybackState(set, get());
       // After the persist, not before: a successful write clears the notice,
       // and a book that opened at page one because its cursor could not be
@@ -280,6 +296,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   reset: () => {
     cancelSpeech();
+    preparedNarrationKey = null;
     // Invalidate any in-flight load/navigation so a late response cannot
     // repopulate the state we are clearing here.
     navToken += 1;
@@ -322,7 +339,55 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       sentenceIndex: 0,
     });
     if (wasPlaying) {
-      await speakCurrentSentence(set, get);
+      await get().play();
+    }
+  },
+
+  setDocumentSourceLanguage: async (sourceLanguage: string) => {
+    const document = get().document;
+    if (!document || document.sourceLanguage === sourceLanguage) {
+      return;
+    }
+
+    get().pause();
+    if (useTranslationStore.getState().sectionState.status === "running") {
+      await useTranslationStore.getState().cancel();
+    }
+    try {
+      await api.setDocumentSourceLanguage(document.id, sourceLanguage);
+      if (get().document?.id !== document.id) {
+        return;
+      }
+      const normalized = sourceLanguage.trim().toLowerCase().replace(/_/g, "-");
+      const section = get().sections[get().currentSectionIndex];
+      const paragraphs = section
+        ? await api.listParagraphs(
+            section.id,
+            useSettingsStore.getState().translationTargetLang,
+          )
+        : [];
+      if (get().document?.id !== document.id) {
+        return;
+      }
+      set({
+        document: { ...document, sourceLanguage: normalized },
+        paragraphs,
+        error: null,
+        canSwitchToSupertonic: false,
+      });
+      preparedNarrationKey = null;
+      useTranslationStore.setState({
+        sectionState: {
+          status: "idle",
+          done: 0,
+          total: 0,
+          fallbackCount: 0,
+          sentenceCount: 0,
+          error: null,
+        },
+      });
+    } catch (error) {
+      set({ error: displayError(error), canSwitchToSupertonic: false });
     }
   },
 
@@ -389,6 +454,12 @@ async function speakCurrentSentence(
   get: () => PlayerState,
   options: SpeakOptions = {},
 ) {
+  if (
+    !currentSectionNarrationIsPrepared(get()) &&
+    !(await prepareCurrentSectionNarration(set, get))
+  ) {
+    return;
+  }
   const state = get();
   const sentence = currentSentence(state);
   if (!sentence) {
@@ -413,7 +484,7 @@ async function speakCurrentSentence(
   const position = currentPosition(state);
   const requireInitialBuffer = options.requireInitialBuffer ?? true;
 
-  const { engine, settings } = activeEngine();
+  const { engine, settings } = activeEngine(state.document);
   await speakWithBufferedSpeech(
     engine,
     settings,
@@ -424,6 +495,126 @@ async function speakCurrentSentence(
     get,
     requireInitialBuffer,
   );
+}
+
+/** Make `sentenceSpeech` match the current saved translation choice. */
+async function prepareCurrentSectionNarration(
+  set: (partial: Partial<PlayerState>) => void,
+  get: () => PlayerState,
+) {
+  const state = get();
+  const section = state.sections[state.currentSectionIndex];
+  if (!section || !state.document) {
+    return true;
+  }
+  const effectiveTarget = effectiveNarrationTarget(state);
+  const key = narrationKey(state, effectiveTarget);
+  if (preparedNarrationKey === key) {
+    return true;
+  }
+
+  if (effectiveTarget) {
+    const prepared = await prepareCurrentSectionTranslation(set, get);
+    if (prepared) {
+      preparedNarrationKey = key;
+    }
+    return prepared;
+  }
+
+  try {
+    const paragraphs = await api.listParagraphs(section.id, null);
+    const current = get();
+    if (
+      current.document?.id !== state.document.id ||
+      current.sections[current.currentSectionIndex]?.id !== section.id
+    ) {
+      return false;
+    }
+    set({ paragraphs });
+    preparedNarrationKey = key;
+    return true;
+  } catch (error) {
+    set({
+      isPlaying: false,
+      error: displayError(error),
+      canSwitchToSupertonic: false,
+    });
+    return false;
+  }
+}
+
+function currentSectionNarrationIsPrepared(state: PlayerState) {
+  return (
+    preparedNarrationKey === narrationKey(state, effectiveNarrationTarget(state))
+  );
+}
+
+function effectiveNarrationTarget(state: PlayerState) {
+  const targetLanguage = useSettingsStore.getState().translationTargetLang;
+  return targetLanguage && targetLanguage !== state.document?.sourceLanguage
+    ? targetLanguage
+    : null;
+}
+
+/**
+ * Translate the current chapter before any audio leaves the speech engine.
+ *
+ * The backend is the authority on cache/model staleness. A completed call can
+ * be instant when the chapter is current; on a real run its progress is owned
+ * by the translation store and rendered in Reader. Reloading afterwards is
+ * what swaps `sentenceSpeech` from per-index original fallbacks to the newly
+ * persisted translated forms while leaving display text and cursor indices
+ * untouched.
+ */
+async function prepareCurrentSectionTranslation(
+  set: (partial: Partial<PlayerState>) => void,
+  get: () => PlayerState,
+) {
+  const state = get();
+  const section = state.sections[state.currentSectionIndex];
+  const targetLanguage = useSettingsStore.getState().translationTargetLang;
+  if (
+    !section ||
+    !targetLanguage ||
+    targetLanguage === state.document?.sourceLanguage
+  ) {
+    return true;
+  }
+
+  await useTranslationStore.getState().translateSection(section.id);
+  if (useTranslationStore.getState().sectionState.status !== "complete") {
+    set({
+      isPlaying: false,
+      isBuffering: false,
+      bufferingMessage: "",
+      modelDownload: null,
+    });
+    return false;
+  }
+
+  try {
+    const paragraphs = await api.listParagraphs(section.id, targetLanguage);
+    if (get().sections[get().currentSectionIndex]?.id !== section.id) {
+      return false;
+    }
+    set({ paragraphs });
+    preparedNarrationKey = narrationKey(get(), targetLanguage);
+    return true;
+  } catch (error) {
+    set({
+      isPlaying: false,
+      error: displayError(error),
+      canSwitchToSupertonic: false,
+    });
+    return false;
+  }
+}
+
+function narrationKey(state: PlayerState, targetLanguage: string | null) {
+  const section = state.sections[state.currentSectionIndex];
+  return state.document && section
+    ? `${state.document.id}:${section.id}:${targetLanguage ?? "original"}`
+    : null;
 }
 
 /**
@@ -524,8 +715,21 @@ function engineKey(settings: SettingsStore): string {
  * defaults rather than refusing -- silence helps nobody -- and Settings
  * carries the banner and the retry that gets the real rows back.
  */
-function activeEngine(): ActiveEngine {
-  const settings = useSettingsStore.getState();
+function activeEngine(document: Domain.Document | null = null): ActiveEngine {
+  const storedSettings = useSettingsStore.getState();
+  // The global target drives both translation and pronunciation. With
+  // Original language selected, pronunciation instead follows this book's
+  // editable source language rather than the last translated target saved in
+  // `supertonic_language`.
+  const spokenLanguage =
+    storedSettings.translationTargetLang ??
+    document?.sourceLanguage ??
+    storedSettings.supertonicLanguage;
+  const settings: SettingsStore = {
+    ...storedSettings,
+    supertonicLanguage:
+      spokenLanguage as SettingsStore["supertonicLanguage"],
+  };
   const key = engineKey(settings);
 
   if (cachedEngine?.key !== key) {
@@ -944,6 +1148,7 @@ async function advanceBySentence(
     return;
   }
   const wasPlaying = get().isPlaying || fromAutoAdvance;
+  const previousSectionIndex = get().currentSectionIndex;
   const next = direction > 0 ? nextPosition(get()) : previousPosition(get());
   if (!next) {
     cancelSpeech();
@@ -958,6 +1163,12 @@ async function advanceBySentence(
 
   await moveToPosition(set, get, next, { preservePlayback: fromAutoAdvance });
   if (wasPlaying) {
+    if (
+      get().currentSectionIndex !== previousSectionIndex &&
+      !(await prepareCurrentSectionTranslation(set, get))
+    ) {
+      return;
+    }
     await speakCurrentSentence(set, get, {
       token: fromAutoAdvance ? token : undefined,
       requireInitialBuffer: !fromAutoAdvance,
@@ -972,6 +1183,7 @@ async function advanceByParagraph(
 ) {
   const state = get();
   const wasPlaying = state.isPlaying;
+  const previousSectionIndex = state.currentSectionIndex;
   const position =
     direction > 0
       ? nextParagraphPosition(state)
@@ -982,6 +1194,12 @@ async function advanceByParagraph(
 
   await moveToPosition(set, get, position);
   if (wasPlaying) {
+    if (
+      get().currentSectionIndex !== previousSectionIndex &&
+      !(await prepareCurrentSectionTranslation(set, get))
+    ) {
+      return;
+    }
     await speakCurrentSentence(set, get);
   }
 }
@@ -1010,6 +1228,7 @@ async function moveToPosition(
     let paragraphs = get().paragraphs;
     let sectionImages = get().sectionImages;
     if (position.sectionIndex !== get().currentSectionIndex) {
+      preparedNarrationKey = null;
       const section = get().sections[position.sectionIndex];
       if (!section) {
         // Reset the buffering UI instead of leaving it stuck on "Loading section".
@@ -1025,7 +1244,10 @@ async function moveToPosition(
         });
       }
       [paragraphs, sectionImages] = await Promise.all([
-        api.listParagraphs(section.id),
+        api.listParagraphs(
+          section.id,
+          useSettingsStore.getState().translationTargetLang,
+        ),
         api.listSectionImages(section.id),
       ]);
       if (requestId !== navToken) {
@@ -1053,6 +1275,10 @@ async function moveToPosition(
       bufferingMessage: "",
       modelDownload: null,
     });
+    const targetLanguage = useSettingsStore.getState().translationTargetLang;
+    if (!targetLanguage || targetLanguage === get().document?.sourceLanguage) {
+      preparedNarrationKey = narrationKey(get(), null);
+    }
     await persistPlaybackState(set, get());
   } catch (error) {
     // Ignore failures from a navigation that a newer one (or reset) superseded.
@@ -1381,7 +1607,7 @@ async function persistPlaybackState(
       // which is what `createFishEngine` reports and is truer than naming a
       // voice from the other provider. Building an engine is plain object
       // construction; nothing downloads or synthesizes until `ensureReady`.
-      voiceId: activeEngine().engine.defaultVoice,
+      voiceId: activeEngine(document).engine.defaultVoice,
       speed: state.speed,
       updatedAt: new Date().toISOString(),
     });

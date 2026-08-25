@@ -15,6 +15,7 @@ use serde_json::json;
 use crate::content::document::{DocumentBuilder, SectionBuilder};
 use crate::content::html_section::{self, normalize_text, SectionSource};
 use crate::content::images::{download_images, SourceImage};
+use crate::content::language::detect_source_language;
 use crate::content::remote;
 use crate::db::connection::DbPool;
 use crate::db::models::{OpenStaxBook, SourceType};
@@ -335,6 +336,7 @@ where
             "OpenStax book did not contain readable text".into(),
         ));
     }
+    let source_language = detect_source_language(Some(&toc.language), "");
 
     Ok(DocumentBuilder {
         title: catalog_book.title,
@@ -346,6 +348,7 @@ where
             "language": toc.language,
             "imported_at": Utc::now().to_rfc3339()
         }),
+        source_language,
         cover_image_path: None,
         license: Some(catalog_book.license),
         attribution: Some(format!("https://openstax.org/books/{}", catalog_book.slug)),

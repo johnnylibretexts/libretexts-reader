@@ -51,6 +51,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0012_drop_unused_settings",
         include_str!("../../resources/migrations/0012_drop_unused_settings.sql"),
     ),
+    (
+        "0013_translation",
+        include_str!("../../resources/migrations/0013_translation.sql"),
+    ),
 ];
 
 pub fn apply_migrations(conn: &mut Connection) -> AppResult<()> {
@@ -120,6 +124,43 @@ fn apply_migration_list(conn: &mut Connection, migrations: &[(&str, &str)]) -> A
 mod tests {
     use super::apply_migrations;
     use rusqlite::{params, Connection};
+
+    #[test]
+    fn migration_0013_adds_the_translation_tables() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_migrations(&mut conn).unwrap();
+
+        conn.execute_batch(
+            "INSERT INTO documents
+                 (id, title, source_type, source_metadata, word_count, imported_at)
+             VALUES ('doc1', 'A Book', 'pasted', '{}', 1, '2026-08-24T00:00:00Z');
+             INSERT INTO sections (id, document_id, ordinal, title, word_count)
+             VALUES ('s1', 'doc1', 0, 'A Section', 1);
+             INSERT INTO paragraphs (id, section_id, ordinal, text, sentence_offsets)
+             VALUES ('p1', 's1', 0, 'Hello.', '[[0,6]]');
+             INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Hola.', 'passed');",
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sentence_translations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // The column that stops a Spanish book being translated to Spanish.
+        conn.query_row("SELECT source_language FROM documents LIMIT 0", [], |_| {
+            Ok(())
+        })
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(()),
+            other => Err(other),
+        })
+        .expect("documents.source_language must exist");
+    }
 
     fn migrated_conn() -> Connection {
         let mut conn = Connection::open_in_memory().expect("open in-memory db");

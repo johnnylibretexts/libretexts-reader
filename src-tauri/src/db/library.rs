@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
@@ -16,6 +18,7 @@ use crate::error::{AppError, AppResult};
 /// own would otherwise hand the card a bar wider than its track.
 const DOCUMENT_COLUMNS: &str = "d.id, d.title, d.source_type, d.source_metadata,
                 d.cover_image_path, d.license, d.attribution, d.word_count,
+                COALESCE(NULLIF(TRIM(d.source_language), ''), 'en') AS source_language,
                 d.imported_at, d.last_opened_at,
                 COALESCE(
                     MIN(1.0, MAX(0.0,
@@ -94,7 +97,12 @@ pub fn list_sections(conn: &Connection, document_id: &str) -> AppResult<Vec<Sect
     collect_rows(rows)
 }
 
-pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Paragraph>> {
+pub fn list_paragraphs(
+    conn: &Connection,
+    section_id: &str,
+    target_lang: Option<&str>,
+) -> AppResult<Vec<Paragraph>> {
+    let translations = load_translations(conn, section_id, target_lang)?;
     let mut statement = conn.prepare(
         "SELECT id, section_id, ordinal, text, sentence_offsets
          FROM paragraphs
@@ -102,6 +110,7 @@ pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Par
          ORDER BY ordinal",
     )?;
     let rows = statement.query_map(params![section_id], |row| {
+        let id: String = row.get(0)?;
         let raw_offsets: String = row.get(4)?;
         let text: String = row.get(3)?;
         let sentence_offsets: Vec<(usize, usize)> =
@@ -113,16 +122,27 @@ pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Par
                 )
             })?;
 
-        // Every Paragraph carries both forms, so this is the one place they can
-        // fall out of step — and they cannot, because the speech form is
-        // derived from the display form right here, sentence by sentence.
+        // Translation deliberately breaks the old "speech is derived from display"
+        // invariant. The one that survives -- and the one every consumer indexes on --
+        // is exactly one speech form per offset, in order. Falling back per index
+        // rather than per chapter is what makes a partially translated chapter a valid
+        // state rather than a corrupt one, which in turn is why Cancel needs no
+        // rollback.
         let sentence_speech = sentence_offsets
             .iter()
-            .map(|(start, end)| normalize_for_tts(text.get(*start..*end).unwrap_or_default()))
+            .enumerate()
+            .map(|(index, (start, end))| {
+                translations
+                    .get(&(id.clone(), index as i64))
+                    .map(|translation| normalize_for_tts(translation))
+                    .unwrap_or_else(|| {
+                        normalize_for_tts(text.get(*start..*end).unwrap_or_default())
+                    })
+            })
             .collect();
 
         Ok(Paragraph {
-            id: row.get(0)?,
+            id,
             section_id: row.get(1)?,
             ordinal: row.get(2)?,
             text,
@@ -132,6 +152,30 @@ pub fn list_paragraphs(conn: &Connection, section_id: &str) -> AppResult<Vec<Par
     })?;
 
     collect_rows(rows)
+}
+
+fn load_translations(
+    conn: &Connection,
+    section_id: &str,
+    target_lang: Option<&str>,
+) -> AppResult<HashMap<(String, i64), String>> {
+    let Some(target_lang) = target_lang else {
+        return Ok(HashMap::new());
+    };
+    let mut statement = conn.prepare(
+        "SELECT t.paragraph_id, t.sentence_index, t.text
+           FROM sentence_translations t
+           JOIN paragraphs p ON p.id = t.paragraph_id
+          WHERE p.section_id = ?1 AND t.target_lang = ?2 AND t.qa_status != 'rejected'",
+    )?;
+    let rows = statement.query_map(params![section_id, target_lang], |row| {
+        Ok((
+            (row.get::<_, String>(0)?, row.get::<_, i64>(1)?),
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
 }
 
 pub fn list_section_images(conn: &Connection, section_id: &str) -> AppResult<Vec<SectionImage>> {
@@ -201,6 +245,57 @@ pub fn delete_document(conn: &Connection, id: &str) -> AppResult<()> {
         remove_file_if_present(&path)?;
     }
 
+    Ok(())
+}
+
+/// Correct a book's declared/detected language and discard speech translations
+/// derived from the old source language.
+pub fn set_document_source_language(
+    conn: &mut Connection,
+    document_id: &str,
+    source_language: &str,
+) -> AppResult<()> {
+    let source_language = source_language
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    if source_language.len() < 2
+        || source_language.len() > 16
+        || !source_language
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character == '-')
+    {
+        return Err(AppError::InvalidInput(
+            "source language must be a short language code such as en or es".into(),
+        ));
+    }
+
+    let tx = conn.transaction()?;
+    let updated = tx.execute(
+        "UPDATE documents SET source_language = ?1 WHERE id = ?2",
+        params![source_language, document_id],
+    )?;
+    if updated == 0 {
+        return Err(AppError::InvalidInput("document was not found".into()));
+    }
+    tx.execute(
+        "DELETE FROM sentence_translations
+          WHERE paragraph_id IN (
+                SELECT p.id
+                  FROM paragraphs p
+                  JOIN sections s ON s.id = p.section_id
+                 WHERE s.document_id = ?1
+          )",
+        [document_id],
+    )?;
+    tx.execute(
+        "DELETE FROM section_translations
+          WHERE section_id IN (
+                SELECT id FROM sections WHERE document_id = ?1
+          )",
+        [document_id],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -293,8 +388,8 @@ fn collect_rows<T>(rows: impl Iterator<Item = Result<T, rusqlite::Error>>) -> Ap
 fn document_from_row(row: &rusqlite::Row<'_>) -> Result<Document, rusqlite::Error> {
     let source_type: String = row.get(2)?;
     let source_metadata: String = row.get(3)?;
-    let imported_at: String = row.get(8)?;
-    let last_opened_at: Option<String> = row.get(9)?;
+    let imported_at: String = row.get(9)?;
+    let last_opened_at: Option<String> = row.get(10)?;
 
     Ok(Document {
         id: row.get(0)?,
@@ -305,13 +400,14 @@ fn document_from_row(row: &rusqlite::Row<'_>) -> Result<Document, rusqlite::Erro
         license: row.get(5)?,
         attribution: row.get(6)?,
         word_count: row.get(7)?,
-        imported_at: parse_datetime(&imported_at).map_err(to_sql_conversion_error(8))?,
+        source_language: row.get(8)?,
+        imported_at: parse_datetime(&imported_at).map_err(to_sql_conversion_error(9))?,
         last_opened_at: last_opened_at
             .as_deref()
             .map(parse_datetime)
             .transpose()
-            .map_err(to_sql_conversion_error(9))?,
-        progress: row.get(10)?,
+            .map_err(to_sql_conversion_error(10))?,
+        progress: row.get(11)?,
     })
 }
 
@@ -371,9 +467,135 @@ fn to_sql_conversion_error(column: usize) -> impl FnOnce(AppError) -> rusqlite::
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::Connection;
+
     use crate::content::document::{DocumentBuilder, SectionBuilder};
     use crate::db::connection::temporary_pool;
+    use crate::db::migrations::apply_migrations;
     use crate::db::models::{PlaybackState, SourceType};
+
+    fn seed_section_with_two_sentences() -> Connection {
+        let mut conn = Connection::open_in_memory().expect("open an in-memory database");
+        apply_migrations(&mut conn).expect("apply migrations");
+        conn.execute_batch(
+            "INSERT INTO documents
+                 (id, title, source_type, source_metadata, word_count, source_language, imported_at)
+             VALUES ('doc-1', 'A Book', 'pasted', '{}', 4, 'en', '2026-08-24T00:00:00Z');
+             INSERT INTO sections (id, document_id, ordinal, title, word_count)
+             VALUES ('sec-1', 'doc-1', 0, 'One', 4);
+             INSERT INTO paragraphs (id, section_id, ordinal, text, sentence_offsets)
+             VALUES (
+                 'p1',
+                 'sec-1',
+                 0,
+                 'First sentence. Second sentence.',
+                 '[[0,15],[16,32]]'
+             );",
+        )
+        .expect("seed a section with two sentences");
+        conn
+    }
+
+    #[test]
+    fn a_translated_sentence_is_spoken_and_an_untranslated_one_falls_back() {
+        let conn = seed_section_with_two_sentences();
+        conn.execute(
+            "INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Primera frase.', 'passed')",
+            [],
+        )
+        .unwrap();
+
+        let paragraphs = super::list_paragraphs(&conn, "sec-1", Some("es")).unwrap();
+        let speech = &paragraphs[0].sentence_speech;
+
+        assert_eq!(speech[0], "Primera frase.");
+        assert_eq!(
+            speech[1], "Second sentence.",
+            "no row means the original, not silence"
+        );
+    }
+
+    #[test]
+    fn a_rejected_translation_is_never_spoken() {
+        let conn = seed_section_with_two_sentences();
+        conn.execute(
+            "INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Basura.', 'rejected')",
+            [],
+        )
+        .unwrap();
+
+        let paragraphs = super::list_paragraphs(&conn, "sec-1", Some("es")).unwrap();
+        assert_eq!(paragraphs[0].sentence_speech[0], "First sentence.");
+    }
+
+    #[test]
+    fn there_is_always_one_speech_form_per_offset() {
+        // Highlighting, the resume cursor, progress and chapter export all index
+        // on this equality. A short list breaks all four at once, far from here.
+        let conn = seed_section_with_two_sentences();
+        for target in [None, Some("es"), Some("fr")] {
+            let paragraphs = super::list_paragraphs(&conn, "sec-1", target).unwrap();
+            for paragraph in paragraphs {
+                assert_eq!(
+                    paragraph.sentence_offsets.len(),
+                    paragraph.sentence_speech.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_translated_math_token_is_still_normalized_before_it_is_spoken() {
+        // The translated branch must pass through `normalize_for_tts` too, or a
+        // restored `[[mathml:...]]` reaches the speech engine undecoded.
+        let conn = seed_section_with_two_sentences();
+        conn.execute(
+            "INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Resuelve [[latex:eA==]].', 'passed')",
+            [],
+        )
+        .unwrap();
+
+        let paragraphs = super::list_paragraphs(&conn, "sec-1", Some("es")).unwrap();
+        assert!(!paragraphs[0].sentence_speech[0].contains("[[latex:"));
+    }
+
+    #[test]
+    fn correcting_the_source_language_invalidates_translations_from_the_old_source() {
+        let mut conn = seed_section_with_two_sentences();
+        conn.execute_batch(
+            "INSERT INTO sentence_translations
+                 (paragraph_id, sentence_index, target_lang, text, qa_status)
+             VALUES ('p1', 0, 'es', 'Primera frase.', 'passed');
+             INSERT INTO section_translations
+                 (section_id, target_lang, source_lang, status, model_id, updated_at)
+             VALUES ('sec-1', 'es', 'en', 'complete', 'model-v1', '2026-08-24T00:00:00Z');",
+        )
+        .unwrap();
+
+        super::set_document_source_language(&mut conn, "doc-1", " FR ").unwrap();
+
+        assert_eq!(
+            super::get_document(&conn, "doc-1").unwrap().source_language,
+            "fr"
+        );
+        let sentence_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sentence_translations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let section_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM section_translations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!((sentence_rows, section_rows), (0, 0));
+    }
 
     /// Every Source must survive a persist-and-list round trip.
     ///
@@ -397,10 +619,11 @@ mod tests {
             let (_dir, pool) = temporary_pool();
             let mut conn = pool.get().expect("a connection should be available");
 
-            DocumentBuilder {
+            let document_id = DocumentBuilder {
                 title: "A Book".to_string(),
                 source_type,
                 source_metadata: serde_json::json!({}),
+                source_language: "es".to_string(),
                 cover_image_path: None,
                 license: None,
                 attribution: None,
@@ -409,11 +632,20 @@ mod tests {
             .persist(&mut conn)
             .expect("the document should persist");
 
+            let source_language: String = conn
+                .query_row(
+                    "SELECT source_language FROM documents WHERE id = ?1",
+                    [&document_id],
+                    |row| row.get(0),
+                )
+                .expect("the source language should persist");
+
             let documents = super::list_documents(&conn)
                 .unwrap_or_else(|error| panic!("{source_type:?} should list back: {error}"));
 
             assert_eq!(documents.len(), 1);
             assert_eq!(documents[0].source_type, source_type);
+            assert_eq!(source_language, "es");
         }
     }
 
@@ -430,6 +662,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Libretexts,
             source_metadata: serde_json::json!({"book_id": "bio-15711"}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,
@@ -475,6 +708,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Openstax,
             source_metadata: serde_json::json!({}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,
@@ -491,7 +725,7 @@ mod tests {
 
         let sections = super::list_sections(&conn, &document_id).expect("sections should list");
         let paragraphs =
-            super::list_paragraphs(&conn, &sections[1].id).expect("paragraphs should list");
+            super::list_paragraphs(&conn, &sections[1].id, None).expect("paragraphs should list");
 
         let cursor = PlaybackState {
             document_id: document_id.clone(),
@@ -531,6 +765,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Openstax,
             source_metadata: serde_json::json!({}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,
@@ -562,6 +797,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Openstax,
             source_metadata: serde_json::json!({}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,
@@ -578,7 +814,7 @@ mod tests {
 
         let sections = super::list_sections(&conn, &document_id).expect("sections should list");
         let paragraphs =
-            super::list_paragraphs(&conn, &sections[1].id).expect("paragraphs should list");
+            super::list_paragraphs(&conn, &sections[1].id, None).expect("paragraphs should list");
 
         super::save_playback_state(
             &conn,
@@ -617,6 +853,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Openstax,
             source_metadata: serde_json::json!({}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,

@@ -16,6 +16,7 @@ function doc(
     license: null,
     attribution: null,
     wordCount: 1,
+    sourceLanguage: "en",
     importedAt: "2026-08-13T00:00:00Z",
     lastOpenedAt: null,
     progress: 0,

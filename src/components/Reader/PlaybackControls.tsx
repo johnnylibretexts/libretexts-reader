@@ -10,11 +10,15 @@ import type { ReactNode } from "react";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
 import { SPEECH_ENGINE_BILLS } from "../../lib/speech";
+import { useTranslationStore } from "../../stores/translation";
 
 export function PlaybackControls() {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const isBuffering = usePlayerStore((state) => state.isBuffering);
   const modelDownload = usePlayerStore((state) => state.modelDownload);
+  const translationRunning = useTranslationStore(
+    (state) => state.sectionState.status === "running",
+  );
   const engineBills =
     SPEECH_ENGINE_BILLS[useSettingsStore((state) => state.ttsProvider)];
   /**
@@ -29,7 +33,8 @@ export function PlaybackControls() {
    *
    * Skips stay disabled either way -- there is no audio yet to skip through.
    */
-  const playDisabled = isBuffering && !modelDownload && !engineBills;
+  const playDisabled =
+    translationRunning || (isBuffering && !modelDownload && !engineBills);
   const play = usePlayerStore((state) => state.play);
   const pause = usePlayerStore((state) => state.pause);
   const skipBack = usePlayerStore((state) => state.skipBack);
@@ -44,14 +49,14 @@ export function PlaybackControls() {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <IconButton
-        disabled={isBuffering}
+        disabled={isBuffering || translationRunning}
         label="Previous paragraph"
         onClick={() => void skipParagraphBack()}
       >
         <SkipBack className="size-4" aria-hidden="true" />
       </IconButton>
       <IconButton
-        disabled={isBuffering}
+        disabled={isBuffering || translationRunning}
         label="Previous sentence"
         onClick={() => void skipBack()}
       >
@@ -73,14 +78,14 @@ export function PlaybackControls() {
         {isPlaying ? "Pause" : "Play"}
       </button>
       <IconButton
-        disabled={isBuffering}
+        disabled={isBuffering || translationRunning}
         label="Next sentence"
         onClick={() => void skipForward()}
       >
         <StepForward className="size-4" aria-hidden="true" />
       </IconButton>
       <IconButton
-        disabled={isBuffering}
+        disabled={isBuffering || translationRunning}
         label="Next paragraph"
         onClick={() => void skipParagraphForward()}
       >

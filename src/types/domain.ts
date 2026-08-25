@@ -13,7 +13,7 @@ export type TtsProvider = "supertonic" | "fish";
 export type SourceType = "openstax" | "libretexts" | "pressbooks" | "epub" | "pdf" | "pasted" | "url";
 
 /** `progress` is how far the resume cursor sits into the book, 0 to 1. Derived on read from `playback_state`, never stored -- the cursor is the one thing that decides where playback resumes. Zero for a book never opened. */
-export type Document = { id: string, title: string, sourceType: SourceType, sourceMetadata: JsonValue, coverImagePath: string | null, license: string | null, attribution: string | null, wordCount: number, importedAt: string, lastOpenedAt: string | null, progress: number, };
+export type Document = { id: string, title: string, sourceType: SourceType, sourceMetadata: JsonValue, coverImagePath: string | null, license: string | null, attribution: string | null, wordCount: number, sourceLanguage: string, importedAt: string, lastOpenedAt: string | null, progress: number, };
 
 export type Section = { id: string, documentId: string, ordinal: number, title: string, wordCount: number, };
 
@@ -49,6 +49,33 @@ export type LibreTextsLibrary = { subdomain: string, title: string, };
 export type ImportStage = "fetching" | "parsing" | "tokenizing" | "storing" | "complete" | "failed";
 
 export type ImportProgress = { documentId: string, stage: ImportStage, current: number, total: number, message: string | null, };
+
+export type TranslationModelStatus = {
+  downloaded: boolean;
+  downloadedBytes: number;
+  totalBytes: number;
+  verified: boolean;
+  missingFiles?: string[];
+  sourceLang?: string;
+  targetLang?: string;
+};
+
+export type TranslationProgress = { sectionId: string, done: number, total: number, };
+
+export type TranslationModelDownloadProgress = {
+  sourceLang: string;
+  targetLang: string;
+  pair: string;
+  file: string;
+  downloaded: number;
+  total: number;
+};
+
+export type TranslateSectionResult =
+  | { status: "original", sourceLang: string, sentenceCount: number }
+  | { status: "needsDownload", sourceLang: string, targetLang: string, modelStatus: TranslationModelStatus }
+  | { status: "complete", sourceLang: string, targetLang: string, fallbackCount: number, sentenceCount: number }
+  | { status: "cancelled", sourceLang: string, targetLang: string, done: number, total: number, fallbackCount: number, sentenceCount: number };
 
 /** Mirrors `AppError::kind` in `src-tauri/src/error.rs`. Kept in sync by `scripts/ci/check-error-kinds.sh`. */
 export type AppErrorKind = "database" | "pool" | "io" | "serde" | "http" | "readability" | "epub" | "pdf" | "openstax" | "libretexts" | "pressbooks" | "model" | "voice" | "auth" | "tts" | "drm_protected" | "tauri" | "invalid_input" | "cancelled" | "migration" | "payment_required" | "rate_limited";

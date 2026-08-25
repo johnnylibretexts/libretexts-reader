@@ -11,12 +11,13 @@ changing a dependency, and commit the result.
 The bundled native components (PDFium, and the `id3` and `mp4ameta` crates)
 carry their own full notices as separate files in this directory.
 
-The Supertonic voice model is **not** covered here: it is downloaded on the
-reader's own machine rather than distributed with the app, and its terms are
-recorded in `supertonic-model.md`.
+The Supertonic voice model and M2M100 translation model are **not** covered
+here: they are downloaded on the reader's own machine rather than distributed
+with the app, and their terms are recorded in `supertonic-model.md` and
+`translation-models.md`.
 
-<!-- cargo-lock-sha256: 9379c028ea2701421ce730d852c517668199ab22129a9da82d2e02c5d1df7d4c -->
-<!-- npm-lock-sha256: 2b2d2cfb730c856d5c04f1fcf224a56fb16c635a1b4b988072195ca70207be1e -->
+<!-- cargo-lock-sha256: 001af5abd5c8542582373dfeac855c05ad860686aa025ff1a1d6f0668276bdbf -->
+<!-- npm-lock-sha256: 37e574a196f74be1ff64f0cf33ac9bc40ab5d07f3b5ee7713431cd32eeae4bdc -->
 
 ## Rust dependencies
 
@@ -26,8 +27,8 @@ ships.
 
 ### Summary
 
-- **Apache-2.0** — 267 components
-- **MIT** — 92 components
+- **Apache-2.0** — 271 components
+- **MIT** — 98 components
 - **ISC** — 21 components
 - **Unicode-3.0** — 19 components
 - **BSD-3-Clause** — 7 components
@@ -77,6 +78,7 @@ ships.
 - toml_datetime 1.1.1+spec-1.1.0 — Apache-2.0 — https://github.com/toml-rs/toml
 - toml_parser 1.1.2+spec-1.1.0 — Apache-2.0 — https://github.com/toml-rs/toml
 - toml_writer 1.1.1+spec-1.1.0 — Apache-2.0 — https://github.com/toml-rs/toml
+- sentencepiece-rs 0.2.2 — Apache-2.0 — https://github.com/Rayato159/sentencepiece-rs
 - jsonptr 0.6.3 — Apache-2.0 — https://github.com/chanced/jsonptr
 - futures-channel 0.3.32 — Apache-2.0 — https://github.com/rust-lang/futures-rs
 - futures-core 0.3.32 — Apache-2.0 — https://github.com/rust-lang/futures-rs
@@ -226,9 +228,11 @@ ships.
 - ctor 0.8.0 — Apache-2.0 — https://github.com/mmastrac/rust-ctor
 - bytemuck 1.25.0 — Apache-2.0 — https://github.com/Lokathor/bytemuck
 - httpdate 1.0.3 — Apache-2.0 — https://github.com/pyfisch/httpdate
-- libretexts-reader 0.1.0-beta.2 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
+- libretexts-reader 0.1.0-beta.3 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
 - anyhow 1.0.102 — Apache-2.0 — https://github.com/dtolnay/anyhow
 - async-trait 0.1.92 — Apache-2.0 — https://github.com/dtolnay/async-trait
+- cxx 1.0.199 — Apache-2.0 — https://github.com/dtolnay/cxx
+- cxxbridge-macro 1.0.199 — Apache-2.0 — https://github.com/dtolnay/cxx
 - dirs-sys 0.5.0 — Apache-2.0 — https://github.com/dirs-dev/dirs-sys-rs
 - dirs 6.0.0 — Apache-2.0 — https://github.com/soc/dirs-rs
 - dispatch2 0.3.1 — Apache-2.0 — https://github.com/madsmtm/objc2
@@ -242,6 +246,7 @@ ships.
 - image 0.25.10 — Apache-2.0 — https://github.com/image-rs/image
 - itoa 1.0.18 — Apache-2.0 — https://github.com/dtolnay/itoa
 - libc 0.2.186 — Apache-2.0 — https://github.com/rust-lang/libc
+- link-cplusplus 1.0.12 — Apache-2.0 — https://github.com/dtolnay/link-cplusplus
 - mac 0.1.1 — Apache-2.0 — https://github.com/reem/rust-mac.git
 - miniz_oxide 0.8.9 — Apache-2.0 — https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 - mp4ameta_proc 0.6.0 — Apache-2.0 — https://github.com/Saecki/rust-mp4ameta
@@ -333,9 +338,13 @@ ships.
 - ego-tree 0.6.3 — ISC — https://github.com/rust-scraper/ego-tree
 - scraper 0.20.0 — ISC — https://github.com/causal-agent/scraper
 - rustls-webpki 0.103.13 — ISC — https://github.com/rustls/webpki
+- ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
+- ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
 - schemars_derive 0.8.22 — MIT — https://github.com/GREsau/schemars
 - brotli 8.0.2 — MIT — https://github.com/dropbox/rust-brotli
+- ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
 - mio 1.2.0 — MIT — https://github.com/tokio-rs/mio
+- ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
 - hyper 0.14.32 — MIT — https://github.com/hyperium/hyper
 - libsqlite3-sys 0.30.1 — MIT — https://github.com/rusqlite/rusqlite
 - rusqlite 0.32.1 — MIT — https://github.com/rusqlite/rusqlite
@@ -372,6 +381,7 @@ ships.
 - darling_core 0.23.0 — MIT — https://github.com/TedDriggs/darling
 - darling_macro 0.23.0 — MIT — https://github.com/TedDriggs/darling
 - ico 0.5.0 — MIT — https://github.com/mdsteele/rust-ico
+- ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
 - infer 0.19.0 — MIT — https://github.com/bojand/infer
 - schemars 0.8.22 — MIT — https://github.com/GREsau/schemars
 - schemars_derive 0.8.22 — MIT — https://github.com/GREsau/schemars
@@ -423,6 +433,7 @@ ships.
 - open 5.3.4 — MIT — https://github.com/Byron/open-rs
 - nu-ansi-term 0.50.3 — MIT — https://github.com/nushell/nu-ansi-term
 - generic-array 0.14.7 — MIT — https://github.com/fizyk20/generic-array.git
+- ct2rs 0.10.0 — MIT — https://github.com/jkawamoto/ctranslate2-rs
 - quick-xml 0.38.4 — MIT — https://github.com/tafia/quick-xml
 - quick-xml 0.41.0 — MIT — https://github.com/tafia/quick-xml
 - dtoa-short 0.3.5 — MPL-2.0 — https://github.com/upsuper/dtoa-short
@@ -667,59 +678,28 @@ ships.
 #### MIT License (MIT)
 
 ```text
-#![allow(clippy::all)]
-// Copied from regex_syntax crate to avoid pulling in the whole crate just for a utility function
-// https://github.com/rust-lang/regex/blob/431c4e4867e1eb33eb39b23ed47c9934b2672f8f/regex-syntax/src/lib.rs
-//
-// Copyright (c) 2014 The Rust Project Developers
-//
-// Permission is hereby granted, free of charge, to any
-// person obtaining a copy of this software and associated
-// documentation files (the "Software"), to deal in the
-// Software without restriction, including without
-// limitation the rights to use, copy, modify, merge,
-// publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software
-// is furnished to do so, subject to the following
-// conditions:
-//
-// The above copyright notice and this permission notice
-// shall be included in all copies or substantial portions
-// of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-// ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-// TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-// PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-// SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-// CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-// IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS IN THE SOFTWARE.
+# Copyright (c) 2014 Jarryd Beck
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 
-pub fn escape(text: &str) -> String {
-    let mut quoted = String::new();
-    escape_into(text, &mut quoted);
-    quoted
-}
-
-fn escape_into(text: &str, buf: &mut String) {
-    buf.reserve(text.len());
-    for c in text.chars() {
-        if is_meta_character(c) {
-            buf.push('\\');
-        }
-        buf.push(c);
-    }
-}
-
-fn is_meta_character(c: char) -> bool {
-    match c {
-        '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
-        | '#' | '&' | '-' | '~' => true,
-        _ => false,
-    }
-}
+add_executable(example example.cpp)
+target_link_libraries(example cxxopts)
 
 ```
 

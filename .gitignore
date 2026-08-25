@@ -15,3 +15,8 @@ output/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Superpowers brainstorming artefacts: design specs and implementation
+# plans. Working documents, deliberately local -- not published.
+docs/superpowers/plans/
+docs/superpowers/specs/

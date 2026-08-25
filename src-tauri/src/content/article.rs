@@ -8,6 +8,7 @@ use reqwest::Url;
 use serde_json::json;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
+use crate::content::language::detect_source_language;
 use crate::content::split_paragraphs;
 use crate::db::models::SourceType;
 use crate::error::{AppError, AppResult};
@@ -41,6 +42,7 @@ pub async fn import_from_url(url: &str) -> AppResult<DocumentBuilder> {
             "url": parsed_url.as_str(),
             "fetched_at": Utc::now().to_rfc3339()
         }),
+        source_language: detect_source_language(None, ""),
         cover_image_path: None,
         license: Some("Unknown - see source URL".to_string()),
         attribution: Some(parsed_url.as_str().to_string()),

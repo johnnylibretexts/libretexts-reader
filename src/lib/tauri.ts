@@ -123,12 +123,20 @@ export const api = {
     invokeDesktop<Domain.Document>("get_document", { id }),
   listSections: (documentId: string) =>
     invokeDesktop<Domain.Section[]>("list_sections", { documentId }),
-  listParagraphs: (sectionId: string) =>
-    invokeDesktop<Domain.Paragraph[]>("list_paragraphs", { sectionId }),
+  listParagraphs: (sectionId: string, targetLang: string | null = null) =>
+    invokeDesktop<Domain.Paragraph[]>("list_paragraphs", {
+      sectionId,
+      targetLang,
+    }),
   listSectionImages: (sectionId: string) =>
     invokeDesktop<Domain.SectionImage[]>("list_section_images", { sectionId }),
   deleteDocument: (id: string) =>
     invokeDesktop<void>("delete_document", { id }),
+  setDocumentSourceLanguage: (documentId: string, sourceLanguage: string) =>
+    invokeDesktop<void>("set_document_source_language", {
+      documentId,
+      sourceLanguage,
+    }),
   searchDocuments: (query: string) =>
     invokeWithBrowserFallback<Domain.Document[]>([], "search_documents", {
       query,
@@ -246,6 +254,32 @@ export const api = {
     invokeDesktop<FishKeyStatus>("set_fish_api_key", { key }),
   clearFishApiKey: () => invokeDesktop<void>("clear_fish_api_key"),
   listFishVoices: () => invokeDesktop<SpeechVoice[]>("list_fish_voices"),
+
+  translateSection: (sectionId: string) =>
+    invokeDesktop<Domain.TranslateSectionResult>("translate_section", {
+      sectionId,
+    }),
+  cancelSectionTranslation: () =>
+    invokeDesktop<void>("cancel_section_translation"),
+  getTranslationModelStatus: (sourceLang: string, targetLang: string) =>
+    invokeDesktop<Domain.TranslationModelStatus>(
+      "get_translation_model_status",
+      { sourceLang, targetLang },
+    ),
+  ensureTranslationModelsDownloaded: (
+    sourceLang: string,
+    targetLang: string,
+  ) =>
+    invokeDesktop<string>("ensure_translation_models_downloaded", {
+      sourceLang,
+      targetLang,
+    }),
+  cancelTranslationModelDownload: () =>
+    invokeDesktop<void>("cancel_translation_model_download"),
+  listTranslationTargets: (sourceLang = "en") =>
+    invokeWithBrowserFallback<string[]>([], "list_translation_targets", {
+      sourceLang,
+    }),
 
   getSetting: <T = unknown>(key: string) =>
     invokeWithBrowserFallback<T | null>(null, "get_setting", { key }),

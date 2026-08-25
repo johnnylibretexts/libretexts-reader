@@ -1,7 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { BookOpen, Loader2 } from "lucide-react";
 import { usePlayerStore } from "../../stores/player";
+import { useTranslationStore } from "../../stores/translation";
+import { SUPERTONIC_LANGUAGES } from "../../lib/supertonic";
 import { SupertonicChapterExport } from "./SupertonicChapterExport";
 import { ParagraphView } from "./ParagraphView";
 import { ReaderHeader } from "./ReaderHeader";
@@ -18,12 +20,41 @@ export function Reader({ documentId }: ReaderProps) {
   const loading = usePlayerStore((state) => state.loading);
   const error = usePlayerStore((state) => state.error);
   const loadDocument = usePlayerStore((state) => state.loadDocument);
+  const setDocumentSourceLanguage = usePlayerStore(
+    (state) => state.setDocumentSourceLanguage,
+  );
+  const translation = useTranslationStore((state) => state.sectionState);
+  const cancelTranslation = useTranslationStore((state) => state.cancel);
+  const [sourceLanguageSaving, setSourceLanguageSaving] = useState(false);
+  const currentSectionId = usePlayerStore(
+    (state) => state.sections[state.currentSectionIndex]?.id ?? null,
+  );
+  const previousSectionId = useRef(currentSectionId);
 
   useEffect(() => {
     if (documentId && document?.id !== documentId) {
       void loadDocument(documentId);
     }
   }, [document?.id, documentId, loadDocument]);
+
+  // Translation status describes one chapter. Keep the initial value on mount
+  // (component tests and a route return both depend on it), but never carry a
+  // completed chapter's fallback warning onto the next section.
+  useEffect(() => {
+    if (previousSectionId.current !== currentSectionId) {
+      previousSectionId.current = currentSectionId;
+      useTranslationStore.setState({
+        sectionState: {
+          status: "idle",
+          done: 0,
+          total: 0,
+          fallbackCount: 0,
+          sentenceCount: 0,
+          error: null,
+        },
+      });
+    }
+  }, [currentSectionId]);
 
   if (!documentId) {
     return (
@@ -60,6 +91,79 @@ export function Reader({ documentId }: ReaderProps) {
 
       {!loading && document ? (
         <>
+          <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+            <label className="flex min-w-48 flex-col gap-1 text-sm font-medium">
+              Written in
+              <select
+                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-950"
+                disabled={sourceLanguageSaving || translation.status === "running"}
+                onChange={(event) => {
+                  setSourceLanguageSaving(true);
+                  void setDocumentSourceLanguage(event.target.value).finally(
+                    () => setSourceLanguageSaving(false),
+                  );
+                }}
+                value={document.sourceLanguage}
+              >
+                {SUPERTONIC_LANGUAGES.some(
+                  (language) => language.id === document.sourceLanguage,
+                ) ? null : (
+                  <option value={document.sourceLanguage}>
+                    {languageName(document.sourceLanguage)}
+                  </option>
+                )}
+                {SUPERTONIC_LANGUAGES.map((language) => (
+                  <option key={language.id} value={language.id}>
+                    {language.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="max-w-2xl text-xs leading-5 text-neutral-500 dark:text-neutral-400">
+              This identifies the book&apos;s original language. The page stays
+              in this language even when spoken narration is translated.
+            </p>
+          </div>
+
+          {translation.status === "running" ? (
+            <div className="rounded-md border border-brand-200 bg-brand-50 px-4 py-3 text-sm dark:border-brand-950 dark:bg-brand-950/30">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  Translating chapter: {translation.done} of {translation.total}
+                  {" sentences"}
+                </span>
+                <button
+                  className="rounded-md border border-brand-300 px-3 py-1.5 text-sm font-medium hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-brand-800 dark:hover:bg-brand-950"
+                  onClick={() => void cancelTranslation()}
+                  type="button"
+                >
+                  Cancel
+                </button>
+              </div>
+              <progress
+                aria-label="Chapter translation progress"
+                className="mt-3 h-2 w-full"
+                max={Math.max(translation.total, 1)}
+                value={translation.done}
+              />
+            </div>
+          ) : null}
+
+          {translation.status === "complete" &&
+          translation.fallbackCount > 0 ? (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-300">
+              {translation.fallbackCount} of {translation.sentenceCount} sentences
+              are read in {languageName(document.sourceLanguage)} — translation
+              check failed.
+            </p>
+          ) : null}
+
+          {translation.status === "failed" && translation.error ? (
+            <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">
+              {translation.error}
+            </p>
+          ) : null}
+
           <SupertonicChapterExport />
           <div className="space-y-5 pb-24 font-reader">
             <SectionImages
@@ -83,6 +187,13 @@ export function Reader({ documentId }: ReaderProps) {
         </>
       ) : null}
     </section>
+  );
+}
+
+function languageName(code: string) {
+  return (
+    SUPERTONIC_LANGUAGES.find((language) => language.id === code)?.name ??
+    code.toUpperCase()
   );
 }
 

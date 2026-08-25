@@ -14,6 +14,7 @@ pub struct Document {
     pub license: Option<String>,
     pub attribution: Option<String>,
     pub word_count: u32,
+    pub source_language: String,
     pub imported_at: DateTime<Utc>,
     pub last_opened_at: Option<DateTime<Utc>>,
     /// How far into the book the resume cursor sits, from 0.0 to 1.0.
@@ -62,6 +63,16 @@ pub struct Paragraph {
     /// order: the same sentence with notation written out in words. Derived on
     /// read rather than stored, so no import is ever stale.
     pub sentence_speech: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SentenceTranslation {
+    pub paragraph_id: String,
+    pub sentence_index: i64,
+    pub target_lang: String,
+    pub text: String,
+    pub qa_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

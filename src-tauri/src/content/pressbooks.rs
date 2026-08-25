@@ -24,6 +24,7 @@ use serde_json::json;
 use crate::content::document::{DocumentBuilder, SectionBuilder};
 use crate::content::html_section::{section_content_from_html, SectionSource};
 use crate::content::images::{download_cover, download_images};
+use crate::content::language::{declared_html_language, detect_source_language};
 use crate::content::remote;
 use crate::db::connection::DbPool;
 use crate::db::models::{PressbooksBook, PressbooksCatalog, PressbooksCatalogListing, SourceType};
@@ -162,6 +163,8 @@ struct ApiBookMetadata {
     license: Option<ApiLicense>,
     #[serde(default)]
     network: Option<ApiNetwork>,
+    #[serde(default)]
+    in_language: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1057,6 +1060,12 @@ where
     let total = entries.len() as u32;
     on_progress(0, total)?;
     let pages = client.fetch_content(book_url, &entries).await?;
+    let declared_language = metadata.in_language.clone().or_else(|| {
+        pages
+            .iter()
+            .find_map(|page| declared_html_language(&page.html))
+    });
+    let source_language = detect_source_language(declared_language.as_deref(), "");
 
     let mut sections = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
@@ -1116,6 +1125,7 @@ where
             "book_url": book_url,
             "imported_at": Utc::now().to_rfc3339(),
         }),
+        source_language,
         cover_image_path,
         license: clean(Some(license.name)),
         attribution: clean(Some(authors)),

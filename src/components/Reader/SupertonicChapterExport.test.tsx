@@ -9,6 +9,8 @@ const estimateSupertonicChapter = vi.fn();
 const exportSupertonicChapterMp3 = vi.fn();
 const getFishCredit = vi.fn();
 const previewSupertonicTts = vi.fn();
+const translateSection = vi.fn();
+const listParagraphs = vi.fn();
 const setSetting = vi.fn(async (_key: string, _value: unknown) => undefined);
 
 vi.mock("../../lib/tauri", () => ({
@@ -25,14 +27,23 @@ vi.mock("../../lib/tauri", () => ({
     get previewSupertonicTts() {
       return previewSupertonicTts;
     },
+    get translateSection() {
+      return translateSection;
+    },
+    get listParagraphs() {
+      return listParagraphs;
+    },
+    cancelSectionTranslation: vi.fn(async () => undefined),
     setSetting: (key: string, value: unknown) => setSetting(key, value),
   },
+  isTauriRuntime: () => false,
 }));
 
 const { SupertonicChapterExport } = await import("./SupertonicChapterExport");
 const { usePlayerStore } = await import("../../stores/player");
 const { useSettingsStore } = await import("../../stores/settings");
 const { useChapterExportStore } = await import("../../stores/chapterExport");
+const { useTranslationStore } = await import("../../stores/translation");
 
 const DOCUMENT: Domain.Document = {
   id: "doc-1",
@@ -43,6 +54,7 @@ const DOCUMENT: Domain.Document = {
   license: null,
   attribution: null,
   wordCount: 8,
+  sourceLanguage: "en",
   importedAt: "2026-01-01T00:00:00Z",
   lastOpenedAt: null,
   progress: 0,
@@ -115,8 +127,27 @@ describe("SupertonicChapterExport", () => {
       fishVoiceId: null,
       supertonicVoiceStyle: "M1",
       supertonicLanguage: "en",
+      translationTargetLang: null,
     });
     getFishCredit.mockResolvedValue(12.5);
+    translateSection.mockResolvedValue({
+      status: "complete",
+      sourceLang: "en",
+      targetLang: "es",
+      fallbackCount: 0,
+      sentenceCount: 1,
+    });
+    listParagraphs.mockResolvedValue(PARAGRAPHS);
+    useTranslationStore.setState({
+      sectionState: {
+        status: "idle",
+        done: 0,
+        total: 0,
+        fallbackCount: 0,
+        sentenceCount: 0,
+        error: null,
+      },
+    });
     exportSupertonicChapterMp3.mockResolvedValue({
       outputPath: "/tmp/Chapter One.mp3",
       cached: false,
@@ -205,18 +236,49 @@ describe("SupertonicChapterExport", () => {
     expect(await screen.findByLabelText("Voice")).toHaveValue("F3");
   });
 
-  it("remembers its export language across a trip out of the Reader", async () => {
-    // Its own flag, not one shared with Voice: a single "chosen" flag would
-    // freeze Language on whatever it held the moment Voice was touched.
-    estimateSupertonicChapter.mockResolvedValue(estimate());
-    const user = userEvent.setup();
-    const reader = render(<SupertonicChapterExport />);
-
-    await user.selectOptions(await screen.findByLabelText("Language"), "ko");
-    reader.unmount();
+  it("uses the saved translation target with no second language control", async () => {
+    useSettingsStore.setState({ translationTargetLang: "es" });
+    estimateSupertonicChapter.mockResolvedValue(
+      estimate({
+        outputPath: "/tmp/001 - Chapter One - Supertonic - M1 - es.m4a",
+      }),
+    );
     render(<SupertonicChapterExport />);
 
-    expect(await screen.findByLabelText("Language")).toHaveValue("ko");
+    expect(estimateSupertonicChapter).not.toHaveBeenCalled();
+    expect(
+      screen.queryByLabelText("Pronunciation language"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /M4A/ }));
+    await waitFor(() => expect(translateSection).toHaveBeenCalledWith("sec-1"));
+    await waitFor(() => expect(estimateSupertonicChapter).toHaveBeenCalled());
+    const lastEstimateCall =
+      estimateSupertonicChapter.mock.calls[
+        estimateSupertonicChapter.mock.calls.length - 1
+      ];
+    expect(lastEstimateCall[0]).toMatchObject({ language: "es" });
+    await waitFor(() => expect(exportSupertonicChapterMp3).toHaveBeenCalled());
+    expect(exportSupertonicChapterMp3.mock.calls[0][0]).toMatchObject({
+      language: "es",
+    });
+  });
+
+  it("uses the book source language when Read aloud is Original", async () => {
+    usePlayerStore.setState({
+      document: { ...DOCUMENT, sourceLanguage: "fr" },
+    });
+    useSettingsStore.setState({
+      translationTargetLang: null,
+      supertonicLanguage: "es",
+    });
+    estimateSupertonicChapter.mockResolvedValue(estimate());
+
+    render(<SupertonicChapterExport />);
+
+    await waitFor(() => expect(estimateSupertonicChapter).toHaveBeenCalled());
+    expect(estimateSupertonicChapter.mock.calls[0][0]).toMatchObject({
+      language: "fr",
+    });
   });
 
   it("never prices the chapter for the drafts a retry is replacing", async () => {

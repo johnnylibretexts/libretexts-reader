@@ -17,8 +17,9 @@ Two halves that talk over Tauri's `invoke` bridge:
 
 **Backend — `src-tauri/src/`** (Rust; crate `libretexts-reader`, lib `libretexts_reader_lib`)
 - `lib.rs` — Tauri builder: registers all `#[tauri::command]`s in `generate_handler!`, initializes the SQLite pool, and creates app-data subdirs on `setup`. **Adding a command = add the fn + register it here + add a wrapper in `src/lib/tauri.ts`.**
-- `commands/` — `content.rs` (imports + catalog listing), `library.rs`, `playback.rs`, `settings.rs`, `tts.rs`, `chapter_tts.rs`, `fish.rs` (key management, no getter).
+- `commands/` — `content.rs` (imports + catalog listing), `library.rs`, `playback.rs`, `settings.rs`, `tts.rs`, `chapter_tts.rs`, `fish.rs` (key management, no getter), `translate.rs`.
 - `content/` — importers/normalizers: `openstax.rs`, `libretexts.rs`, `epub.rs`, `pdf.rs` (PDFium), `article.rs` (readability), `images.rs` (download + persist figures), `normalize.rs`, `tokenize.rs`, `document.rs`.
+- `translate/` — CTranslate2/Opus-MT model catalogue, on-demand download, math-token masking, translation engine, and back-translation QA.
 - `db/` — `rusqlite` + `r2d2` pool (`connection.rs`), `migrations.rs` applies SQL files from `resources/migrations/`, `models.rs`, `library.rs`, `settings.rs`.
 - `secrets.rs` — `SecretStore` trait over the OS keychain (`keyring` crate), holding the one secret this app has: the Fish Audio API key.
 - `build.rs` — downloads/prepares the bundled **PDFium** assets on first build (needs network), and writes third-party licence notices to both `LICENSES/` and `src-tauri/resources/LICENSES/` (the second is the copy that ships); `paths.rs` resolves the app-data dir.
@@ -57,7 +58,7 @@ Pre-commit/verification gate: `npm run build`, `npm test`, `cargo test -p libret
 - **Components are testable — use it.** `@testing-library/react` + `/user-event` + `/jest-dom` are wired up, and `src/test/setup.ts` registers `afterEach(cleanup)` (required: Testing Library only auto-cleans under `globals: true`, which this project does not set). Test files are `*.test.tsx` beside the component. This arrived late, so most components still have no test and several pure helpers exist only because a component could not be tested — `exportGate.ts` is the clearest case. Prefer a real component test now; don't extract a helper *solely* for testability. **When adding a test for a fix that is already applied, revert the fix and watch the test fail before trusting it** — a test written after the fact passes immediately and proves nothing.
 - **Node 22.x is required** (last verified 22.20.0 / npm 10.9.3). See gotcha below.
 - Frontend↔Rust contract: keep `src/lib/tauri.ts` and the `generate_handler!` list in `lib.rs` in sync; mirror payload shapes in `src/types/domain.ts`.
-- DB: **add a new numbered migration** in `src-tauri/resources/migrations/`, numbered one past the highest file already there (currently `0011`, so the next free number is `0012`). The `MIGRATIONS` array in `src-tauri/src/db/migrations.rs` is hand-maintained and is the actual source of truth — check both it and the directory listing before picking a number, since a collision registers under the wrong name and silently applies out of order. Never mutate an already-applied migration file.
+- DB: **add a new numbered migration** in `src-tauri/resources/migrations/`, numbered one past the highest file already there (currently `0013`, so the next free number is `0014`). The `MIGRATIONS` array in `src-tauri/src/db/migrations.rs` is hand-maintained and is the actual source of truth — check both it and the directory listing before picking a number, since a collision registers under the wrong name and silently applies out of order. Never mutate an already-applied migration file.
 - Commits: Conventional-Commits-ish prefixes (`build:`, `deps:`, `license:`, `fix:`, `chore:`), imperative.
 
 ## Gotchas & Constraints

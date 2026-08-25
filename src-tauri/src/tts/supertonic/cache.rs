@@ -74,6 +74,7 @@ pub(crate) fn output_path_for_chapter(
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
+    target_lang: Option<&str>,
     request: &ChapterRequest,
 ) -> PathBuf {
     if let Some(output_path) = request
@@ -95,7 +96,7 @@ pub(crate) fn output_path_for_chapter(
         // file whose name said Supertonic had produced it.
         sanitize_file_component(provider_display_name(&request.provider), 16),
         voice_file_component(voice_style),
-        sanitize_file_component(language, 8),
+        sanitize_file_component(target_lang.unwrap_or(language), 8),
         export_extension(&request.provider)
     );
     directory.join(filename)
@@ -139,6 +140,7 @@ pub(crate) fn cache_path_in(
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
+    target_lang: Option<&str>,
 ) -> PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(TTS_CACHE_VERSION.as_bytes());
@@ -150,6 +152,10 @@ pub(crate) fn cache_path_in(
     hasher.update(material.document.id.as_bytes());
     hasher.update(material.section.id.as_bytes());
     hasher.update(material.text.as_bytes());
+    // Appended after every pre-translation field. Updating with an empty
+    // slice changes no hash bytes, so `None` preserves every existing cache
+    // key while each translated target gets its own audio.
+    hasher.update(target_lang.unwrap_or_default().as_bytes());
     let hash = hex::encode(hasher.finalize());
 
     cache_root
@@ -168,6 +174,7 @@ pub(crate) fn cache_path_for_chapter(
     material: &ChapterMaterial,
     voice_style: &str,
     language: &str,
+    target_lang: Option<&str>,
 ) -> AppResult<PathBuf> {
     Ok(cache_path_in(
         &paths::cache_dir()?,
@@ -176,6 +183,7 @@ pub(crate) fn cache_path_for_chapter(
         material,
         voice_style,
         language,
+        target_lang,
     ))
 }
 
@@ -252,6 +260,7 @@ mod tests {
                 license: None,
                 attribution: None,
                 word_count: 10,
+                source_language: "en".into(),
                 imported_at: Utc::now(),
                 last_opened_at: None,
                 progress: 0.0,
@@ -281,6 +290,7 @@ mod tests {
             &material("Vapor pressure rises with temperature."),
             "M1",
             "en",
+            None,
         );
 
         assert!(
@@ -318,9 +328,33 @@ mod tests {
         // from cache for a Fish request -- identical text, voice and language,
         // identical key -- and the user would silently get the wrong voice.
         let root = Path::new("/nonexistent/cache");
-        let supertonic = cache_path_in(root, "supertonic", "v1", &material("Hello."), "M1", "en");
-        let fish = cache_path_in(root, "fish", "s2.1-pro", &material("Hello."), "M1", "en");
-        let other_model = cache_path_in(root, "fish", "s2-pro", &material("Hello."), "M1", "en");
+        let supertonic = cache_path_in(
+            root,
+            "supertonic",
+            "v1",
+            &material("Hello."),
+            "M1",
+            "en",
+            None,
+        );
+        let fish = cache_path_in(
+            root,
+            "fish",
+            "s2.1-pro",
+            &material("Hello."),
+            "M1",
+            "en",
+            None,
+        );
+        let other_model = cache_path_in(
+            root,
+            "fish",
+            "s2-pro",
+            &material("Hello."),
+            "M1",
+            "en",
+            None,
+        );
 
         assert_ne!(supertonic, fish, "provider must change the path");
         assert_ne!(fish, other_model, "model must change the path");
@@ -329,8 +363,16 @@ mod tests {
         // `provider` is ever dropped from the hash. The provider-vs-model
         // comparison above varies both at once and so cannot catch it.
         assert_ne!(
-            cache_path_in(root, "supertonic", "v1", &material("Hello."), "M1", "en"),
-            cache_path_in(root, "fish", "v1", &material("Hello."), "M1", "en"),
+            cache_path_in(
+                root,
+                "supertonic",
+                "v1",
+                &material("Hello."),
+                "M1",
+                "en",
+                None,
+            ),
+            cache_path_in(root, "fish", "v1", &material("Hello."), "M1", "en", None,),
             "provider alone must change the path"
         );
     }
@@ -343,12 +385,27 @@ mod tests {
         // the app.
         let root = Path::new("/nonexistent/cache");
         let path = |text: &str, voice: &str, language: &str| {
-            cache_path_in(root, "supertonic", "v1", &material(text), voice, language)
+            cache_path_in(
+                root,
+                "supertonic",
+                "v1",
+                &material(text),
+                voice,
+                language,
+                None,
+            )
         };
 
         let same_a = path("Hello.", "M1", "en");
         let same_b = path("Hello.", "M1", "en");
         assert_eq!(same_a, same_b, "identical input must reuse the cached file");
+        assert_eq!(
+            same_a,
+            root.join(TTS_CACHE_DIR)
+                .join(TTS_CACHE_VERSION)
+                .join("9f951a07823dd8fdabd5590629a8cf5a3d50575b196bedbafb7d2c20bad8fa24.m4a"),
+            "an untranslated key must remain byte-identical across the target-language change"
+        );
 
         assert_ne!(
             same_a,
@@ -369,6 +426,25 @@ mod tests {
         assert!(
             !Path::new("/nonexistent").exists(),
             "deriving a cache path must not create directories"
+        );
+    }
+
+    #[test]
+    fn a_translated_export_does_not_reuse_the_untranslated_audio() {
+        // Same section, same voice, same speech-engine language, different
+        // translation target. One cache key for both would hand the reader
+        // yesterday's English export and report success.
+        let root = Path::new("/tmp/does-not-need-to-exist");
+        let chapter = material("The cell divides.");
+        let english = cache_path_in(root, "supertonic", "v1", &chapter, "M1", "en", None);
+        let spanish = cache_path_in(root, "supertonic", "v1", &chapter, "M1", "en", Some("es"));
+        let french = cache_path_in(root, "supertonic", "v1", &chapter, "M1", "en", Some("fr"));
+
+        assert_ne!(english, spanish);
+        assert_ne!(spanish, french);
+        assert_eq!(
+            english,
+            cache_path_in(root, "supertonic", "v1", &chapter, "M1", "en", None,)
         );
     }
 
@@ -401,6 +477,7 @@ mod tests {
             &material("Hello."),
             "d8ee9d1a-6f3e-4b8a",
             "en",
+            None,
             &request("fish"),
         );
         assert!(
@@ -415,9 +492,23 @@ mod tests {
             &material("Hello."),
             "M1",
             "en",
+            None,
             &request("supertonic"),
         );
         assert!(path_to_string(&supertonic).contains("Supertonic"));
+    }
+
+    #[test]
+    fn the_output_filename_names_the_translation_target_when_present() {
+        let chapter = material("Hello.");
+        let request = request("supertonic");
+        let original = output_path_for_chapter(&config(), &chapter, "M1", "en", None, &request);
+        let spanish =
+            output_path_for_chapter(&config(), &chapter, "M1", "en", Some("es"), &request);
+
+        assert!(path_to_string(&original).contains(" - en.m4a"));
+        assert!(path_to_string(&spanish).contains(" - es.m4a"));
+        assert_ne!(original, spanish);
     }
 
     #[test]
@@ -439,6 +530,7 @@ mod tests {
                 &material("Hello."),
                 first,
                 "en",
+                None,
                 &request("fish")
             ),
             output_path_for_chapter(
@@ -446,6 +538,7 @@ mod tests {
                 &material("Hello."),
                 second,
                 "en",
+                None,
                 &request("fish")
             ),
         );

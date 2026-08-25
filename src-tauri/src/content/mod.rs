@@ -4,6 +4,7 @@ pub mod document;
 pub mod epub;
 pub mod html_section;
 pub mod images;
+pub mod language;
 pub mod libretexts;
 pub mod normalize;
 pub mod openstax;
@@ -22,6 +23,7 @@ use crate::db::models::SourceType;
 use crate::error::{AppError, AppResult};
 
 use document::{DocumentBuilder, SectionBuilder};
+use language::detect_source_language;
 
 static PARAGRAPH_SPLIT_RE: OnceLock<Regex> = OnceLock::new();
 
@@ -40,6 +42,7 @@ pub fn import_pasted(title: &str, text: &str) -> AppResult<DocumentBuilder> {
         title: title.to_string(),
         source_type: SourceType::Pasted,
         source_metadata: json!({ "imported_at": Utc::now().to_rfc3339() }),
+        source_language: detect_source_language(None, text),
         cover_image_path: None,
         license: None,
         attribution: None,

@@ -10,6 +10,7 @@ pub struct DocumentBuilder {
     pub title: String,
     pub source_type: SourceType,
     pub source_metadata: Value,
+    pub source_language: String,
     pub cover_image_path: Option<String>,
     pub license: Option<String>,
     pub attribution: Option<String>,
@@ -63,9 +64,10 @@ impl DocumentBuilder {
         tx.execute(
             "INSERT INTO documents (
                 id, title, source_type, source_metadata, cover_image_path,
-                license, attribution, word_count, imported_at, last_opened_at
+                license, attribution, word_count, source_language, imported_at,
+                last_opened_at
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
             params![
                 document_id,
                 self.title,
@@ -75,6 +77,7 @@ impl DocumentBuilder {
                 self.license,
                 self.attribution,
                 document_word_count,
+                self.source_language,
                 imported_at,
             ],
         )?;

@@ -30,9 +30,10 @@ pub async fn list_sections(
 pub async fn list_paragraphs(
     state: State<'_, DbPool>,
     section_id: String,
+    target_lang: Option<String>,
 ) -> AppResult<Vec<Paragraph>> {
     let conn = state.get()?;
-    library::list_paragraphs(&conn, &section_id)
+    library::list_paragraphs(&conn, &section_id, target_lang.as_deref())
 }
 
 #[tauri::command]
@@ -48,6 +49,16 @@ pub async fn list_section_images(
 pub async fn delete_document(state: State<'_, DbPool>, id: String) -> AppResult<()> {
     let conn = state.get()?;
     library::delete_document(&conn, &id)
+}
+
+#[tauri::command]
+pub async fn set_document_source_language(
+    state: State<'_, DbPool>,
+    document_id: String,
+    source_language: String,
+) -> AppResult<()> {
+    let mut conn = state.get()?;
+    library::set_document_source_language(&mut conn, &document_id, &source_language)
 }
 
 #[tauri::command]

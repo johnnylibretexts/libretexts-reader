@@ -6,11 +6,14 @@ pub mod error;
 pub mod net;
 mod paths;
 pub mod secrets;
+mod translate;
 pub mod tts;
 
+use commands::translate::SectionTranslationCancel;
 use content::cancel::ImportCancel;
 use db::connection::init_pool;
 use tauri::Manager;
+use translate::model::TranslationDownload;
 use tts::supertonic::model::SupertonicDownload;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -54,6 +57,7 @@ pub fn run() {
             commands::library::list_paragraphs,
             commands::library::list_section_images,
             commands::library::delete_document,
+            commands::library::set_document_source_language,
             commands::library::search_documents,
             commands::content::cancel_import,
             commands::content::import_openstax,
@@ -86,6 +90,12 @@ pub fn run() {
             commands::fish::set_fish_api_key,
             commands::fish::clear_fish_api_key,
             commands::fish::list_fish_voices,
+            commands::translate::translate_section,
+            commands::translate::cancel_section_translation,
+            commands::translate::get_translation_model_status,
+            commands::translate::ensure_translation_models_downloaded,
+            commands::translate::cancel_translation_model_download,
+            commands::translate::list_translation_targets,
         ])
         .setup(|app| {
             let db_path = paths::database_path()?;
@@ -106,6 +116,8 @@ pub fn run() {
             // one flag is all a Cancel needs to reach it.
             app.manage(ImportCancel::default());
             app.manage(SupertonicDownload::default());
+            app.manage(SectionTranslationCancel::default());
+            app.manage(TranslationDownload::default());
             Ok(())
         })
         .run(tauri::generate_context!())

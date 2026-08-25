@@ -28,6 +28,8 @@ export type { TtsProvider };
 export interface TtsSettingsPatch {
   supertonicVoiceStyle?: SupertonicVoiceStyle;
   supertonicLanguage?: SupertonicLanguage;
+  /** `null` is the durable form of “Original language”. */
+  translationTargetLang?: SupertonicLanguage | null;
   fishVoiceId?: string | null;
 }
 
@@ -38,6 +40,8 @@ export interface SettingsState {
   ttsProvider: TtsProvider;
   supertonicVoiceStyle: SupertonicVoiceStyle;
   supertonicLanguage: SupertonicLanguage;
+  /** The language narration is translated into, or null to keep each book original. */
+  translationTargetLang: SupertonicLanguage | null;
   /**
    * The reader's chosen Fish voice id, or null when none has been picked yet.
    * Settings UI for this lands in a later task; declared here now because
@@ -95,6 +99,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   ttsProvider: "supertonic",
   supertonicVoiceStyle: "M1",
   supertonicLanguage: "en",
+  translationTargetLang: null,
   fishVoiceId: null,
 };
 
@@ -443,6 +448,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
         apply: { supertonicLanguage: ttsSettings.supertonicLanguage },
       });
     }
+    if (ttsSettings.translationTargetLang !== undefined) {
+      rows.push({
+        name: "translation_target_lang",
+        label: "Read aloud language",
+        value: ttsSettings.translationTargetLang,
+        apply: {
+          translationTargetLang: ttsSettings.translationTargetLang,
+        },
+      });
+    }
     if (ttsSettings.fishVoiceId !== undefined) {
       rows.push({
         name: "fish_voice_id",
@@ -545,6 +560,9 @@ export async function loadSettings(): Promise<Partial<SettingsState>> {
       settings.supertonic_voice_style,
     ),
     supertonicLanguage: asSupertonicLanguage(settings.supertonic_language),
+    translationTargetLang: asTranslationTargetLanguage(
+      settings.translation_target_lang,
+    ),
     fishVoiceId: asString(settings.fish_voice_id) ?? null,
   });
 }
@@ -561,6 +579,12 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function asTranslationTargetLanguage(
+  value: unknown,
+): SupertonicLanguage | null | undefined {
+  return value === null ? null : asSupertonicLanguage(value);
 }
 
 function asTheme(value: unknown): AppTheme | undefined {

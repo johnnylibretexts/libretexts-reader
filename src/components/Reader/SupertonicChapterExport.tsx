@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, FileAudio, Loader2, Play, RefreshCw } from "lucide-react";
 import {
-  SUPERTONIC_LANGUAGES,
   SUPERTONIC_VOICES,
   supertonicPreviewText,
   type SupertonicLanguage,
@@ -20,6 +19,7 @@ import {
 } from "../../stores/chapterExport";
 import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
+import { useTranslationStore } from "../../stores/translation";
 import { requiresExportConfirmation } from "./exportGate";
 
 export function SupertonicChapterExport() {
@@ -35,15 +35,20 @@ export function SupertonicChapterExport() {
     (state) => state.supertonicVoiceStyle,
   );
   const defaultLanguage = useSettingsStore((state) => state.supertonicLanguage);
+  const translationTargetLang = useSettingsStore(
+    (state) => state.translationTargetLang,
+  );
   const settingsHydrated = useSettingsStore((state) => state.hydrated);
   const settingsFailed = useSettingsStore((state) => state.hydrateFailed);
+  const translation = useTranslationStore((state) => state.sectionState);
+  const translateSection = useTranslationStore(
+    (state) => state.translateSection,
+  );
 
   const chosenVoiceStyle = useChapterExportStore((state) => state.voiceStyle);
-  const chosenLanguage = useChapterExportStore((state) => state.language);
   const chooseVoiceStyle = useChapterExportStore(
     (state) => state.chooseVoiceStyle,
   );
-  const chooseLanguage = useChapterExportStore((state) => state.chooseLanguage);
   // Falling back during render, not seeding early: the panel renders in the
   // same commit hydration lands, one commit before the effect below seeds, and
   // a `<select>` handed `null` there would go uncontrolled and blank. This
@@ -52,7 +57,10 @@ export function SupertonicChapterExport() {
   // estimate still waits for a real seed rather than pricing the chapter for
   // a fallback.
   const voiceStyle: SupertonicVoiceStyle = chosenVoiceStyle ?? defaultVoiceStyle;
-  const language: SupertonicLanguage = chosenLanguage ?? defaultLanguage;
+  const language: SupertonicLanguage =
+    translationTargetLang ??
+    (document?.sourceLanguage as SupertonicLanguage | undefined) ??
+    defaultLanguage;
   const [estimate, setEstimate] = useState<SupertonicChapterEstimate | null>(
     null,
   );
@@ -87,8 +95,9 @@ export function SupertonicChapterExport() {
   const section = sections[currentSectionIndex] ?? null;
   const sampleText = useMemo(
     () =>
-      paragraphs.find((paragraph) => paragraph.text.trim().length > 0)?.text ??
-      "",
+      paragraphs
+        .find((paragraph) => paragraph.sentenceSpeech.some((text) => text.trim()))
+        ?.sentenceSpeech.join(" ") ?? "",
     [paragraphs],
   );
   const isFish = ttsProvider === "fish";
@@ -116,16 +125,21 @@ export function SupertonicChapterExport() {
   // and Generate would write them an MP3 from an engine they never chose.
   // SettingsPanel disables Test for exactly this reason.
   const exportBlocked =
-    exporting || checkingExport || estimating || settingsFailed;
+    exporting ||
+    checkingExport ||
+    estimating ||
+    translation.status === "running" ||
+    settingsFailed;
 
   // Stop any in-flight preview playback and release its blob URL when the
   // reader view unmounts, not just when playback ends or a new preview starts.
   useEffect(() => () => stopPreview(), []);
 
-  // Seed the drafts from the app defaults once settings finish loading, then
-  // leave them alone: from there they are this export's voice and language,
-  // not the app's. The `useState` initialisers above cannot do this on their
-  // own -- hooks run before the render gate below, so on a mount that beats
+  // Seed the export voice from the app default once settings finish loading,
+  // then leave it alone: from there it belongs to this export, not the app.
+  // The translation language remains the global Read aloud setting. The
+  // `useState` initialisers above cannot do this on their own -- hooks run
+  // before the render gate below, so on a mount that beats
   // `hydrate()` they capture the built-in defaults. Keyed on the hydration
   // transition rather than on the rows, so a later change to those rows
   // cannot pull a pick out from under the reader.
@@ -169,7 +183,7 @@ export function SupertonicChapterExport() {
   // screen -- it named a character count and provider that no longer apply.
   useEffect(() => {
     setPendingExport(null);
-  }, [ttsProvider, section?.id]);
+  }, [translationTargetLang, ttsProvider, section?.id]);
 
   useEffect(() => {
     // Clear FIRST, on every dependency change, before anything async starts.
@@ -192,7 +206,13 @@ export function SupertonicChapterExport() {
     // the commit a change arrives and stays false until the drafts catch up
     // -- on a retry as well as on the first load, where a flag the seeding
     // effect merely set could only cover the first.
-    if (!document || !section || !fishVoiceReady || !seeded) {
+    if (
+      !document ||
+      !section ||
+      !fishVoiceReady ||
+      !seeded ||
+      (translationTargetLang && translation.status !== "complete")
+    ) {
       setEstimateError(null);
       // Cleared here too: a run cancelled by a dependency change skips its own
       // `finally`, so returning without this leaves `estimating` true for
@@ -210,7 +230,7 @@ export function SupertonicChapterExport() {
         sectionId: section.id,
         provider: ttsProvider,
         voiceStyle: isFish ? fishVoiceId : voiceStyle,
-        language: isFish ? null : language,
+        language,
       })
       .then((result) => {
         if (!cancelled) {
@@ -241,6 +261,8 @@ export function SupertonicChapterExport() {
     language,
     section,
     ttsProvider,
+    translation.status,
+    translationTargetLang,
     voiceStyle,
   ]);
 
@@ -292,10 +314,10 @@ export function SupertonicChapterExport() {
     );
 
     try {
-      // Nothing here writes the shared Supertonic settings rows. The voice
-      // and language below are this export's, sent on the request; playback
-      // keys its engine on those rows, so persisting them switched the
-      // narration of the chapter open in this very view and left Settings
+      // Nothing here writes the shared Supertonic settings rows. The voice is
+      // this export's; the language is the global Read aloud target. Playback
+      // keys its engine on those rows, so persisting the export voice switched
+      // the narration of the chapter open in this very view and left Settings
       // showing a voice the reader never picked there. Awaiting that write
       // also let a failed settings save abort a local, network-free export
       // that never needed it. Settings owns the reading voice; this panel
@@ -305,7 +327,7 @@ export function SupertonicChapterExport() {
         sectionId: activeSection.id,
         provider: ttsProvider,
         voiceStyle: isFish ? fishVoiceId : voiceStyle,
-        language: isFish ? null : language,
+        language,
         force,
       });
       setEstimate(result.estimate);
@@ -337,6 +359,38 @@ export function SupertonicChapterExport() {
   async function requestExport(force: boolean) {
     setError(null);
 
+    if (translationTargetLang) {
+      setCheckingExport(true);
+      try {
+        await translateSection(activeSection.id);
+        const state = useTranslationStore.getState().sectionState;
+        if (state.status !== "complete") {
+          setError(
+            state.error ??
+              "The chapter translation did not complete, so it was not exported.",
+          );
+          return;
+        }
+        const translatedParagraphs = await api.listParagraphs(
+          activeSection.id,
+          translationTargetLang,
+        );
+        const player = usePlayerStore.getState();
+        if (
+          player.document?.id !== activeDocument.id ||
+          player.sections[player.currentSectionIndex]?.id !== activeSection.id
+        ) {
+          return;
+        }
+        usePlayerStore.setState({ paragraphs: translatedParagraphs });
+      } catch (error) {
+        setError(displayError(error));
+        return;
+      } finally {
+        setCheckingExport(false);
+      }
+    }
+
     let relevantEstimate = estimate;
     if (isFish) {
       setCheckingExport(true);
@@ -346,7 +400,7 @@ export function SupertonicChapterExport() {
           sectionId: activeSection.id,
           provider: ttsProvider,
           voiceStyle: fishVoiceId,
-          language: null,
+          language,
           force,
         });
         // Only an unforced estimate describes the chapter's standing price,
@@ -470,55 +524,40 @@ export function SupertonicChapterExport() {
       ) : null}
 
       {isFish ? null : (
-        // These two controls used to write the app's Supertonic rows, which
-        // is how picking a voice here also changed what was being read aloud
-        // -- mid-chapter, in the same view. They are this export's alone now,
-        // and they sit directly above the paragraphs looking exactly like the
-        // ones in Settings, so the difference has to be said rather than
+        // This control used to write the app's Supertonic voice row, which is
+        // how picking a voice here also changed what was being read aloud
+        // -- mid-chapter, in the same view. It belongs to this export alone
+        // now, and it sits directly above the paragraphs looking exactly like
+        // the one in Settings, so the difference has to be said rather than
         // inferred.
         <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-          These apply to this {exportFormat} only. The voice you are listening in is in
-          Settings.
+          The voice applies to this {exportFormat} only. Its language follows
+          Read aloud in Settings
+          {translationTargetLang
+            ? ` (${translationTargetLang.toUpperCase()})`
+            : " (Original language)"}
+          .
         </p>
       )}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(10rem,0.25fr)_minmax(12rem,0.32fr)_auto_auto_auto]">
+      <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(10rem,0.25fr)_auto_auto_auto]">
         {isFish ? null : (
-          <>
-            <label className="flex flex-col gap-2 text-sm font-medium">
-              Voice
-              <select
-                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-                onChange={(event) => {
-                  chooseVoiceStyle(event.target.value as SupertonicVoiceStyle);
-                }}
-                value={voiceStyle}
-              >
-                {SUPERTONIC_VOICES.map((voice) => (
-                  <option key={voice.id} value={voice.id}>
-                    {voice.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex flex-col gap-2 text-sm font-medium">
-              Language
-              <select
-                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
-                onChange={(event) => {
-                  chooseLanguage(event.target.value as SupertonicLanguage);
-                }}
-                value={language}
-              >
-                {SUPERTONIC_LANGUAGES.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
+          <label className="flex flex-col gap-2 text-sm font-medium">
+            Voice
+            <select
+              className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
+              onChange={(event) => {
+                chooseVoiceStyle(event.target.value as SupertonicVoiceStyle);
+              }}
+              value={voiceStyle}
+            >
+              {SUPERTONIC_VOICES.map((voice) => (
+                <option key={voice.id} value={voice.id}>
+                  {voice.name}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
 
         {isFish ? null : (

@@ -2,6 +2,7 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { PlaybackControls } from "./PlaybackControls";
 import { ModelDownloadProgress } from "../ModelDownloadProgress";
 import { usePlayerStore } from "../../stores/player";
+import { useTranslationStore } from "../../stores/translation";
 
 /**
  * The attribution field as a link, or null when it is not one.
@@ -38,6 +39,9 @@ export function ReaderHeader() {
   const isBuffering = usePlayerStore((state) => state.isBuffering);
   const bufferingMessage = usePlayerStore((state) => state.bufferingMessage);
   const modelDownload = usePlayerStore((state) => state.modelDownload);
+  const translationRunning = useTranslationStore(
+    (state) => state.sectionState.status === "running",
+  );
 
   if (!document) {
     return null;
@@ -92,7 +96,7 @@ export function ReaderHeader() {
             Section
             <select
               className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-900"
-              disabled={isBuffering}
+              disabled={isBuffering || translationRunning}
               onChange={(event) => void setSection(Number(event.target.value))}
               value={currentSectionIndex}
             >

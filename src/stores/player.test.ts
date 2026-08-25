@@ -11,6 +11,7 @@ const DOCUMENT: Domain.Document = {
   license: null,
   attribution: null,
   wordCount: 8,
+  sourceLanguage: "en",
   importedAt: "2026-01-01T00:00:00Z",
   lastOpenedAt: null,
   progress: 0,
@@ -91,6 +92,9 @@ interface PlayerOptions {
   persistFails?: boolean;
   /** Makes the resume-cursor read reject. */
   readFails?: boolean;
+  document?: Domain.Document;
+  translatedParagraphs?: Domain.Paragraph[];
+  translationResult?: Domain.TranslateSectionResult;
 }
 
 async function loadPlayer(
@@ -113,6 +117,25 @@ async function loadPlayer(
     }
     return options.playbackState ?? null;
   });
+  const translateSection = vi.fn(async (_sectionId: string) =>
+    options.translationResult ?? {
+      status: "complete" as const,
+      sourceLang: "en",
+      targetLang: "es",
+      fallbackCount: 0,
+      sentenceCount: paragraphs.flatMap((paragraph) => paragraph.sentenceSpeech)
+        .length,
+    },
+  );
+  const setDocumentSourceLanguage = vi.fn(
+    async (_documentId: string, _sourceLanguage: string) => undefined,
+  );
+  const listParagraphs = vi.fn(
+    async (sectionId: string, targetLang?: string | null) =>
+      targetLang && options.translatedParagraphs
+        ? options.translatedParagraphs
+        : options.paragraphsBySection?.[sectionId] ?? paragraphs,
+  );
   let created = 0;
   const createSpeechEngine = vi.fn(
     (_settings: SpeechEngineSettings) =>
@@ -126,15 +149,15 @@ async function loadPlayer(
 
   vi.doMock("../lib/tauri", () => ({
     api: {
-      getDocument: vi.fn(async () => DOCUMENT),
+      getDocument: vi.fn(async () => options.document ?? DOCUMENT),
       listSections: vi.fn(async () => sections),
-      listParagraphs: vi.fn(
-        async (sectionId: string) =>
-          options.paragraphsBySection?.[sectionId] ?? paragraphs,
-      ),
+      listParagraphs,
       listSectionImages: vi.fn(async () => []),
       savePlaybackState,
       getPlaybackState,
+      translateSection,
+      cancelSectionTranslation: vi.fn(async () => undefined),
+      setDocumentSourceLanguage,
       // switchToSupertonic goes through useSettingsStore.setTtsProvider,
       // which calls this; without it the switch action rejects with
       // "api.setSetting is not a function" before it ever reaches the
@@ -150,6 +173,9 @@ async function loadPlayer(
     createSpeechEngine,
     savePlaybackState,
     getPlaybackState,
+    listParagraphs,
+    translateSection,
+    setDocumentSourceLanguage,
   };
 }
 
@@ -194,6 +220,79 @@ describe("read-ahead buffering", () => {
 });
 
 describe("playback through SpeechEngine", () => {
+  it("translates the chapter before speaking and reloads its speech forms", async () => {
+    const engine = await createFake();
+    const translated = PARAGRAPHS.map((paragraph, index) => ({
+      ...paragraph,
+      sentenceSpeech:
+        index === 0
+          ? ["Primera frase.", "Segunda frase."]
+          : ["Tercera frase."],
+    }));
+    const { usePlayerStore, translateSection, listParagraphs } = await loadPlayer(
+      [engine],
+      PARAGRAPHS,
+      { translatedParagraphs: translated },
+    );
+    const { useSettingsStore } = await import("./settings");
+    useSettingsStore.setState({ translationTargetLang: "es" });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    expect(translateSection).toHaveBeenCalledWith("sec-1");
+    expect(listParagraphs).toHaveBeenLastCalledWith("sec-1", "es");
+    expect(engine.calls[0].text).toBe("Primera frase.");
+  });
+
+  it("derives Original-language pronunciation from the current book", async () => {
+    const engine = await createFake();
+    const { usePlayerStore, createSpeechEngine } = await loadPlayer(
+      [engine],
+      PARAGRAPHS,
+      { document: { ...DOCUMENT, sourceLanguage: "fr" } },
+    );
+    const { useSettingsStore } = await import("./settings");
+    useSettingsStore.setState({
+      translationTargetLang: null,
+      supertonicLanguage: "es",
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    expect(createSpeechEngine).toHaveBeenCalledWith(
+      expect.objectContaining({ supertonicLanguage: "fr" }),
+    );
+  });
+
+  it("reloads original speech after translated narration is turned off", async () => {
+    const engine = await createFake();
+    const translated = PARAGRAPHS.map((paragraph) => ({
+      ...paragraph,
+      sentenceSpeech: paragraph.sentenceSpeech.map(() => "Narración traducida."),
+    }));
+    const { usePlayerStore, listParagraphs } = await loadPlayer(
+      [engine],
+      PARAGRAPHS,
+      { translatedParagraphs: translated },
+    );
+    const { useSettingsStore } = await import("./settings");
+    useSettingsStore.setState({ translationTargetLang: "es" });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+    usePlayerStore.getState().pause();
+
+    useSettingsStore.setState({ translationTargetLang: null });
+    await usePlayerStore.getState().play();
+
+    expect(listParagraphs).toHaveBeenLastCalledWith("sec-1", null);
+    expect(
+      engine.calls.some((call) => call.text === "First sentence spoken."),
+    ).toBe(true);
+  });
+
   it("synthesizes the current sentence through whichever engine is active", async () => {
     const engine = await createFake();
     const { usePlayerStore } = await loadPlayer([engine]);
@@ -281,6 +380,21 @@ describe("playback through SpeechEngine", () => {
   });
 });
 
+describe("book source language", () => {
+  it("persists a correction and updates the open document", async () => {
+    const engine = await createFake();
+    const { usePlayerStore, setDocumentSourceLanguage } = await loadPlayer([
+      engine,
+    ]);
+    await usePlayerStore.getState().loadDocument("doc-1");
+
+    await usePlayerStore.getState().setDocumentSourceLanguage("FR");
+
+    expect(setDocumentSourceLanguage).toHaveBeenCalledWith("doc-1", "FR");
+    expect(usePlayerStore.getState().document?.sourceLanguage).toBe("fr");
+  });
+});
+
 describe("buffering message", () => {
   it("names the engine actually speaking, not always Supertonic", async () => {
     // Regression guard: `speakWithBufferedSpeech` used to hardcode
@@ -316,7 +430,7 @@ describe("engine selection", () => {
     expect(createSpeechEngine).toHaveBeenCalledTimes(1);
   });
 
-  it("rebuilds the engine when the Supertonic language changes", async () => {
+  it("rebuilds the engine when the read-aloud target changes", async () => {
     const english = await createFake({ voices: ["M1"] });
     const korean = await createFake({ voices: ["M1"] });
     const { usePlayerStore, createSpeechEngine } = await loadPlayer([
@@ -329,11 +443,11 @@ describe("engine selection", () => {
     await usePlayerStore.getState().play();
     expect(createSpeechEngine).toHaveBeenCalledTimes(1);
 
-    useSettingsStore.setState({ supertonicLanguage: "ko" });
+    useSettingsStore.setState({ translationTargetLang: "ko" });
     await usePlayerStore.getState().play();
 
-    // The engine cache is keyed on language, so a language change must not
-    // keep speaking through the engine built for the previous one.
+    // The one read-aloud choice is both translation target and pronunciation,
+    // so changing it must not keep the engine built for the previous target.
     expect(createSpeechEngine).toHaveBeenCalledTimes(2);
     expect(korean.calls.length).toBeGreaterThan(0);
   });
