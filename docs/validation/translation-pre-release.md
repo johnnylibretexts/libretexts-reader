@@ -112,6 +112,35 @@ to minutes rather than seconds, and completed translations are cached by
 chapter, target, and immutable model ID. The ten-sentence batch trades some
 throughput for a measured sub-four-second cancellation/progress bound.
 
+## Packaged-app smoke test
+
+The signed `0.1.0-beta.3` app was run directly from its release bundle on
+2026-08-25 with an isolated copy of the library and model directory. The smoke
+test exercised the real Tauri controls and persisted state rather than invoking
+translation commands directly.
+
+- Settings offered all 30 translated targets. Selecting Spanish showed the
+  shared 496 MB download size, and the download action required a second
+  confirmation naming English → Spanish and the storage cost.
+- Download progress advanced in Settings. Cancel stopped the transfer at about
+  100 MB and returned the model to Not downloaded; retry completed all four
+  files, verified their pinned hashes, and changed the status to Ready.
+- Playing the 98-character English Licensing section displayed the original
+  English sentence throughout, translated it to Spanish with QA `passed`, zero
+  fallbacks, and changed the playback control to Pause while Spanish narration
+  was active.
+- After quitting and relaunching the packaged app, Settings restored Spanish
+  and revalidated the model as Ready. Replaying the same section used the
+  existing translation immediately without changing its cache timestamp.
+- Translated export produced a 145.38-second mono AAC M4A for the Preface. The
+  filename ends in `- es.m4a`, the container metadata records `LANGUAGE=es`,
+  and the export used 12 cached Spanish sentences from the pinned model with no
+  QA failures or fallbacks.
+
+The release `.app` passed strict deep code-signature verification, contained
+all generated notices, and was 37 MB. A mounted validation DMG preserved the
+inner signature and contained no bundled translation or Supertonic model files.
+
 ## Reproduce
 
 Place the verified model files under
