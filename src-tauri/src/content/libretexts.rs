@@ -13,6 +13,7 @@ use serde_json::json;
 use crate::content::document::{DocumentBuilder, SectionBuilder};
 use crate::content::html_section::{self, normalize_text, SectionSource};
 use crate::content::images::{download_images, source_images_from_html, SourceImage};
+use crate::content::language::{declared_html_language, detect_source_language};
 use crate::content::remote;
 use crate::db::connection::DbPool;
 use crate::db::models::{LibreTextsBook, LibreTextsLibrary, SourceType};
@@ -608,6 +609,9 @@ where
     let book = client.fetch_book_detail(book_id).await?;
     let toc = client.fetch_toc(&book, &mut on_progress).await?;
     let pages = client.fetch_book_pages(&toc, on_progress).await?;
+    let declared_language = pages
+        .iter()
+        .find_map(|page| declared_html_language(&page.html));
     let sections = sections_from_pages(&client, &toc, &pages).await?;
 
     if sections.is_empty() {
@@ -626,6 +630,7 @@ where
             "source_url": book.online_url,
             "imported_at": Utc::now().to_rfc3339()
         }),
+        source_language: detect_source_language(declared_language.as_deref(), ""),
         cover_image_path: None,
         license: Some(license_label(&book.license).to_string()),
         attribution: book.online_url,

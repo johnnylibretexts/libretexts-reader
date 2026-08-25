@@ -397,10 +397,11 @@ mod tests {
             let (_dir, pool) = temporary_pool();
             let mut conn = pool.get().expect("a connection should be available");
 
-            DocumentBuilder {
+            let document_id = DocumentBuilder {
                 title: "A Book".to_string(),
                 source_type,
                 source_metadata: serde_json::json!({}),
+                source_language: "es".to_string(),
                 cover_image_path: None,
                 license: None,
                 attribution: None,
@@ -409,11 +410,20 @@ mod tests {
             .persist(&mut conn)
             .expect("the document should persist");
 
+            let source_language: String = conn
+                .query_row(
+                    "SELECT source_language FROM documents WHERE id = ?1",
+                    [&document_id],
+                    |row| row.get(0),
+                )
+                .expect("the source language should persist");
+
             let documents = super::list_documents(&conn)
                 .unwrap_or_else(|error| panic!("{source_type:?} should list back: {error}"));
 
             assert_eq!(documents.len(), 1);
             assert_eq!(documents[0].source_type, source_type);
+            assert_eq!(source_language, "es");
         }
     }
 
@@ -430,6 +440,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Libretexts,
             source_metadata: serde_json::json!({"book_id": "bio-15711"}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,
@@ -475,6 +486,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Openstax,
             source_metadata: serde_json::json!({}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,
@@ -531,6 +543,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Openstax,
             source_metadata: serde_json::json!({}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,
@@ -562,6 +575,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Openstax,
             source_metadata: serde_json::json!({}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,
@@ -617,6 +631,7 @@ mod tests {
             title: "A Book".to_string(),
             source_type: SourceType::Openstax,
             source_metadata: serde_json::json!({}),
+            source_language: "en".to_string(),
             cover_image_path: None,
             license: None,
             attribution: None,

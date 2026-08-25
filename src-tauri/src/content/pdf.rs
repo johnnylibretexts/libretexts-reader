@@ -6,6 +6,7 @@ use pdfium_render::prelude::{PdfDocumentMetadataTagType, PdfPageTextChar, Pdfium
 use serde_json::json;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
+use crate::content::language::detect_source_language;
 use crate::db::models::SourceType;
 use crate::error::{AppError, AppResult};
 
@@ -66,6 +67,7 @@ pub fn import_from_path(path: &Path) -> AppResult<DocumentBuilder> {
             "page_count": page_count,
             "imported_at": Utc::now().to_rfc3339()
         }),
+        source_language: detect_source_language(None, ""),
         cover_image_path: None,
         license: None,
         attribution: None,

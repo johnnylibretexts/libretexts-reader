@@ -11,6 +11,7 @@ use zip::ZipArchive;
 
 use crate::content::document::{DocumentBuilder, SectionBuilder};
 use crate::content::html_section::{self, SectionSource};
+use crate::content::language::detect_source_language;
 use crate::content::split_paragraphs;
 use crate::db::models::SourceType;
 use crate::error::{AppError, AppResult};
@@ -41,6 +42,10 @@ pub fn import_from_path_in(path: &Path, covers_dir: &Path) -> AppResult<Document
                 .and_then(|name| name.to_str())
                 .map_or_else(|| "EPUB".to_string(), ToOwned::to_owned)
         });
+    let declared_language = book
+        .metadata()
+        .language()
+        .map(|language| language.value().to_string());
     let mut sections = Vec::new();
     let mut unreadable = 0usize;
 
@@ -111,6 +116,7 @@ pub fn import_from_path_in(path: &Path, covers_dir: &Path) -> AppResult<Document
             "file_path": path.to_string_lossy(),
             "imported_at": Utc::now().to_rfc3339()
         }),
+        source_language: detect_source_language(declared_language.as_deref(), ""),
         cover_image_path,
         license: None,
         attribution: None,
@@ -378,7 +384,7 @@ mod tests {
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="id">urn:uuid:fixture</dc:identifier>
     <dc:title>A Fixture Book</dc:title>
-    <dc:language>en</dc:language>
+    <dc:language>es-MX</dc:language>
   </metadata>
   <manifest>
     <item id="c1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
@@ -427,6 +433,7 @@ mod tests {
         let document = import_isolated(&path).expect("the fixture should import");
 
         assert_eq!(document.title, "A Fixture Book");
+        assert_eq!(document.source_language, "es");
         assert_eq!(document.sections.len(), 2);
         assert_eq!(document.sections[0].title, "Chapter One");
         assert_eq!(document.sections[1].title, "Chapter Two");
