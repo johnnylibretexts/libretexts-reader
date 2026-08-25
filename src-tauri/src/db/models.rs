@@ -66,6 +66,16 @@ pub struct Paragraph {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SentenceTranslation {
+    pub paragraph_id: String,
+    pub sentence_index: i64,
+    pub target_lang: String,
+    pub text: String,
+    pub qa_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SectionImage {
     pub id: String,
     pub section_id: String,
