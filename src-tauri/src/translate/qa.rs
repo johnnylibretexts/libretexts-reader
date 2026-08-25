@@ -8,6 +8,15 @@ use std::collections::HashMap;
 
 const MAX_NGRAM: usize = 6;
 const BETA_SQUARED: f64 = 4.0;
+const SAMPLE_FRACTION: f64 = 0.05;
+const SAMPLE_FLOOR: usize = 5;
+const SAMPLE_CAP: usize = 50;
+
+/// Provisional. The 50-70 band is healthy back-translation and below 30 is
+/// catastrophic, but the useful cutoff for textbook prose against these
+/// specific models is empirical and MUST be calibrated over real chapters
+/// before release. See "Open items" in the design doc.
+pub(crate) const QA_THRESHOLD: f64 = 45.0;
 
 fn ngram_counts(text: &str, n: usize) -> HashMap<String, usize> {
     let chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
@@ -55,6 +64,25 @@ pub(crate) fn chrf(hypothesis: &str, reference: &str) -> f64 {
     100.0 * (1.0 + BETA_SQUARED) * precision * recall / (BETA_SQUARED * precision + recall)
 }
 
+pub(crate) fn sample_indices(total: usize) -> Vec<usize> {
+    if total == 0 {
+        return Vec::new();
+    }
+    let wanted = ((total as f64 * SAMPLE_FRACTION).ceil() as usize)
+        .clamp(SAMPLE_FLOOR, SAMPLE_CAP)
+        .min(total);
+    let stride = total / wanted;
+    (0..wanted).map(|step| step * stride).collect()
+}
+
+pub(crate) fn should_escalate(scores: &[f64]) -> bool {
+    if scores.is_empty() {
+        return false;
+    }
+    let mean = scores.iter().sum::<f64>() / scores.len() as f64;
+    mean < QA_THRESHOLD
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +111,33 @@ mod tests {
         assert_eq!(chrf("", "anything"), 0.0);
         assert_eq!(chrf("anything", ""), 0.0);
         assert_eq!(chrf("", ""), 0.0);
+    }
+
+    #[test]
+    fn samples_five_percent_by_stride_with_a_floor_and_a_cap() {
+        // Deterministic on purpose: a random 5% makes escalation irreproducible,
+        // so the same chapter could pass one run and escalate the next with no
+        // test able to pin it. Stride gives identical coverage and a stable
+        // bug report.
+        assert_eq!(sample_indices(400).len(), 20);
+        assert_eq!(sample_indices(400)[0], 0);
+        assert_eq!(sample_indices(400)[1], 20);
+
+        // Floor: a short chapter still gets a meaningful check.
+        assert_eq!(sample_indices(12).len(), 5);
+        // And never asks for more sentences than exist.
+        assert_eq!(sample_indices(3).len(), 3);
+        assert_eq!(sample_indices(0).len(), 0);
+
+        // Cap: a huge chapter does not pay for 5% of everything.
+        assert_eq!(sample_indices(4000).len(), 50);
+    }
+
+    #[test]
+    fn escalates_only_when_the_sample_looks_bad() {
+        assert!(!should_escalate(&[80.0, 75.0, 90.0]));
+        assert!(should_escalate(&[20.0, 15.0, 25.0]));
+        // An empty sample is not evidence of failure.
+        assert!(!should_escalate(&[]));
     }
 }
