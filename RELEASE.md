@@ -6,7 +6,7 @@ Checklist for producing a signed, notarized macOS build.
 
 Push a `vX.Y.Z` tag with the self-hosted runner up and CI does everything below
 automatically — build, Developer-ID signing of the bundled PDFium lib,
-`tauri build`, notarization via the `jr-notary` profile, stapling, and publishing
+`tauri build`, DMG creation, notarization via the `jr-notary` profile, stapling, and publishing
 the GitHub Release with the DMG + SHA-256. See `docs/ci.md` for runner setup and
 the exact steps. The manual checklist below is the fallback and documents what the
 workflow runs under the hood.
@@ -93,53 +93,37 @@ export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
 ID="$APPLE_SIGNING_IDENTITY"
 ROOT="$(pwd)"
 
-# CI=true is load-bearing for a LOCAL build and is not optional. Without it,
-# `tauri build` gets all the way through compiling and bundling the .app and
-# then dies in bundle_dmg.sh:
-#
-#   execution error: Finder got an error: AppleEvent timed out. (-1712)
-#   Failed running AppleScript
-#
-# That step is pure Finder cosmetics (window size, icon positions) and it
-# needs a GUI session to drive Finder, which a terminal over SSH or an
-# automation shell does not have. CI=true makes the bundler pass
-# --skip-jenkins, which skips it; the DMG is otherwise identical.
-#
-# release.yml does NOT need this line -- the Actions runner sets CI=true
-# itself, on self-hosted runners too. It is only the by-hand path that trips.
-CI=true npm run tauri:build
+# Build the signed app with Tauri, then create the DMG explicitly. Tauri derives
+# its volume label from productName and exposes no override; on the release host,
+# hdiutil rejects /Volumes/LibreTexts Reader with EPERM. The script uses the safe
+# LibreTextsReader volume label while keeping the visible app and DMG names.
+npm run tauri -- build --bundles app
 
 # Derived, not hard-coded -- this is the same expression release.yml uses, so
 # the runbook and the workflow cannot disagree about the filename.
 VERSION="$(node -e "process.stdout.write(String(require('./src-tauri/tauri.conf.json').version))")"
 DMG="$ROOT/target/release/bundle/dmg/LibreTexts Reader_${VERSION}_aarch64.dmg"
 APP="$ROOT/target/release/bundle/macos/LibreTexts Reader.app"
+scripts/build-macos-dmg.sh "$DMG" "$APP"
+codesign --force --sign "$ID" --timestamp "$DMG"
+codesign --verify --strict "$DMG"
 
 # --- Pass 1: get the .app a ticket -------------------------------------------
 # Notarizing the DMG also notarizes the .app inside it, which is what makes a
-# ticket available to staple onto the .app on the next line. tauri:build has
-# already codesigned both the .app and this DMG, so there is nothing to sign here.
+# ticket available to staple onto the .app on the next line. Tauri signed the
+# app and the commands above signed the DMG, so there is nothing to sign here.
 xcrun notarytool submit "$DMG" --keychain-profile jr-notary --wait
 xcrun stapler staple "$APP"
 
 # --- Pass 2: rebuild the DMG around the now-stapled .app ----------------------
-STAGE="$(mktemp -d)"
-ditto "$APP" "$STAGE/LibreTexts Reader.app"
-
 # Build to a temp dir under the CANONICAL filename: codesign derives the
 # signature Identifier from the file name, and it must match what pass 1 produced
 # (`LibreTexts Reader_<version>_aarch64`).
 BUILDDIR="$(mktemp -d)"
 NEWDMG="$BUILDDIR/LibreTexts Reader_${VERSION}_aarch64.dmg"
-cd "$ROOT/target/release/bundle/dmg"
-./bundle_dmg.sh --volname "LibreTexts Reader" --icon "LibreTexts Reader.app" 180 170 \
-  --app-drop-link 480 170 --window-size 660 400 \
-  --hide-extension "LibreTexts Reader.app" --volicon "icon.icns" --skip-jenkins \
-  "$NEWDMG" "$STAGE"
-cd "$ROOT"
+scripts/build-macos-dmg.sh "$NEWDMG" "$APP"
 
-# codesign BEFORE notarizing. tauri:build signs the .dmg for you; a DMG built by
-# hand from bundle_dmg.sh is NOT signed, and an unsigned DMG notarizes and staples
+# codesign BEFORE notarizing. An unsigned DMG notarizes and staples
 # perfectly happily while `spctl` still rejects it with "no usable signature".
 # Signing after stapling is not an option either -- it rewrites the file and
 # invalidates the ticket.
