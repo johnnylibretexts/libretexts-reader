@@ -158,12 +158,12 @@ not need to be.
 
 ## Why the release notarizes twice
 
-Tauri bundles the DMG from the `.app` *before* anything is stapled. Notarize
+The workflow builds the first DMG from the `.app` *before* anything is stapled. Notarize
 once and staple in the obvious order and you ship a DMG whose inner `.app` —
 the only copy anyone installs — has no ticket:
 
 ```
-$ xcrun stapler validate "/Volumes/LibreTexts Reader/LibreTexts Reader.app"
+$ xcrun stapler validate "/Volumes/LibreTextsReader/LibreTexts Reader.app"
 LibreTexts Reader.app does not have a ticket stapled to it.
 ```
 
@@ -178,10 +178,10 @@ Two traps live in those steps, both load-bearing:
   for an unstapled app and cannot detect this at all. Only `stapler validate`
   can. The "Verify the shipped artifact" step runs both, and validates the `.app`
   *inside* the mounted DMG so the bug cannot silently return.
-- **`tauri:build` codesigns the `.dmg`; `bundle_dmg.sh` does not.** The rebuilt
-  image must be signed before it is notarized — signing afterwards rewrites the
-  file and voids the ticket. An unsigned DMG notarizes and staples happily and
-  then fails `spctl` with `no usable signature`.
+- **DMG creation does not codesign the image.** Both images must be signed before
+  they are notarized — signing afterwards rewrites the file and voids the ticket.
+  An unsigned DMG notarizes and staples happily and then fails `spctl` with
+  `no usable signature`.
 
 See #102 and `RELEASE.md` §2, which documents the same sequence for the manual
 fallback path.

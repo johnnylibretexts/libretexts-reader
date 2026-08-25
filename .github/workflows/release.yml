@@ -95,7 +95,7 @@ jobs:
             codesign --force --options runtime --timestamp --sign "$ID" "$lib"
           done
 
-      - name: Build signed bundle
+      - name: Build signed application
         run: |
           set -euo pipefail
           source "$HOME/.nvm/nvm.sh"; nvm use 22.20.0
@@ -106,7 +106,7 @@ jobs:
           # at all -- build.rs returns early there -- which is what
           # scripts/ci/check-updater-key.sh covers, in the gate above.
           export LIBRETEXTS_READER_REQUIRE_UPDATER_KEY=1
-          npm run tauri:build
+          npm run tauri -- build --bundles app
 
       # Reads the built .app, not build.rs. The notices were written to a path
       # the bundler could not see for the whole life of the project, and no
@@ -114,6 +114,21 @@ jobs:
       # bundle did. Placed here, before anything is published.
       - name: Licence notices are in the bundle
         run: scripts/ci/check-licenses-bundled.sh
+
+      # Tauri derives the DMG volume label from productName and offers no
+      # override. On the release host, hdiutil rejects the resulting
+      # /Volumes/LibreTexts Reader destination with EPERM. Build the signed app
+      # with Tauri, then create the image under the safe LibreTextsReader label.
+      - name: Create signed DMG
+        run: |
+          set -euo pipefail
+          ID="$APPLE_SIGNING_IDENTITY"
+          if [ -z "$ID" ]; then echo "APPLE_SIGNING_IDENTITY variable is not set" >&2; exit 1; fi
+          DMG="target/release/bundle/dmg/LibreTexts Reader_${{ steps.meta.outputs.version }}_aarch64.dmg"
+          scripts/build-macos-dmg.sh "$DMG" \
+            "target/release/bundle/macos/LibreTexts Reader.app"
+          codesign --force --sign "$ID" --timestamp "$DMG"
+          codesign --verify --strict "$DMG"
 
       - name: Locate DMG
         id: dmg
@@ -125,8 +140,7 @@ jobs:
 
       # Pass 1 of 2. Notarizing the DMG also notarizes the .app inside it, and
       # that is what makes a ticket available to staple onto the .app below.
-      # Nothing needs signing here -- `npm run tauri:build` already codesigned
-      # both the .app and this DMG.
+      # The app was signed by Tauri and the DMG by the creation step above.
       - name: Notarize, and staple the .app (pass 1)
         if: steps.meta.outputs.dry_run != 'true'
         run: |
@@ -153,28 +167,15 @@ jobs:
           ROOT="$PWD"
           DMG="${{ steps.dmg.outputs.path }}"
 
-          STAGE="$(mktemp -d)"
-          ditto "$ROOT/target/release/bundle/macos/LibreTexts Reader.app" \
-            "$STAGE/LibreTexts Reader.app"
-
           # Build under the CANONICAL filename: codesign derives the signature
-          # Identifier from the file name, and it has to match what tauri:build
-          # produced ("LibreTexts Reader_<version>_aarch64").
+          # Identifier from the file name, and it has to match pass 1
+          # ("LibreTexts Reader_<version>_aarch64").
           BUILDDIR="$(mktemp -d)"
           NEW="$BUILDDIR/$(basename "$DMG")"
-          cd "$ROOT/target/release/bundle/dmg"
-          # --skip-jenkins is explicit here. CI=true only reaches this script when
-          # the Tauri bundler invokes it; called directly, the flag is ours to pass,
-          # and without it the run dies in Finder AppleScript on a headless runner.
-          ./bundle_dmg.sh \
-            --volname "LibreTexts Reader" --icon "LibreTexts Reader.app" 180 170 \
-            --app-drop-link 480 170 --window-size 660 400 \
-            --hide-extension "LibreTexts Reader.app" --volicon "icon.icns" \
-            --skip-jenkins "$NEW" "$STAGE"
-          cd "$ROOT"
+          scripts/build-macos-dmg.sh "$NEW" \
+            "$ROOT/target/release/bundle/macos/LibreTexts Reader.app"
 
-          # codesign BEFORE notarizing, always. tauri:build signs the .dmg for you;
-          # a DMG built by hand from bundle_dmg.sh is NOT signed, and an unsigned
+          # codesign BEFORE notarizing, always. An unsigned
           # DMG notarizes and staples perfectly happily while spctl still rejects
           # it with "no usable signature". Signing afterwards is not a fix either --
           # it rewrites the file and voids the ticket.
