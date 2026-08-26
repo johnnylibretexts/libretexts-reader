@@ -532,7 +532,7 @@ export function SupertonicChapterExport() {
         // inferred.
         <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
           The voice applies to this {exportFormat} only. Its language follows
-          Read aloud in Settings
+          Listen in: Settings default
           {translationTargetLang
             ? ` (${translationTargetLang.toUpperCase()})`
             : " (Original language)"}

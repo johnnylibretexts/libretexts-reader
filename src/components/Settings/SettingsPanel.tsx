@@ -798,7 +798,7 @@ export function SettingsPanel() {
 
             <div className="flex flex-col gap-2">
               <label className="flex flex-col gap-2 text-sm font-medium">
-                Read aloud in
+                Listen in
                 <select
                   aria-describedby="supertonic-language-help"
                   className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-neutral-800 dark:bg-neutral-950"
@@ -813,7 +813,9 @@ export function SettingsPanel() {
                   }}
                   value={language ?? "original"}
                 >
-                  <option value="original">Original language</option>
+                  <option value="original">
+                    Original ({languageName(translationSourceLanguage)})
+                  </option>
                   {translationTargets.map((target) => (
                     <option key={target} value={target}>
                       {languageName(target)}
@@ -826,7 +828,8 @@ export function SettingsPanel() {
                 id="supertonic-language-help"
               >
                 Uses on-device machine translation for spoken narration only.
-                The page stays in its original language.
+                The book page stays onscreen; only narration changes. This
+                matches Listen in beside the Reader&apos;s playback controls.
               </span>
             </div>
           </div>

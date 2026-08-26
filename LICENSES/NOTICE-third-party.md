@@ -16,8 +16,8 @@ here: they are downloaded on the reader's own machine rather than distributed
 with the app, and their terms are recorded in `supertonic-model.md` and
 `translation-models.md`.
 
-<!-- cargo-lock-sha256: 001af5abd5c8542582373dfeac855c05ad860686aa025ff1a1d6f0668276bdbf -->
-<!-- npm-lock-sha256: 37e574a196f74be1ff64f0cf33ac9bc40ab5d07f3b5ee7713431cd32eeae4bdc -->
+<!-- cargo-lock-sha256: cc8e6f49c144a56a10e730bd10751283abdc1a841bc93c281ccd731db8395d07 -->
+<!-- npm-lock-sha256: 6cefa548aaf1554d28a62437837cd6760635a32bd716c09545093223f4d762da -->
 
 ## Rust dependencies
 
@@ -228,7 +228,7 @@ ships.
 - ctor 0.8.0 — Apache-2.0 — https://github.com/mmastrac/rust-ctor
 - bytemuck 1.25.0 — Apache-2.0 — https://github.com/Lokathor/bytemuck
 - httpdate 1.0.3 — Apache-2.0 — https://github.com/pyfisch/httpdate
-- libretexts-reader 0.1.0-beta.3 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
+- libretexts-reader 0.1.0-beta.4 — Apache-2.0 — https://github.com/johnnylibretexts/libretexts-reader
 - anyhow 1.0.102 — Apache-2.0 — https://github.com/dtolnay/anyhow
 - async-trait 0.1.92 — Apache-2.0 — https://github.com/dtolnay/async-trait
 - cxx 1.0.199 — Apache-2.0 — https://github.com/dtolnay/cxx

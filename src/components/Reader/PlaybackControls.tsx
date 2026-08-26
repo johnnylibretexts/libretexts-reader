@@ -11,6 +11,7 @@ import { usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
 import { SPEECH_ENGINE_BILLS } from "../../lib/speech";
 import { useTranslationStore } from "../../stores/translation";
+import { ListenInControl } from "./ListenInControl";
 
 export function PlaybackControls() {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
@@ -91,6 +92,10 @@ export function PlaybackControls() {
       >
         <SkipForward className="size-4" aria-hidden="true" />
       </IconButton>
+
+      <div className="ml-0 md:ml-3">
+        <ListenInControl />
+      </div>
 
       <label className="ml-0 flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 md:ml-3">
         Speed

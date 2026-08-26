@@ -288,7 +288,7 @@ describe("SettingsPanel voice test", () => {
     );
     expect(screen.getByLabelText("Voice style")).toHaveValue("F5");
     // The language they did not touch still picks up the loaded row.
-    expect(screen.getByLabelText("Read aloud in")).toHaveValue("original");
+    expect(screen.getByLabelText("Listen in")).toHaveValue("original");
   });
 
   it("keeps the reader's pending selection when the save fails", async () => {
@@ -326,7 +326,7 @@ describe("SettingsPanel voice test", () => {
 
     await screen.findByRole("option", { name: "Spanish" });
     await user.selectOptions(
-      screen.getByLabelText("Read aloud in"),
+      screen.getByLabelText("Listen in"),
       "es",
     );
     await user.click(
@@ -348,14 +348,14 @@ describe("SettingsPanel voice test", () => {
       screen.getByText(/on-device machine translation/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/page stays in its original language/i),
+      screen.getByText(/book page stays onscreen; only narration changes/i),
     ).toBeInTheDocument();
   });
 
   it("defaults to the book's original language and has no second language control", async () => {
     render(<SettingsPanel />);
 
-    expect(await screen.findByLabelText("Read aloud in")).toHaveValue(
+    expect(await screen.findByLabelText("Listen in")).toHaveValue(
       "original",
     );
     expect(
@@ -388,12 +388,42 @@ describe("SettingsPanel voice test", () => {
     render(<SettingsPanel />);
 
     await screen.findByRole("option", { name: "Spanish" });
-    await user.selectOptions(screen.getByLabelText("Read aloud in"), "es");
+    await user.selectOptions(screen.getByLabelText("Listen in"), "es");
 
     await waitFor(() =>
       expect(getTranslationModelStatus).toHaveBeenCalledWith("fr", "es"),
     );
     expect(listTranslationTargets).toHaveBeenCalledWith("fr");
+  });
+
+  it("labels Original with the open book's language", async () => {
+    usePlayerStore.setState({
+      document: {
+        id: "doc-1",
+        title: "Biology",
+        sourceType: "libretexts",
+        sourceMetadata: null,
+        coverImagePath: null,
+        license: null,
+        attribution: null,
+        wordCount: 10,
+        sourceLanguage: "es",
+        importedAt: "2026-01-01T00:00:00Z",
+        lastOpenedAt: null,
+        progress: 0,
+      },
+    });
+    listTranslationTargets.mockResolvedValue(["en"]);
+    render(<SettingsPanel />);
+
+    await screen.findByRole("option", { name: "Original (Spanish)" });
+    expect(
+      screen.queryByRole("option", { name: "Spanish" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Original (Spanish)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "English" })).toBeInTheDocument();
   });
 
   it("saves one language for both translation and pronunciation", async () => {
@@ -402,7 +432,7 @@ describe("SettingsPanel voice test", () => {
 
     await screen.findByRole("option", { name: "Spanish" });
     await user.selectOptions(
-      await screen.findByLabelText("Read aloud in"),
+      await screen.findByLabelText("Listen in"),
       "es",
     );
     await user.click(screen.getByRole("button", { name: /Save/ }));
@@ -425,7 +455,7 @@ describe("SettingsPanel voice test", () => {
     render(<SettingsPanel />);
 
     await screen.findByRole("option", { name: "Spanish" });
-    const options = within(await screen.findByLabelText("Read aloud in"))
+    const options = within(await screen.findByLabelText("Listen in"))
       .getAllByRole("option")
       .map((option) => option.getAttribute("value"))
       .filter(
@@ -450,7 +480,7 @@ describe("SettingsPanel voice test", () => {
 
     await screen.findByRole("option", { name: "Spanish" });
     await user.selectOptions(
-      await screen.findByLabelText("Read aloud in"),
+      await screen.findByLabelText("Listen in"),
       "es",
     );
     expect(await screen.findByText(/496 MB/)).toBeInTheDocument();
@@ -488,7 +518,7 @@ describe("SettingsPanel voice test", () => {
 
     await screen.findByRole("option", { name: "Spanish" });
     await user.selectOptions(
-      await screen.findByLabelText("Read aloud in"),
+      await screen.findByLabelText("Listen in"),
       "es",
     );
     await user.click(

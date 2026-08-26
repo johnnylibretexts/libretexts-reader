@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { BookOpen, Loader2 } from "lucide-react";
 import { usePlayerStore } from "../../stores/player";
+import { useSettingsStore } from "../../stores/settings";
 import { useTranslationStore } from "../../stores/translation";
 import { SUPERTONIC_LANGUAGES } from "../../lib/supertonic";
 import { SupertonicChapterExport } from "./SupertonicChapterExport";
@@ -20,12 +21,12 @@ export function Reader({ documentId }: ReaderProps) {
   const loading = usePlayerStore((state) => state.loading);
   const error = usePlayerStore((state) => state.error);
   const loadDocument = usePlayerStore((state) => state.loadDocument);
-  const setDocumentSourceLanguage = usePlayerStore(
-    (state) => state.setDocumentSourceLanguage,
-  );
   const translation = useTranslationStore((state) => state.sectionState);
   const cancelTranslation = useTranslationStore((state) => state.cancel);
-  const [sourceLanguageSaving, setSourceLanguageSaving] = useState(false);
+  const translationTargetLanguage = useSettingsStore(
+    (state) => state.translationTargetLang,
+  );
+  const [translationCancelling, setTranslationCancelling] = useState(false);
   const currentSectionId = usePlayerStore(
     (state) => state.sections[state.currentSectionIndex]?.id ?? null,
   );
@@ -55,6 +56,21 @@ export function Reader({ documentId }: ReaderProps) {
       });
     }
   }, [currentSectionId]);
+
+  useEffect(() => {
+    if (translation.status !== "running") {
+      setTranslationCancelling(false);
+    }
+  }, [translation.status]);
+
+  const translationTotal = Math.max(translation.total, 1);
+  const translationDone = Math.min(
+    Math.max(translation.done, 0),
+    translationTotal,
+  );
+  const translationPercent = Math.round(
+    (translationDone / translationTotal) * 100,
+  );
 
   if (!documentId) {
     return (
@@ -91,61 +107,52 @@ export function Reader({ documentId }: ReaderProps) {
 
       {!loading && document ? (
         <>
-          <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
-            <label className="flex min-w-48 flex-col gap-1 text-sm font-medium">
-              Written in
-              <select
-                className="h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-950"
-                disabled={sourceLanguageSaving || translation.status === "running"}
-                onChange={(event) => {
-                  setSourceLanguageSaving(true);
-                  void setDocumentSourceLanguage(event.target.value).finally(
-                    () => setSourceLanguageSaving(false),
-                  );
-                }}
-                value={document.sourceLanguage}
-              >
-                {SUPERTONIC_LANGUAGES.some(
-                  (language) => language.id === document.sourceLanguage,
-                ) ? null : (
-                  <option value={document.sourceLanguage}>
-                    {languageName(document.sourceLanguage)}
-                  </option>
-                )}
-                {SUPERTONIC_LANGUAGES.map((language) => (
-                  <option key={language.id} value={language.id}>
-                    {language.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="max-w-2xl text-xs leading-5 text-neutral-500 dark:text-neutral-400">
-              This identifies the book&apos;s original language. The page stays
-              in this language even when spoken narration is translated.
-            </p>
-          </div>
-
           {translation.status === "running" ? (
-            <div className="rounded-md border border-brand-200 bg-brand-50 px-4 py-3 text-sm dark:border-brand-950 dark:bg-brand-950/30">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>
-                  Translating chapter: {translation.done} of {translation.total}
-                  {" sentences"}
-                </span>
+            <div className="rounded-md border border-neutral-200 bg-white px-4 py-3 text-neutral-950 shadow-sm dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">
+                    Preparing{" "}
+                    {languageName(
+                      translationTargetLanguage ?? document.sourceLanguage,
+                    )}{" "}
+                    narration
+                  </p>
+                  <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-300">
+                    {translation.done} of {translation.total} sentences
+                  </p>
+                </div>
                 <button
-                  className="rounded-md border border-brand-300 px-3 py-1.5 text-sm font-medium hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-brand-800 dark:hover:bg-brand-950"
-                  onClick={() => void cancelTranslation()}
+                  className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-wait disabled:opacity-60 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                  disabled={translationCancelling}
+                  onClick={() => {
+                    setTranslationCancelling(true);
+                    void cancelTranslation();
+                  }}
                   type="button"
                 >
-                  Cancel
+                  {translationCancelling ? "Stopping…" : "Cancel"}
                 </button>
               </div>
-              <progress
-                aria-label="Chapter translation progress"
-                className="mt-3 h-2 w-full"
-                max={Math.max(translation.total, 1)}
-                value={translation.done}
-              />
+              <div className="mt-3 flex items-center gap-3">
+                <div
+                  aria-label="Chapter translation progress"
+                  aria-valuemax={translationTotal}
+                  aria-valuemin={0}
+                  aria-valuenow={translationDone}
+                  aria-valuetext={`${translation.done} of ${translation.total} sentences, ${translationPercent} percent`}
+                  className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700"
+                  role="progressbar"
+                >
+                  <div
+                    className="h-full rounded-full bg-brand-700 transition-[width] dark:bg-brand-400"
+                    style={{ width: `${translationPercent}%` }}
+                  />
+                </div>
+                <span className="w-10 text-right text-xs font-semibold tabular-nums">
+                  {translationPercent}%
+                </span>
+              </div>
             </div>
           ) : null}
 
