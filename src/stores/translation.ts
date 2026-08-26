@@ -144,7 +144,7 @@ function stateFromResult(
       return {
         ...IDLE_SECTION,
         status: "failed",
-        error: `Download the ${result.sourceLang.toUpperCase()} → ${result.targetLang.toUpperCase()} translation models in Settings before playing this chapter.`,
+        error: `Download the ${result.sourceLang.toUpperCase()} → ${result.targetLang.toUpperCase()} translation model from Listen in beside Play, then try again.`,
       };
     case "complete":
       return {

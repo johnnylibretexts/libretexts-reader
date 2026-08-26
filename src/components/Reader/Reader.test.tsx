@@ -16,6 +16,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 const { Reader } = await import("./Reader");
 const { usePlayerStore } = await import("../../stores/player");
+const { useSettingsStore } = await import("../../stores/settings");
 const { useTranslationStore } = await import("../../stores/translation");
 
 const DOCUMENT: Domain.Document = {
@@ -60,6 +61,7 @@ beforeEach(() => {
     loading: false,
     error: null,
   });
+  useSettingsStore.setState({ translationTargetLang: "es" });
   useTranslationStore.setState({ sectionState: COMPLETE });
 });
 
@@ -83,7 +85,7 @@ describe("translation status", () => {
     expect(screen.queryByText(/read in English/)).not.toBeInTheDocument();
   });
 
-  it("offers Cancel while a chapter is being translated", async () => {
+  it("shows readable translation progress and a stopping state", async () => {
     const cancel = vi.fn(async () => undefined);
     useTranslationStore.setState({
       sectionState: { ...COMPLETE, status: "running", done: 40 },
@@ -91,18 +93,27 @@ describe("translation status", () => {
     });
     render(<Reader documentId="doc-1" />);
 
-    expect(await screen.findByRole("button", { name: /Cancel/ })).toBeEnabled();
-    expect(screen.getByText(/40 of 312/)).toBeInTheDocument();
+    expect(screen.getByText("Preparing Spanish narration")).toBeInTheDocument();
+    expect(screen.getByText("40 of 312 sentences")).toBeInTheDocument();
+    expect(screen.getByText("13%")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuetext",
+      "40 of 312 sentences, 13 percent",
+    );
+    expect(screen.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "40",
+    );
+
     await userEvent.click(screen.getByRole("button", { name: /Cancel/ }));
     expect(cancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
   });
 });
 
-it("lets the reader correct the book's source language", async () => {
-  const setDocumentSourceLanguage = vi.fn(async () => undefined);
-  usePlayerStore.setState({ setDocumentSourceLanguage });
+it("does not put a second language setup card in the reading surface", () => {
   render(<Reader documentId="doc-1" />);
 
-  await userEvent.selectOptions(screen.getByLabelText("Written in"), "es");
-  expect(setDocumentSourceLanguage).toHaveBeenCalledWith("es");
+  expect(screen.queryByText("Book text")).not.toBeInTheDocument();
+  expect(screen.queryByText("Narration")).not.toBeInTheDocument();
 });

@@ -54,7 +54,27 @@ afterEach(() => {
     bufferingMessage: "",
     modelDownload: null,
   });
+  useSettingsStore.setState({
+    hydrated: true,
+    hydrateFailed: false,
+    translationTargetLang: null,
+  });
   vi.restoreAllMocks();
+});
+
+describe("narration language in the player", () => {
+  it("puts one Listen in control beside playback", () => {
+    useSettingsStore.setState({
+      hydrated: true,
+      hydrateFailed: false,
+      translationTargetLang: null,
+    });
+    showReader({});
+
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Listen in")).toHaveValue("original");
+    expect(screen.queryByText("Book text")).not.toBeInTheDocument();
+  });
 });
 
 describe("licence and attribution on the reading surface", () => {

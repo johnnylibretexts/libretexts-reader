@@ -138,7 +138,7 @@ describe("translation store", () => {
 
     expect(useTranslationStore.getState().sectionState).toMatchObject({
       status: "failed",
-      error: expect.stringMatching(/download.*Settings/i),
+      error: expect.stringMatching(/download.*Listen in.*Play/i),
     });
   });
 });
