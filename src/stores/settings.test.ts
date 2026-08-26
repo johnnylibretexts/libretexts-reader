@@ -47,6 +47,27 @@ afterEach(() => {
 });
 
 describe("hydrate", () => {
+  it("defaults image descriptions on and honors a saved opt-out", async () => {
+    vi.resetModules();
+    vi.doMock("../lib/tauri", () => ({
+      api: {
+        setSetting: vi.fn(async () => undefined),
+        getAllSettings: vi.fn(async () => ({
+          read_image_descriptions_automatically: false,
+        })),
+      },
+    }));
+    const { useSettingsStore } = await import("./settings");
+
+    expect(
+      useSettingsStore.getState().readImageDescriptionsAutomatically,
+    ).toBe(true);
+    await useSettingsStore.getState().hydrate();
+    expect(
+      useSettingsStore.getState().readImageDescriptionsAutomatically,
+    ).toBe(false);
+  });
+
   it("loads the saved read-aloud translation target", async () => {
     vi.resetModules();
     vi.doMock("../lib/tauri", () => ({
@@ -464,6 +485,38 @@ describe("hydrate", () => {
 });
 
 describe("settings store persistence failures", () => {
+  it("synchronizes and persists the automatic image-description preference", async () => {
+    const setSetting = vi.fn(async () => undefined);
+    const useSettingsStore = await loadSettingsStore(setSetting);
+
+    await useSettingsStore
+      .getState()
+      .setReadImageDescriptionsAutomatically(false);
+
+    expect(setSetting).toHaveBeenCalledWith(
+      "read_image_descriptions_automatically",
+      false,
+    );
+    expect(
+      useSettingsStore.getState().readImageDescriptionsAutomatically,
+    ).toBe(false);
+  });
+
+  it("restores the image-description preference when its write fails", async () => {
+    const useSettingsStore = await loadSettingsStore(async () => {
+      throw new Error("disk full");
+    });
+
+    await expect(
+      useSettingsStore
+        .getState()
+        .setReadImageDescriptionsAutomatically(false),
+    ).rejects.toThrow("disk full");
+    expect(
+      useSettingsStore.getState().readImageDescriptionsAutomatically,
+    ).toBe(true);
+  });
+
   it("persists Original language as a null translation target", async () => {
     const setSetting = vi.fn(async () => undefined);
     const useSettingsStore = await loadSettingsStore(setSetting);

@@ -58,6 +58,8 @@ beforeEach(() => {
     currentSectionIndex: 0,
     paragraphs: [],
     sectionImages: [],
+    imageNarrations: {},
+    activeImageDescriptionId: null,
     loading: false,
     error: null,
   });
@@ -116,4 +118,55 @@ it("does not put a second language setup card in the reading surface", () => {
 
   expect(screen.queryByText("Book text")).not.toBeInTheDocument();
   expect(screen.queryByText("Narration")).not.toBeInTheDocument();
+});
+
+it("offers an accessible per-image description action", async () => {
+  const readImageDescription = vi.fn(async () => undefined);
+  usePlayerStore.setState({
+    sectionImages: [
+      {
+        id: "image-1",
+        sectionId: "sec-1",
+        ordinal: 0,
+        sourceUrl: "https://example.test/dna.png",
+        localPath: "/tmp/dna.png",
+        altText: "A labeled diagram of a DNA double helix.",
+        caption: "The structure of DNA",
+        contentType: "image/png",
+        anchorParagraphOrdinal: null,
+      },
+    ],
+    readImageDescription,
+  });
+
+  render(<Reader documentId="doc-1" />);
+  const action = screen.getByRole("button", {
+    name: /Read image description: The structure of DNA/,
+  });
+  await userEvent.click(action);
+
+  expect(readImageDescription).toHaveBeenCalledWith("image-1");
+  expect(screen.getByAltText("A labeled diagram of a DNA double helix.")).toBeInTheDocument();
+});
+
+it("identifies figures whose publisher supplied no description", () => {
+  usePlayerStore.setState({
+    sectionImages: [
+      {
+        id: "image-2",
+        sectionId: "sec-1",
+        ordinal: 0,
+        sourceUrl: "https://example.test/unknown.png",
+        localPath: "/tmp/unknown.png",
+        altText: null,
+        caption: null,
+        contentType: "image/png",
+        anchorParagraphOrdinal: null,
+      },
+    ],
+  });
+
+  render(<Reader documentId="doc-1" />);
+  expect(screen.getByText("No image description available")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /image description/i })).not.toBeInTheDocument();
 });

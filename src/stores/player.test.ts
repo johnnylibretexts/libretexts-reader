@@ -77,6 +77,18 @@ const LONG_PARAGRAPHS: Domain.Paragraph[] = [
   },
 ];
 
+const SECTION_IMAGE: Domain.SectionImage = {
+  id: "image-1",
+  sectionId: "sec-1",
+  ordinal: 0,
+  sourceUrl: "https://example.test/dna.png",
+  localPath: "/tmp/dna.png",
+  altText: "A labeled diagram of a DNA double helix.",
+  caption: "The structure of DNA",
+  contentType: "image/png",
+  anchorParagraphOrdinal: null,
+};
+
 /**
  * Every test gets a fresh module graph: the player keeps its speech cache,
  * utterance tokens and memoized engine in module scope, and they would
@@ -95,6 +107,8 @@ interface PlayerOptions {
   document?: Domain.Document;
   translatedParagraphs?: Domain.Paragraph[];
   translationResult?: Domain.TranslateSectionResult;
+  sectionImages?: Domain.SectionImage[];
+  translatedImageTexts?: string[];
 }
 
 async function loadPlayer(
@@ -127,6 +141,10 @@ async function loadPlayer(
         .length,
     },
   );
+  const translateTexts = vi.fn(async () => ({
+    speechTexts: options.translatedImageTexts ?? [],
+    fallbackCount: 0,
+  }));
   const setDocumentSourceLanguage = vi.fn(
     async (_documentId: string, _sourceLanguage: string) => undefined,
   );
@@ -152,10 +170,11 @@ async function loadPlayer(
       getDocument: vi.fn(async () => options.document ?? DOCUMENT),
       listSections: vi.fn(async () => sections),
       listParagraphs,
-      listSectionImages: vi.fn(async () => []),
+      listSectionImages: vi.fn(async () => options.sectionImages ?? []),
       savePlaybackState,
       getPlaybackState,
       translateSection,
+      translateTexts,
       cancelSectionTranslation: vi.fn(async () => undefined),
       setDocumentSourceLanguage,
       // switchToSupertonic goes through useSettingsStore.setTtsProvider,
@@ -175,6 +194,7 @@ async function loadPlayer(
     getPlaybackState,
     listParagraphs,
     translateSection,
+    translateTexts,
     setDocumentSourceLanguage,
   };
 }
@@ -216,6 +236,77 @@ describe("read-ahead buffering", () => {
       ),
     );
     expect(usePlayerStore.getState().isPlaying).toBe(true);
+  });
+});
+
+describe("image descriptions", () => {
+  it("builds concise narration without repeating an identical caption", async () => {
+    const { sourceImageNarration } = await import("./player");
+    expect(
+      sourceImageNarration({
+        ...SECTION_IMAGE,
+        caption: "A labeled diagram of a DNA double helix.",
+      }),
+    ).toBe("Image description: A labeled diagram of a DNA double helix.");
+    expect(
+      sourceImageNarration({ ...SECTION_IMAGE, altText: null }),
+    ).toBe("Image caption: The structure of DNA");
+  });
+
+  it("reads images before the opening sentence by default", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      sectionImages: [SECTION_IMAGE],
+    });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    expect(engine.calls[0].text).toBe(
+      "Image description: A labeled diagram of a DNA double helix. Caption: The structure of DNA",
+    );
+    expect(usePlayerStore.getState().activeImageDescriptionId).toBe("image-1");
+  });
+
+  it("starts with the book text when automatic descriptions are disabled", async () => {
+    const engine = await createFake();
+    const { usePlayerStore } = await loadPlayer([engine], PARAGRAPHS, {
+      sectionImages: [SECTION_IMAGE],
+    });
+    const { useSettingsStore } = await import("./settings");
+    useSettingsStore.setState({ readImageDescriptionsAutomatically: false });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    expect(engine.calls[0].text).toBe("First sentence spoken.");
+  });
+
+  it("translates image descriptions before speaking them in Listen in", async () => {
+    const engine = await createFake();
+    const { usePlayerStore, translateTexts } = await loadPlayer(
+      [engine],
+      PARAGRAPHS,
+      {
+        sectionImages: [SECTION_IMAGE],
+        translatedParagraphs: PARAGRAPHS,
+        translatedImageTexts: ["Descripción de imagen: una doble hélice de ADN."],
+      },
+    );
+    const { useSettingsStore } = await import("./settings");
+    useSettingsStore.setState({ translationTargetLang: "es" });
+
+    await usePlayerStore.getState().loadDocument("doc-1");
+    await usePlayerStore.getState().play();
+
+    expect(translateTexts).toHaveBeenCalledWith(
+      "en",
+      "es",
+      expect.arrayContaining([expect.stringContaining("DNA double helix")]),
+    );
+    expect(engine.calls[0].text).toBe(
+      "Descripción de imagen: una doble hélice de ADN.",
+    );
   });
 });
 

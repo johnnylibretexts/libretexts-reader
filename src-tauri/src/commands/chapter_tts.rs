@@ -694,15 +694,30 @@ fn chapter_material_from_conn(
         .find(|section| section.id == section_id)
         .ok_or_else(|| AppError::InvalidInput("section does not belong to document".into()))?;
     let paragraphs = library::list_paragraphs(conn, section_id, target_lang)?;
-    let text = paragraphs
-        .into_iter()
-        // `sentence_speech` is the translated-or-fallback form, parallel to
-        // the display offsets. Reading `paragraph.text` here would throw the
-        // lookup away and export the original chapter again.
-        .map(|paragraph| paragraph.sentence_speech.join(" "))
-        .filter(|paragraph| !paragraph.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let describe_images = settings::get_setting(conn, "read_image_descriptions_automatically")?
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    let images = if describe_images {
+        library::list_section_images(conn, section_id)?
+    } else {
+        Vec::new()
+    };
+    let source_image_texts = images.iter().map(image_narration_text).collect::<Vec<_>>();
+    let image_texts = if let Some(target_lang) =
+        target_lang.filter(|target| !target.eq_ignore_ascii_case(&document.source_language))
+    {
+        crate::commands::translate::translate_texts_inner(
+            crate::commands::translate::TranslateTextsRequest {
+                source_lang: document.source_language.clone(),
+                target_lang: target_lang.to_string(),
+                texts: source_image_texts,
+            },
+        )?
+        .speech_texts
+    } else {
+        source_image_texts
+    };
+    let text = chapter_narration_text(&paragraphs, &images, &image_texts);
 
     if text.trim().is_empty() {
         return Err(AppError::InvalidInput(
@@ -715,6 +730,73 @@ fn chapter_material_from_conn(
         section,
         text,
     })
+}
+
+fn chapter_narration_text(
+    paragraphs: &[crate::db::models::Paragraph],
+    images: &[crate::db::models::SectionImage],
+    image_texts: &[String],
+) -> String {
+    let mut blocks = Vec::new();
+    for (image, text) in images.iter().zip(image_texts) {
+        if image.anchor_paragraph_ordinal.is_none() {
+            blocks.push(text.clone());
+        }
+    }
+    for (index, paragraph) in paragraphs.iter().enumerate() {
+        let paragraph_text = paragraph.sentence_speech.join(" ");
+        if !paragraph_text.is_empty() {
+            blocks.push(paragraph_text);
+        }
+        let last = index + 1 == paragraphs.len();
+        for (image, text) in images.iter().zip(image_texts) {
+            let Some(anchor) = image.anchor_paragraph_ordinal else {
+                continue;
+            };
+            if anchor == paragraph.ordinal || (last && anchor > paragraph.ordinal) {
+                blocks.push(text.clone());
+            }
+        }
+    }
+    blocks.join("\n\n")
+}
+
+fn image_narration_text(image: &crate::db::models::SectionImage) -> String {
+    let alt = image.alt_text.as_deref().map(str::trim).unwrap_or("");
+    let caption = image.caption.as_deref().map(str::trim).unwrap_or("");
+    if alt.is_empty() && caption.is_empty() {
+        return "Image. No description was provided.".into();
+    }
+    if alt.is_empty() {
+        return format!("Image caption: {caption}");
+    }
+    if caption.is_empty()
+        || normalized_image_description(alt) == normalized_image_description(caption)
+    {
+        return format!("Image description: {alt}");
+    }
+    let punctuation = if alt.ends_with(['.', '!', '?', '…']) {
+        ""
+    } else {
+        "."
+    };
+    format!("Image description: {alt}{punctuation} Caption: {caption}")
+}
+
+fn normalized_image_description(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn saved_translation_target(state: &State<'_, DbPool>) -> AppResult<Option<String>> {
@@ -996,6 +1078,44 @@ mod translated_material_tests {
             billable_characters(&original.text, "fish", false, false),
             billable_characters(&spanish.text, "fish", false, false),
         );
+    }
+
+    #[test]
+    fn chapter_exports_follow_the_automatic_image_description_preference() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_migrations(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO documents
+                  (id, title, source_type, source_metadata, word_count, imported_at, source_language)
+                  VALUES ('doc-1', 'Biology', 'openstax', '{}', 5,
+                          '2026-01-01T00:00:00Z', 'en');
+             INSERT INTO sections (id, document_id, ordinal, title, word_count)
+                  VALUES ('sec-1', 'doc-1', 0, 'DNA', 5);
+             INSERT INTO paragraphs (id, section_id, ordinal, text, sentence_offsets)
+                  VALUES ('para-1', 'sec-1', 0, 'DNA carries information.', '[[0,24]]');
+             INSERT INTO section_images
+                  (id, section_id, ordinal, source_url, local_path, alt_text,
+                   caption, content_type, anchor_paragraph_ordinal)
+                  VALUES ('img-1', 'sec-1', 0, 'https://example.test/dna.png',
+                          '/tmp/dna.png', 'A labeled DNA double helix.',
+                          'The structure of DNA', 'image/png', 0);",
+        )
+        .unwrap();
+
+        let automatic = chapter_material_from_conn(&conn, "doc-1", "sec-1", None).unwrap();
+        assert_eq!(
+            automatic.text,
+            "DNA carries information.\n\nImage description: A labeled DNA double helix. Caption: The structure of DNA"
+        );
+
+        settings::set_setting(
+            &conn,
+            "read_image_descriptions_automatically",
+            &serde_json::json!(false),
+        )
+        .unwrap();
+        let disabled = chapter_material_from_conn(&conn, "doc-1", "sec-1", None).unwrap();
+        assert_eq!(disabled.text, "DNA carries information.");
     }
 }
 

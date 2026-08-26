@@ -42,6 +42,8 @@ export interface SettingsState {
   supertonicLanguage: SupertonicLanguage;
   /** The language narration is translated into, or null to keep each book original. */
   translationTargetLang: SupertonicLanguage | null;
+  /** Include publisher-provided image descriptions in continuous narration. */
+  readImageDescriptionsAutomatically: boolean;
   /**
    * The reader's chosen Fish voice id, or null when none has been picked yet.
    * Settings UI for this lands in a later task; declared here now because
@@ -89,6 +91,7 @@ export interface SettingsStore extends SettingsState {
   hydrate: () => Promise<void>;
   setTheme: (theme: AppTheme) => Promise<void>;
   setTtsProvider: (provider: TtsProvider) => Promise<void>;
+  setReadImageDescriptionsAutomatically: (enabled: boolean) => Promise<void>;
   saveTtsSettings: (settings: TtsSettingsPatch) => Promise<void>;
 }
 
@@ -100,6 +103,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   supertonicVoiceStyle: "M1",
   supertonicLanguage: "en",
   translationTargetLang: null,
+  readImageDescriptionsAutomatically: true,
   fishVoiceId: null,
 };
 
@@ -185,6 +189,8 @@ function writeRow(name: string, value: unknown): Promise<void> {
 let themeSeq = 0;
 /** The same for `setTtsProvider`, and for a sharper reason -- see there. */
 let providerSeq = 0;
+/** Newest image-description preference click; older writes may commit but not repaint. */
+let imageDescriptionSeq = 0;
 /**
  * The provider last seen on disk, for the same job `committedTheme` does.
  *
@@ -424,6 +430,23 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
     }
     set({ ttsProvider: provider, ...releaseBanner("tts-provider") });
   },
+  setReadImageDescriptionsAutomatically: async (enabled: boolean) => {
+    const previous = get().readImageDescriptionsAutomatically;
+    const seq = ++imageDescriptionSeq;
+    set({ readImageDescriptionsAutomatically: enabled });
+    try {
+      await writeRow("read_image_descriptions_automatically", enabled);
+    } catch (error) {
+      if (seq === imageDescriptionSeq) {
+        set({ readImageDescriptionsAutomatically: previous });
+      }
+      throw error;
+    }
+    recordWrite({ readImageDescriptionsAutomatically: enabled });
+    if (seq === imageDescriptionSeq) {
+      set({ readImageDescriptionsAutomatically: enabled });
+    }
+  },
   saveTtsSettings: async (ttsSettings: TtsSettingsPatch) => {
     // Only the rows this patch names are written. Writing all four on every
     // call let two saves on one screen clobber each other -- FishAudioSettings
@@ -563,6 +586,9 @@ export async function loadSettings(): Promise<Partial<SettingsState>> {
     translationTargetLang: asTranslationTargetLanguage(
       settings.translation_target_lang,
     ),
+    readImageDescriptionsAutomatically: asBoolean(
+      settings.read_image_descriptions_automatically,
+    ),
     fishVoiceId: asString(settings.fish_voice_id) ?? null,
   });
 }
@@ -579,6 +605,10 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function asTranslationTargetLanguage(

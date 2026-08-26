@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Runtime, State, Window};
 
 use crate::db::connection::DbPool;
@@ -184,6 +184,21 @@ pub enum TranslateSectionResult {
     },
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateTextsRequest {
+    pub source_lang: String,
+    pub target_lang: String,
+    pub texts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateTextsResult {
+    pub speech_texts: Vec<String>,
+    pub fallback_count: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TranslationProgress {
@@ -243,6 +258,100 @@ pub async fn translate_section<R: Runtime>(
     })
     .await
     .map_err(|error| AppError::Model(format!("translation task stopped: {error}")))?
+}
+
+/// Translate a small set of narration-only strings such as figure descriptions.
+/// The webview caches these for the open section and language.
+#[tauri::command]
+pub async fn translate_texts(request: TranslateTextsRequest) -> AppResult<TranslateTextsResult> {
+    tauri::async_runtime::spawn_blocking(move || translate_texts_inner(request))
+        .await
+        .map_err(|error| AppError::Model(format!("translation task stopped: {error}")))?
+}
+
+pub(crate) fn translate_texts_inner(
+    request: TranslateTextsRequest,
+) -> AppResult<TranslateTextsResult> {
+    let source_lang = request.source_lang.trim().to_lowercase();
+    let target_lang = request.target_lang.trim().to_lowercase();
+    if request.texts.is_empty() || source_lang == target_lang {
+        return Ok(TranslateTextsResult {
+            speech_texts: request.texts,
+            fallback_count: 0,
+        });
+    }
+
+    let (forward, reverse) = pair_models(&source_lang, &target_lang)?;
+    let models_root = paths::models_dir()?.join("translation");
+    let status =
+        combined_model_status(&source_lang, &target_lang, &forward, &reverse, &models_root);
+    if !status.downloaded {
+        return Err(AppError::Model(format!(
+            "Download the {source_lang} → {target_lang} translation model from Listen in beside Play, then try again."
+        )));
+    }
+
+    let forward_engine =
+        OpusMtEngine::load(&forward, &translation_model_root(&models_root, &forward))?;
+    let reverse_engine =
+        OpusMtEngine::load(&reverse, &translation_model_root(&models_root, &reverse))?;
+    let translated = translate_sentences(&forward_engine, &request.texts)?;
+    if translated.len() != request.texts.len() {
+        return Err(AppError::Model(format!(
+            "translation returned {} descriptions for {} inputs",
+            translated.len(),
+            request.texts.len()
+        )));
+    }
+
+    let accepted = translated
+        .iter()
+        .enumerate()
+        .filter_map(|(index, translation)| {
+            translation
+                .as_ref()
+                .map(|translation| (index, request.texts[index].clone(), translation.clone()))
+        })
+        .collect::<Vec<_>>();
+    let quality = run_quality_gate_result(
+        &accepted
+            .iter()
+            .map(|(_, source, _)| source.clone())
+            .collect::<Vec<_>>(),
+        &accepted
+            .iter()
+            .map(|(_, _, translation)| translation.clone())
+            .collect::<Vec<_>>(),
+        &reverse_engine,
+        qa::threshold_for(&target_lang),
+    )?;
+    let mut statuses = partial_statuses(&translated);
+    for ((index, _, _), status) in accepted.iter().zip(&quality.statuses) {
+        statuses[*index] = status;
+    }
+
+    let fallback_count = translated
+        .iter()
+        .zip(&statuses)
+        .filter(|(translation, status)| translation.is_none() || **status == "rejected")
+        .count();
+    let speech_texts = request
+        .texts
+        .iter()
+        .enumerate()
+        .map(|(index, source)| {
+            translated[index]
+                .as_ref()
+                .filter(|_| statuses[index] != "rejected")
+                .cloned()
+                .unwrap_or_else(|| source.clone())
+        })
+        .collect();
+
+    Ok(TranslateTextsResult {
+        speech_texts,
+        fallback_count,
+    })
 }
 
 fn translate_section_inner<R: Runtime>(
@@ -902,6 +1011,19 @@ mod tests {
     use super::*;
 
     struct FakeReverse;
+
+    #[test]
+    fn narration_text_translation_is_a_noop_for_the_original_language() {
+        let result = translate_texts_inner(TranslateTextsRequest {
+            source_lang: "en".into(),
+            target_lang: "en".into(),
+            texts: vec!["Image description: a cell.".into()],
+        })
+        .expect("same-language narration should not need a model");
+
+        assert_eq!(result.speech_texts, vec!["Image description: a cell."]);
+        assert_eq!(result.fallback_count, 0);
+    }
 
     impl TranslationProvider for FakeReverse {
         fn translate(&self, sentences: &[String]) -> AppResult<Vec<String>> {

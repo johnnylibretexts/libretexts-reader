@@ -25,6 +25,9 @@ interface PlayerState {
   currentSectionIndex: number;
   paragraphs: Domain.Paragraph[];
   sectionImages: Domain.SectionImage[];
+  /** Spoken form for each figure in the open section, translated when needed. */
+  imageNarrations: Record<string, string>;
+  activeImageDescriptionId: string | null;
   currentParagraphIndex: number;
   currentSentenceIndex: number;
   speed: number;
@@ -76,6 +79,7 @@ interface PlayerState {
   skipParagraphForward: () => Promise<void>;
   skipParagraphBack: () => Promise<void>;
   setSpeed: (speed: number) => void;
+  readImageDescription: (imageId: string) => Promise<void>;
   /**
    * Stop the voice-model download in flight and release the player.
    *
@@ -151,6 +155,11 @@ let speechAbort: AbortController | null = null;
  */
 let modelDownloadCancel: (() => Promise<void>) | null = null;
 
+/** Prepared figure narration keyed by document/section/target. */
+const imageNarrationCache = new Map<string, Record<string, string>>();
+/** Prelude figures should play once when narration starts at a section's beginning. */
+let automaticPreludeSectionId: string | null = null;
+
 interface SpeechCacheEntry {
   promise: Promise<Blob>;
   lastUsed: number;
@@ -169,6 +178,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSectionIndex: 0,
   paragraphs: [],
   sectionImages: [],
+  imageNarrations: {},
+  activeImageDescriptionId: null,
   currentParagraphIndex: 0,
   currentSentenceIndex: 0,
   speed: 1,
@@ -184,6 +195,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   loadDocument: async (documentId: string) => {
     const requestId = ++navToken;
     preparedNarrationKey = null;
+    automaticPreludeSectionId = null;
     cancelSpeech();
     set({
       loading: true,
@@ -211,6 +223,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           sections: [],
           paragraphs: [],
           sectionImages: [],
+          imageNarrations: {},
+          activeImageDescriptionId: null,
           loading: false,
           error: "This document has no readable sections.",
           canSwitchToSupertonic: false,
@@ -242,6 +256,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         sections,
         paragraphs,
         sectionImages,
+        imageNarrations: originalImageNarrations(sectionImages),
+        activeImageDescriptionId: null,
         currentSectionIndex: sectionIndex,
         currentParagraphIndex: resumed.paragraphIndex,
         currentSentenceIndex: resumed.sentenceIndex,
@@ -277,7 +293,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   play: async () => {
-    await speakCurrentSentence(set, get);
+    await playFromCurrentPosition(set, get);
   },
 
   pause: () => {
@@ -291,12 +307,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       isBuffering: false,
       bufferingMessage: "",
       modelDownload: null,
+      activeImageDescriptionId: null,
     });
   },
 
   reset: () => {
     cancelSpeech();
     preparedNarrationKey = null;
+    automaticPreludeSectionId = null;
     // Invalidate any in-flight load/navigation so a late response cannot
     // repopulate the state we are clearing here.
     navToken += 1;
@@ -305,6 +323,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       sections: [],
       paragraphs: [],
       sectionImages: [],
+      imageNarrations: {},
+      activeImageDescriptionId: null,
       currentSectionIndex: 0,
       currentParagraphIndex: 0,
       currentSentenceIndex: 0,
@@ -372,6 +392,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({
         document: { ...document, sourceLanguage: normalized },
         paragraphs,
+        imageNarrations: originalImageNarrations(get().sectionImages),
+        activeImageDescriptionId: null,
         error: null,
         canSwitchToSupertonic: false,
       });
@@ -409,6 +431,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   setSpeed: (speed: number) => {
     set({ speed });
+  },
+
+  readImageDescription: async (imageId: string) => {
+    await readImageDescriptionOnDemand(set, get, imageId);
   },
 
   cancelModelDownload: () => {
@@ -497,6 +523,51 @@ async function speakCurrentSentence(
   );
 }
 
+async function playFromCurrentPosition(
+  set: (partial: Partial<PlayerState>) => void,
+  get: () => PlayerState,
+) {
+  if (
+    !currentSectionNarrationIsPrepared(get()) &&
+    !(await prepareCurrentSectionNarration(set, get))
+  ) {
+    return;
+  }
+  const state = get();
+  const section = state.sections[state.currentSectionIndex];
+  const atSectionStart =
+    state.currentParagraphIndex === firstReadableParagraphIndex(state.paragraphs) &&
+    state.currentSentenceIndex === 0;
+  const prelude = state.sectionImages
+    .filter((image) => image.anchorParagraphOrdinal === null)
+    .map((image) => image.id);
+  if (
+    section &&
+    atSectionStart &&
+    useSettingsStore.getState().readImageDescriptionsAutomatically &&
+    automaticPreludeSectionId !== section.id &&
+    prelude.length > 0
+  ) {
+    const sectionId = section.id;
+    cancelSpeech();
+    const token = ++utteranceToken;
+    speechAbort = new AbortController();
+    set({ isPlaying: true });
+    await speakImageSequence(set, get, prelude, token, () => {
+      automaticPreludeSectionId = sectionId;
+      void speakCurrentSentence(set, get, {
+        token,
+        requireInitialBuffer: true,
+      });
+    });
+    return;
+  }
+  if (section && atSectionStart) {
+    automaticPreludeSectionId = section.id;
+  }
+  await speakCurrentSentence(set, get);
+}
+
 /** Make `sentenceSpeech` match the current saved translation choice. */
 async function prepareCurrentSectionNarration(
   set: (partial: Partial<PlayerState>) => void,
@@ -530,7 +601,10 @@ async function prepareCurrentSectionNarration(
     ) {
       return false;
     }
-    set({ paragraphs });
+    set({
+      paragraphs,
+      imageNarrations: originalImageNarrations(current.sectionImages),
+    });
     preparedNarrationKey = key;
     return true;
   } catch (error) {
@@ -593,21 +667,103 @@ async function prepareCurrentSectionTranslation(
   }
 
   try {
-    const paragraphs = await api.listParagraphs(section.id, targetLanguage);
+    set({ isBuffering: true, bufferingMessage: "Preparing image descriptions" });
+    const [paragraphs, imageNarrations] = await Promise.all([
+      api.listParagraphs(section.id, targetLanguage),
+      translatedImageNarrations(state, targetLanguage),
+    ]);
     if (get().sections[get().currentSectionIndex]?.id !== section.id) {
       return false;
     }
-    set({ paragraphs });
+    set({
+      paragraphs,
+      imageNarrations,
+      isBuffering: false,
+      bufferingMessage: "",
+    });
     preparedNarrationKey = narrationKey(get(), targetLanguage);
     return true;
   } catch (error) {
     set({
       isPlaying: false,
+      isBuffering: false,
+      bufferingMessage: "",
       error: displayError(error),
       canSwitchToSupertonic: false,
     });
     return false;
   }
+}
+
+async function translatedImageNarrations(
+  state: PlayerState,
+  targetLanguage: string,
+) {
+  if (state.sectionImages.length === 0) {
+    return {};
+  }
+  const narration = narrationKey(state, targetLanguage);
+  const key = narration
+    ? `${narration}:${state.document?.sourceLanguage ?? "en"}`
+    : null;
+  if (key) {
+    const cached = imageNarrationCache.get(key);
+    if (cached) {
+      return cached;
+    }
+  }
+  const texts = state.sectionImages.map(sourceImageNarration);
+  const result = await api.translateTexts(
+    state.document?.sourceLanguage ?? "en",
+    targetLanguage,
+    texts,
+  );
+  if (result.speechTexts.length !== state.sectionImages.length) {
+    throw new Error("Translated image descriptions did not match this section.");
+  }
+  const narrations = Object.fromEntries(
+    state.sectionImages.map((image, index) => [
+      image.id,
+      result.speechTexts[index],
+    ]),
+  );
+  if (key) {
+    imageNarrationCache.set(key, narrations);
+  }
+  return narrations;
+}
+
+function originalImageNarrations(images: Domain.SectionImage[]) {
+  return Object.fromEntries(
+    images.map((image) => [image.id, sourceImageNarration(image)]),
+  );
+}
+
+export function imageHasDescription(image: Domain.SectionImage) {
+  return Boolean(image.altText?.trim() || image.caption?.trim());
+}
+
+export function sourceImageNarration(image: Domain.SectionImage) {
+  const alt = image.altText?.trim() ?? "";
+  const caption = image.caption?.trim() ?? "";
+  if (!alt && !caption) {
+    return "Image. No description was provided.";
+  }
+  if (!alt) {
+    return `Image caption: ${caption}`;
+  }
+  if (!caption || normalizedDescription(alt) === normalizedDescription(caption)) {
+    return `Image description: ${alt}`;
+  }
+  return `Image description: ${sentenceEnding(alt)} Caption: ${caption}`;
+}
+
+function sentenceEnding(text: string) {
+  return /[.!?…]$/.test(text) ? text : `${text}.`;
+}
+
+function normalizedDescription(text: string) {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 function narrationKey(state: PlayerState, targetLanguage: string | null) {
@@ -1112,6 +1268,7 @@ async function playGeneratedAudio(
     isBuffering: false,
     bufferingMessage: "",
     modelDownload: null,
+    activeImageDescriptionId: null,
     error: null,
     canSwitchToSupertonic: false,
   });
@@ -1135,17 +1292,223 @@ async function playGeneratedAudio(
   }
 }
 
+async function readImageDescriptionOnDemand(
+  set: (partial: Partial<PlayerState>) => void,
+  get: () => PlayerState,
+  imageId: string,
+) {
+  const initial = get();
+  const image = initial.sectionImages.find((candidate) => candidate.id === imageId);
+  if (!image || !imageHasDescription(image)) {
+    return;
+  }
+  if (initial.activeImageDescriptionId === imageId) {
+    initial.pause();
+    return;
+  }
+  const resumeNarration = initial.isPlaying;
+  if (!(await prepareCurrentSectionNarration(set, get))) {
+    return;
+  }
+
+  cancelSpeech();
+  const token = ++utteranceToken;
+  speechAbort = new AbortController();
+  set({ isPlaying: true, error: null, canSwitchToSupertonic: false });
+  await speakImageSequence(set, get, [imageId], token, () => {
+    if (resumeNarration) {
+      void speakCurrentSentence(set, get, {
+        token,
+        requireInitialBuffer: true,
+      });
+    } else {
+      set({
+        isPlaying: false,
+        isBuffering: false,
+        bufferingMessage: "",
+        activeImageDescriptionId: null,
+      });
+    }
+  });
+}
+
+async function speakImageSequence(
+  set: (partial: Partial<PlayerState>) => void,
+  get: () => PlayerState,
+  imageIds: string[],
+  token: number,
+  onComplete: () => void,
+  index = 0,
+): Promise<void> {
+  if (token !== utteranceToken || !get().isPlaying) {
+    return;
+  }
+  const imageId = imageIds[index];
+  if (!imageId) {
+    set({ activeImageDescriptionId: null });
+    onComplete();
+    return;
+  }
+  const state = get();
+  const speechText = state.imageNarrations[imageId];
+  if (!speechText) {
+    await speakImageSequence(set, get, imageIds, token, onComplete, index + 1);
+    return;
+  }
+
+  const { engine, settings } = activeEngine(state.document);
+  const label = SPEECH_ENGINE_LABELS[engine.id];
+  set({
+    activeImageDescriptionId: imageId,
+    isPlaying: true,
+    isBuffering: true,
+    bufferingMessage: `Buffering ${label} image description`,
+    error: null,
+    canSwitchToSupertonic: false,
+  });
+
+  try {
+    await engine.ensureReady((status) => {
+      if (token === utteranceToken && get().isPlaying) {
+        modelDownloadCancel = status.cancel ?? null;
+        set({
+          bufferingMessage: status.message,
+          modelDownload: status.download ?? null,
+        });
+      }
+    });
+    if (token !== utteranceToken || !get().isPlaying) {
+      return;
+    }
+    modelDownloadCancel = null;
+    const blob = await cachedImageSpeechBlob(
+      engine,
+      settings,
+      imageId,
+      speechText,
+      get(),
+    );
+    if (token !== utteranceToken || !get().isPlaying) {
+      return;
+    }
+
+    clearGeneratedAudio();
+    activeAudioUrl = URL.createObjectURL(blob);
+    activeAudio = new Audio(activeAudioUrl);
+    activeAudio.onended = () => {
+      if (token !== utteranceToken || !get().isPlaying) {
+        clearGeneratedAudio();
+        return;
+      }
+      clearGeneratedAudio();
+      void speakImageSequence(
+        set,
+        get,
+        imageIds,
+        token,
+        onComplete,
+        index + 1,
+      );
+    };
+    activeAudio.onerror = () => {
+      if (token !== utteranceToken) {
+        clearGeneratedAudio();
+        return;
+      }
+      clearGeneratedAudio();
+      set({
+        isPlaying: false,
+        isBuffering: false,
+        bufferingMessage: "",
+        modelDownload: null,
+        activeImageDescriptionId: null,
+        error: "Image-description audio playback failed.",
+        canSwitchToSupertonic: false,
+      });
+    };
+    set({
+      isBuffering: false,
+      bufferingMessage: "",
+      modelDownload: null,
+    });
+    await activeAudio.play();
+  } catch (error) {
+    if (token !== utteranceToken || error instanceof SpeechAbortedError) {
+      return;
+    }
+    modelDownloadCancel = null;
+    const isFishFailure = engine.id === "fish";
+    set({
+      isPlaying: false,
+      isBuffering: false,
+      bufferingMessage: "",
+      modelDownload: null,
+      activeImageDescriptionId: null,
+      error: isFishFailure ? fishFailureMessage(error) : displayError(error),
+      canSwitchToSupertonic: isFishFailure,
+    });
+  }
+}
+
+async function cachedImageSpeechBlob(
+  engine: SpeechEngine,
+  settings: SettingsStore,
+  imageId: string,
+  speechText: string,
+  state: PlayerState,
+) {
+  const section = state.sections[state.currentSectionIndex];
+  const key = JSON.stringify({
+    engine: voiceKey(settings),
+    documentId: state.document?.id ?? "",
+    sectionId: section?.id ?? "",
+    imageId,
+    text: speechText,
+    speed: state.speed,
+  });
+  const cached = speechCache.get(key);
+  if (cached) {
+    cached.lastUsed = Date.now();
+    return cached.promise;
+  }
+  const promise = engine
+    .synthesize({ text: speechText, speed: state.speed }, speechAbort?.signal)
+    .catch((error) => {
+      speechCache.delete(key);
+      throw error;
+    });
+  speechCache.set(key, { promise, lastUsed: Date.now() });
+  trimSpeechCache();
+  return promise;
+}
+
 async function advanceBySentence(
   set: (partial: Partial<PlayerState>) => void,
   get: () => PlayerState,
   direction: 1 | -1,
   fromAutoAdvance = false,
   token?: number,
+  imageDescriptionsRead = false,
 ) {
   // Reject a stale auto-advance before it mutates the reader position: playback
   // was paused or a newer utterance started while this continuation awaited.
   if (fromAutoAdvance && token !== undefined && token !== utteranceToken) {
     return;
+  }
+  if (
+    direction > 0 &&
+    fromAutoAdvance &&
+    token !== undefined &&
+    !imageDescriptionsRead &&
+    useSettingsStore.getState().readImageDescriptionsAutomatically
+  ) {
+    const images = automaticImagesAfterCurrentSentence(get());
+    if (images.length > 0) {
+      await speakImageSequence(set, get, images, token, () => {
+        void advanceBySentence(set, get, 1, true, token, true);
+      });
+      return;
+    }
   }
   const wasPlaying = get().isPlaying || fromAutoAdvance;
   const previousSectionIndex = get().currentSectionIndex;
@@ -1157,6 +1520,7 @@ async function advanceBySentence(
       isBuffering: false,
       bufferingMessage: "",
       modelDownload: null,
+      activeImageDescriptionId: null,
     });
     return;
   }
@@ -1174,6 +1538,27 @@ async function advanceBySentence(
       requireInitialBuffer: !fromAutoAdvance,
     });
   }
+}
+
+function automaticImagesAfterCurrentSentence(state: PlayerState) {
+  const paragraph = state.paragraphs[state.currentParagraphIndex];
+  if (
+    !paragraph ||
+    state.currentSentenceIndex + 1 < sentenceCount(paragraph)
+  ) {
+    return [];
+  }
+  const lastParagraph =
+    state.currentParagraphIndex === state.paragraphs.length - 1;
+  return state.sectionImages
+    .filter((image) => {
+      const anchor = image.anchorParagraphOrdinal;
+      if (anchor === paragraph.ordinal) {
+        return true;
+      }
+      return lastParagraph && anchor !== null && anchor > paragraph.ordinal;
+    })
+    .map((image) => image.id);
 }
 
 async function advanceByParagraph(
@@ -1210,6 +1595,7 @@ async function moveToPosition(
   position: Position,
   options: { preservePlayback?: boolean } = {},
 ) {
+  const sectionChanged = position.sectionIndex !== get().currentSectionIndex;
   // Claim the latest navigation slot so a slower section load started here
   // cannot overwrite reader state after a newer navigation or reset wins.
   const requestId = ++navToken;
@@ -1227,7 +1613,7 @@ async function moveToPosition(
   try {
     let paragraphs = get().paragraphs;
     let sectionImages = get().sectionImages;
-    if (position.sectionIndex !== get().currentSectionIndex) {
+    if (sectionChanged) {
       preparedNarrationKey = null;
       const section = get().sections[position.sectionIndex];
       if (!section) {
@@ -1268,6 +1654,10 @@ async function moveToPosition(
     set({
       paragraphs,
       sectionImages,
+      imageNarrations: sectionChanged
+        ? originalImageNarrations(sectionImages)
+        : get().imageNarrations,
+      activeImageDescriptionId: null,
       currentSectionIndex: position.sectionIndex,
       currentParagraphIndex: paragraphIndex,
       currentSentenceIndex: sentenceIndex,
@@ -1275,6 +1665,9 @@ async function moveToPosition(
       bufferingMessage: "",
       modelDownload: null,
     });
+    if (sectionChanged) {
+      automaticPreludeSectionId = null;
+    }
     const targetLanguage = useSettingsStore.getState().translationTargetLang;
     if (!targetLanguage || targetLanguage === get().document?.sourceLanguage) {
       preparedNarrationKey = narrationKey(get(), null);

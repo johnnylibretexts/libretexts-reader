@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { BookOpen, Loader2 } from "lucide-react";
-import { usePlayerStore } from "../../stores/player";
+import { BookOpen, Loader2, Square, Volume2 } from "lucide-react";
+import { imageHasDescription, usePlayerStore } from "../../stores/player";
 import { useSettingsStore } from "../../stores/settings";
 import { useTranslationStore } from "../../stores/translation";
 import { SUPERTONIC_LANGUAGES } from "../../lib/supertonic";
@@ -205,6 +205,12 @@ function languageName(code: string) {
 }
 
 function SectionImages({ images }: { images: Domain.SectionImage[] }) {
+  const activeImageDescriptionId = usePlayerStore(
+    (state) => state.activeImageDescriptionId,
+  );
+  const readImageDescription = usePlayerStore(
+    (state) => state.readImageDescription,
+  );
   if (images.length === 0) {
     return null;
   }
@@ -213,10 +219,17 @@ function SectionImages({ images }: { images: Domain.SectionImage[] }) {
     <div className="space-y-6">
       {images.map((image) => {
         const caption = image.caption ?? image.altText;
+        const described = imageHasDescription(image);
+        const active = activeImageDescriptionId === image.id;
 
         return (
           <figure
-            className="reader-figure"
+            aria-current={active ? "true" : undefined}
+            className={`reader-figure rounded-md p-3 transition-colors ${
+              active
+                ? "bg-brand-50 ring-2 ring-brand-500 dark:bg-brand-950/30"
+                : ""
+            }`}
             key={image.id}
           >
             <img
@@ -230,6 +243,30 @@ function SectionImages({ images }: { images: Domain.SectionImage[] }) {
                 {caption}
               </figcaption>
             ) : null}
+            <div className="mx-auto mt-3 flex max-w-3xl items-center gap-3">
+              {described ? (
+                <button
+                  aria-label={`${active ? "Stop" : "Read"} image description${caption ? `: ${caption}` : ""}`}
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-neutral-200 px-3 text-sm font-medium text-neutral-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                  onClick={() => void readImageDescription(image.id)}
+                  type="button"
+                >
+                  {active ? (
+                    <Square className="size-3.5 fill-current" aria-hidden="true" />
+                  ) : (
+                    <Volume2 className="size-4" aria-hidden="true" />
+                  )}
+                  {active ? "Stop description" : "Read description"}
+                </button>
+              ) : (
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                  No image description available
+                </span>
+              )}
+              <span className="sr-only" aria-live="polite">
+                {active ? "Reading image description" : ""}
+              </span>
+            </div>
           </figure>
         );
       })}

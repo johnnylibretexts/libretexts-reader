@@ -259,6 +259,10 @@ export const api = {
     invokeDesktop<Domain.TranslateSectionResult>("translate_section", {
       sectionId,
     }),
+  translateTexts: (sourceLang: string, targetLang: string, texts: string[]) =>
+    invokeDesktop<Domain.TranslateTextsResult>("translate_texts", {
+      request: { sourceLang, targetLang, texts },
+    }),
   cancelSectionTranslation: () =>
     invokeDesktop<void>("cancel_section_translation"),
   getTranslationModelStatus: (sourceLang: string, targetLang: string) =>

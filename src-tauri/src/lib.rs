@@ -91,6 +91,7 @@ pub fn run() {
             commands::fish::clear_fish_api_key,
             commands::fish::list_fish_voices,
             commands::translate::translate_section,
+            commands::translate::translate_texts,
             commands::translate::cancel_section_translation,
             commands::translate::get_translation_model_status,
             commands::translate::ensure_translation_models_downloaded,
