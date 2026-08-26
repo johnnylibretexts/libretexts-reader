@@ -77,6 +77,8 @@ export type TranslateSectionResult =
   | { status: "complete", sourceLang: string, targetLang: string, fallbackCount: number, sentenceCount: number }
   | { status: "cancelled", sourceLang: string, targetLang: string, done: number, total: number, fallbackCount: number, sentenceCount: number };
 
+export type TranslateTextsResult = { speechTexts: string[], fallbackCount: number, };
+
 /** Mirrors `AppError::kind` in `src-tauri/src/error.rs`. Kept in sync by `scripts/ci/check-error-kinds.sh`. */
 export type AppErrorKind = "database" | "pool" | "io" | "serde" | "http" | "readability" | "epub" | "pdf" | "openstax" | "libretexts" | "pressbooks" | "model" | "voice" | "auth" | "tts" | "drm_protected" | "tauri" | "invalid_input" | "cancelled" | "migration" | "payment_required" | "rate_limited";
 

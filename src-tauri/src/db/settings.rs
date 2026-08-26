@@ -74,6 +74,7 @@ fn default_settings() -> AppResult<Vec<(&'static str, Value)>> {
         ("tts_provider", json!("supertonic")),
         ("supertonic_voice_style", json!("M1")),
         ("supertonic_language", json!("en")),
+        ("read_image_descriptions_automatically", json!(true)),
         ("fish_voice_id", json!(null)),
     ])
 }
@@ -243,6 +244,11 @@ mod tests {
         assert!(
             all.contains_key("default_speed"),
             "default_speed is the fallback speed for a book never played -- it must stay"
+        );
+        assert_eq!(
+            all.get("read_image_descriptions_automatically"),
+            Some(&json!(true)),
+            "image descriptions are an accessibility default and must start enabled"
         );
     }
 }

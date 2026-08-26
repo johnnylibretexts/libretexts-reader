@@ -22,6 +22,7 @@ import { useSettingsStore, type TtsProvider } from "../../stores/settings";
 import { useTranslationStore } from "../../stores/translation";
 import type * as Domain from "../../types/domain";
 import { FishAudioSettings } from "./FishAudioSettings";
+import { ImageDescriptionPreferenceControl } from "../ImageDescriptionPreferenceControl";
 import {
   SPEECH_BILLED_LOOKAHEAD_SENTENCES,
   usePlayerStore,
@@ -997,6 +998,11 @@ export function SettingsPanel() {
               {supertonicModelProgress.file}
             </p>
           ) : null}
+
+        </div>
+
+        <div className="mt-4 rounded-md border border-neutral-200 bg-stone-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+          <ImageDescriptionPreferenceControl />
         </div>
 
         {hydrateFailed ? (

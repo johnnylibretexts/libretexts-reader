@@ -12,6 +12,7 @@ import { useSettingsStore } from "../../stores/settings";
 import { SPEECH_ENGINE_BILLS } from "../../lib/speech";
 import { useTranslationStore } from "../../stores/translation";
 import { ListenInControl } from "./ListenInControl";
+import { ImageDescriptionPreferenceControl } from "../ImageDescriptionPreferenceControl";
 
 export function PlaybackControls() {
   const isPlaying = usePlayerStore((state) => state.isPlaying);
@@ -95,6 +96,10 @@ export function PlaybackControls() {
 
       <div className="ml-0 md:ml-3">
         <ListenInControl />
+      </div>
+
+      <div className="ml-0 md:ml-1">
+        <ImageDescriptionPreferenceControl compact />
       </div>
 
       <label className="ml-0 flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 md:ml-3">
